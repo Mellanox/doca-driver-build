@@ -1,0 +1,123 @@
+# Common (multistage) args
+ARG D_OS="ubuntu22.04"
+ARG D_ARCH="x86_64"
+ARG D_CONTAINER_VER="0"
+ARG D_OFED_VERSION="23.10-0.5.5.0"
+ARG D_KERNEL_VER="5.15.0-25-generic"
+ARG D_OFED_SRC_DOWNLOAD_PATH="/run/mellanox/src"
+ARG OFED_SRC_LOCAL_DIR=${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_VERSION}
+
+# Common for build and final clean image of precompiled driver container
+ARG D_BASE_IMAGE="ubuntu:22.04"
+
+##################################################################
+# Stage: Minimal base image update and install common requirements
+FROM $D_BASE_IMAGE AS base
+
+ARG D_APT_REMOVE=""
+ARG D_OFED_VERSION
+ARG D_CONTAINER_VER
+ARG D_OFED_SRC_DOWNLOAD_PATH
+
+ENV NVIDIA_NIC_DRIVER_VER=${D_OFED_VERSION}
+ENV NVIDIA_NIC_CONTAINER_VER=${D_CONTAINER_VER}
+
+WORKDIR /root
+RUN set -x && \
+    for source in ${D_APT_REMOVE}; do rm -f /etc/apt/sources.list.d/${source}.list; done && \
+# Perform distro update and install prerequirements
+    apt-get -yq update && \
+    DEBIAN_FRONTEND=noninteractive apt-get -yq upgrade && \
+    DEBIAN_FRONTEND=noninteractive apt-get -yq install apt-utils \
+# Driver build / install script requirements
+    perl pciutils kmod lsof python3 dh-python \
+# Container functional requirements
+    jq iproute2 udev ethtool
+
+WORKDIR /
+ADD ./entrypoint.sh /root/entrypoint.sh
+
+ENTRYPOINT ["/root/entrypoint.sh"]
+
+##############################################################################################
+# Stage: Download NVIDIA driver sources and install src driver container packages requirements
+
+FROM base AS driver-src
+
+# Inherited global args
+ARG D_OFED_VERSION
+ARG D_OFED_SRC_DOWNLOAD_PATH
+
+# Stage args
+ARG D_OFED_BASE_URL="https://www.mellanox.com/downloads/ofed/MLNX_OFED-${D_OFED_VERSION}"
+ARG D_OFED_SRC_TYPE="debian-"
+
+ARG D_OFED_SRC_ARCHIVE="MLNX_OFED_SRC-${D_OFED_SRC_TYPE}${D_OFED_VERSION}.tgz"
+ARG D_OFED_URL_PATH="${D_OFED_BASE_URL}/${D_OFED_SRC_ARCHIVE}"
+
+ENV NVIDIA_NIC_DRIVER_PATH="${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_VERSION}"
+
+WORKDIR /root
+RUN set -x && \
+# Install prerequirements
+    DEBIAN_FRONTEND=noninteractive apt-get -yq install curl \
+    dkms make autoconf autotools-dev chrpath automake hostname debhelper gcc quilt libc6-dev build-essential pkg-config && \
+# Cleanup
+    apt-get clean autoclean && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN set -x && \
+# Download NVIDIA NIC driver sources
+    mkdir -p ${D_OFED_SRC_DOWNLOAD_PATH} && \
+    cd ${D_OFED_SRC_DOWNLOAD_PATH} && (curl -sL ${D_OFED_URL_PATH} | tar -xzf -)
+
+CMD ["sources"]
+
+#####################
+# Stage: Build driver
+
+FROM driver-src AS driver-builder
+
+# Inherited global args
+ARG D_OS
+ARG D_KERNEL_VER
+ARG OFED_SRC_LOCAL_DIR
+
+# Driver build manadatory packages
+RUN set -x && \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get -yq install linux-image-${D_KERNEL_VER} linux-headers-${D_KERNEL_VER}
+
+# Build driver
+RUN set -x && \
+    ${OFED_SRC_LOCAL_DIR}/install.pl --without-depcheck --distro ${D_OS} --without-dkms --kernel ${D_KERNEL_VER} --kernel-only --build-only --copy-ifnames-udev --with-mlnx-tools --without-knem-modules --without-srp-modules --without-kernel-mft-modules --without-iser-modules --without-isert-modules
+
+###################################
+# Stage: Install precompiled driver
+
+FROM base AS precompiled
+
+# Inherited global args
+ARG D_OS
+ARG D_ARCH
+ARG D_KERNEL_VER
+ARG OFED_SRC_LOCAL_DIR
+
+ENV NVIDIA_NIC_DRIVER_PATH=""
+
+RUN set -x && \
+    apt-get install -y lsb-release && \
+# Cleanup
+    apt-get clean autoclean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install driver
+COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/DEBS/${D_OS}/${D_ARCH}/*.deb /root/
+RUN dpkg -i /root/*.deb
+
+# Prevent modprobe from giving a WARNING about missing files
+RUN touch /lib/modules/${D_KERNEL_VER}/modules.order /lib/modules/${D_KERNEL_VER}/modules.builtin && \
+# Introduce installed kernel modules
+    depmod ${D_KERNEL_VER}
+
+CMD ["precompiled"]

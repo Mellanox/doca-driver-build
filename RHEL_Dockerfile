@@ -1,0 +1,142 @@
+# Common (multistage) args
+ARG D_OS="rhel9.2"
+ARG D_ARCH="x86_64"
+ARG D_CONTAINER_VER="0"
+ARG D_OFED_VERSION="23.10-0.5.5.0"
+ARG D_KERNEL_VER="5.14.0-284.32.1.el9_2.x86_64"
+ARG D_OFED_SRC_DOWNLOAD_PATH="/run/mellanox/src"
+ARG OFED_SRC_LOCAL_DIR=${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_VERSION}
+
+# Final clean image of precompiled driver container
+ARG D_FINAL_BASE_IMAGE=registry.access.redhat.com/ubi9/ubi:latest
+
+##################################################################
+# Stage: Minimal base image update and install common requirements
+
+# DTK base image (below example for specific kernel headers version)
+ARG D_BASE_IMAGE="registry.redhat.io/openshift4/driver-toolkit-rhel9:v4.13.0-202309112001.p0.gd719bdc.assembly.stream"
+# Standart: registry.access.redhat.com/ubi9:latest
+
+ARG D_PYTHON_VERSION="36"
+ARG D_PYTHON="python${D_PYTHON_VERSION}"
+
+FROM $D_BASE_IMAGE AS base
+
+# Inherited global args
+ARG D_OS
+
+# https://redmine.mellanox.com/issues/3528150/issue_history#note-9
+RUN if [[ "${D_OS}" == *"rhel9"* ]] ; then \
+        sed -i 's#/etc/pki/entitlement#/etc/pki/entitlement-host#g' /etc/rhsm/rhsm.conf ;\
+    fi
+
+RUN set -x && \
+# Driver build / install script requirements
+    dnf -y install perl \
+# Container functional requirements
+    jq iproute kmod procps-ng udev
+
+##############################################################################################
+# Stage: Download NVIDIA driver sources and install src driver container packages requirements
+
+FROM base AS driver-src
+
+# Inherited global args
+ARG D_OFED_VERSION
+ARG D_CONTAINER_VER
+ARG D_OFED_SRC_DOWNLOAD_PATH
+
+# Stage args
+ARG D_OFED_BASE_URL="https://www.mellanox.com/downloads/ofed/MLNX_OFED-${D_OFED_VERSION}"
+ARG D_OFED_SRC_TYPE=""
+
+ARG D_OFED_SRC_ARCHIVE="MLNX_OFED_SRC-${D_OFED_SRC_TYPE}${D_OFED_VERSION}.tgz"
+ARG D_OFED_URL_PATH="${D_OFED_BASE_URL}/${D_OFED_SRC_ARCHIVE}"
+
+ENV NVIDIA_NIC_DRIVER_VER=${D_OFED_VERSION}
+ENV NVIDIA_NIC_CONTAINER_VER=${D_CONTAINER_VER}
+ENV NVIDIA_NIC_DRIVER_PATH="${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_VERSION}"
+
+WORKDIR /root
+RUN set -x && \
+# Install prerequirements
+    dnf install -y curl --allowerasing \
+# Driver build requirements
+    autoconf python3-devel ethtool automake pciutils libtool hostname
+
+RUN set -x && \
+# Download NVIDIA NIC driver sources
+    mkdir -p ${D_OFED_SRC_DOWNLOAD_PATH} && \
+    cd ${D_OFED_SRC_DOWNLOAD_PATH} && (curl -sL ${D_OFED_URL_PATH} | tar -xzf -)
+
+WORKDIR /
+ADD ./entrypoint.sh /root/entrypoint.sh
+ADD ./dtk_nic_driver_build.sh /root/dtk_nic_driver_build.sh
+
+ENTRYPOINT ["/root/entrypoint.sh"]
+CMD ["sources"]
+
+#####################
+# Stage: Build driver
+
+FROM driver-src AS driver-builder
+
+# Inherited global args
+ARG D_OS
+ARG D_KERNEL_VER
+ARG OFED_SRC_LOCAL_DIR
+
+RUN set -x && \
+# MOFED installation requirements
+    dnf install -y autoconf gcc make rpm-build
+
+# Build driver
+RUN set -x && \
+    ${OFED_SRC_LOCAL_DIR}/install.pl --without-depcheck --distro ${D_OS} --kernel ${D_KERNEL_VER} --kernel-sources /lib/modules/${D_KERNEL_VER}/build --kernel-only --build-only --without-iser --without-srp --without-isert --without-knem --without-xpmem --with-mlnx-tools --with-ofed-scripts --copy-ifnames-udev
+
+###################################
+# Stage: Install precompiled driver
+
+ARG D_FINAL_BASE_IMAGE
+
+FROM $D_FINAL_BASE_IMAGE AS precompiled
+
+# Inherited global args
+ARG D_ARCH
+ARG D_KERNEL_VER
+ARG D_OFED_VERSION
+ARG D_CONTAINER_VER
+ARG OFED_SRC_LOCAL_DIR
+
+ENV NVIDIA_NIC_DRIVER_VER=${D_OFED_VERSION}
+ENV NVIDIA_NIC_DRIVER_PATH=""
+ENV NVIDIA_NIC_CONTAINER_VER=${D_CONTAINER_VER}
+
+COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/RPMS/redhat-release-*/${D_ARCH}/*.rpm /root/
+
+WORKDIR /root/
+RUN set -x && \
+    rpm -ivh --nodeps \
+    ./kmod-mlnx-nfsrdma-*.rpm \
+    ./kmod-mlnx-nvme-*.rpm \
+    ./kmod-mlnx-ofa_kernel-*.rpm \
+    ./mlnx-ofa_kernel-*.rpm \
+    ./mlnx-tools-*.rpm
+
+RUN set -x && \
+# MOFED functional requirements
+    dnf install -y pciutils hostname udev ethtool \
+# Container functional requirements
+    jq iproute kmod procps-ng udev
+
+# Prevent modprobe from giving a WARNING about missing files
+RUN touch /lib/modules/${D_KERNEL_VER}/modules.order /lib/modules/${D_KERNEL_VER}/modules.builtin && \
+# Introduce installed kernel modules
+    depmod ${D_KERNEL_VER}
+
+WORKDIR /
+ADD ./entrypoint.sh /root/entrypoint.sh
+ADD ./dtk_nic_driver_build.sh /root/dtk_nic_driver_build.sh
+
+ENTRYPOINT ["/root/entrypoint.sh"]
+CMD ["precompiled"]
