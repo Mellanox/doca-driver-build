@@ -121,7 +121,7 @@ function termination_handler() {
             timestamp_print "Restoring Mellanox OFED Driver from host..."
             /usr/sbin/mlnxofedctl --alt-mods force-restart
 
-            print_drivers_info
+            print_loaded_drv_ver_str
 
             restore_sriov_config
         fi
@@ -247,12 +247,21 @@ function redhat_install_prerequisites() {
         rt_substr=""
         k_ver=$FULL_KVER
 
-        exec_cmd "dnf config-manager --set-enabled rhel-${RHEL_MAJOR_VERSION}-for-${ARCH}-baseos-eus-rpms || true"
+        eus_available=("8.4" "8.6" "8.8" "9.0" "9.2" "9.4")
+
+        if [[ " ${eus_available[@]} " =~ " $RHEL_VERSION " ]]
+        then
+          exec_cmd "dnf config-manager --set-enabled rhel-${RHEL_MAJOR_VERSION}-for-${ARCH}-baseos-eus-rpms"
+        fi
+
+
 
         # Dependencies for RH 9.x changed, thus explict installation required
         exec_cmd "dnf -q -y ${releasever_str} install kernel-${FULL_KVER}"
         exec_cmd "dnf -q -y ${releasever_str} install kernel-headers-${FULL_KVER}"
-        exec_cmd "dnf -q -y ${releasever_str} install kernel-devel-${FULL_KVER}"
+	# note: we provide --allowerasing flag to allow install of possible conflict packages
+	# like openssl-libs which is required for kernel-devel that coflicts with openssl-fips in container
+        exec_cmd "dnf -q -y ${releasever_str} install kernel-devel-${FULL_KVER}" --allowerasing
         exec_cmd "dnf -q -y ${releasever_str} install kernel-core-${FULL_KVER}"
 
     else
@@ -299,7 +308,7 @@ function dtk_ocp_setup_driver_build() {
     timestamp_print "Copy required files to shared dir with OCP DTK"
     exec_cmd "cp -r ${NVIDIA_NIC_DRIVER_PATH} ${DTK_OCP_NIC_SHARED_DIR}/"
 
-    exec_cmd "sed -i '/append_driver_build_flags=/c\append_driver_build_flags=${append_driver_build_flags}' ${DTK_OCP_BUILD_SCRIPT}"
+    exec_cmd "sed -i '/append_driver_build_flags=/c\append_driver_build_flags=\"${append_driver_build_flags}\"' ${DTK_OCP_BUILD_SCRIPT}"
     exec_cmd "sed -i '/DTK_OCP_COMPILED_DRIVER_VER=/c\DTK_OCP_COMPILED_DRIVER_VER=${NVIDIA_NIC_DRIVER_VER}' ${DTK_OCP_BUILD_SCRIPT}"
     exec_cmd "sed -i '/DTK_OCP_START_COMPILE_FLAG=/c\DTK_OCP_START_COMPILE_FLAG=${DTK_OCP_START_COMPILE_FLAG}' ${DTK_OCP_BUILD_SCRIPT}"
     exec_cmd "sed -i '/DTK_OCP_DONE_COMPILE_FLAG=/c\DTK_OCP_DONE_COMPILE_FLAG=${DTK_OCP_DONE_COMPILE_FLAG}' ${DTK_OCP_BUILD_SCRIPT}"
@@ -426,19 +435,24 @@ function restart_driver() {
     exec_cmd "modprobe -d /host tls"
     exec_cmd "modprobe -d /host psample"
 
-    load_pci-hyperv-intf=false
+    # Check if mlx5_ib depends on macsec if so, load it.
+    if modinfo -Fdepends mlx5_ib | grep -qw macsec; then
+        exec_cmd "modprobe -d /host macsec"
+    fi
+
+    load_pci_hyperv_intf=false
 
     # ARM does not contain relevant packages, also not a blocker for this OS type for mlx5_core load
     if [ "${ARCH}" != "aarch64" ]; then
         if ! ${IS_OS_UBUNTU}; then
             redhat_fetch_major_ver
-            [[ $RHEL_MAJOR_VERSION -ge $RH_RT_MIN_MAJOR_VER ]] && load_pci-hyperv-intf=true
+            [[ $RHEL_MAJOR_VERSION -ge $RH_RT_MIN_MAJOR_VER ]] && load_pci_hyperv_intf=true
         else
-            load_pci-hyperv-intf=true
+            load_pci_hyperv_intf=true
         fi
     fi
 
-    ${load_pci-hyperv-intf} && exec_cmd "modprobe -d /host pci-hyperv-intf"
+    ${load_pci_hyperv_intf} && exec_cmd "modprobe -d /host pci-hyperv-intf"
 
     ${UNLOAD_STORAGE_MODULES} && unload_storage_modules
 
@@ -495,13 +509,27 @@ function find_mlx_devs() {
                 dev_guid="-"
             fi
 
-            dev_record="$pci_addr $dev_type $dev_name $dev_operstate $dev_mtu $pf_numvfs $dev_guid"
+            eswitch_mode=$(devlink dev eswitch show pci/$pci_addr 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "mode") {print $(i+1); exit}}')
+
+            if [ "${eswitch_mode}" == "switchdev" ]; then
+                representor_regex="^pf([0-9]+)vf([0-9]+)$"
+
+                mlnx_dev_phys_port_name=$(cat /sys/class/net/"${dev_name}"/phys_port_name 2>/dev/null)
+                # Use regex to parse the string and extract numbers
+                if [[ "$mlnx_dev_phys_port_name" =~ $representor_regex ]]; then
+                    debug_print "Device ${mlnx_dev_name} is a switchdev representor, not a PF, skipping"
+
+                    continue
+                fi
+            fi
+
+            dev_record="$pci_addr $dev_type $dev_name $dev_operstate $dev_mtu $pf_numvfs $dev_guid $eswitch_mode"
             debug_print "Storing device record [${mlx_dev_record_idx}] $dev_record"
             mlx_devs_arr[${mlx_dev_record_idx}]=$dev_record
             # Example:
-            # pci_addr      dev_type dev_name dev_operstate dev_mtu pf_numvfs dev_guid (For IB only)
-            # 0000:08:00.0  eth      eth2     up            1500    4         0c42:a103:0016:054c
-            # 0000:08:00.1  eth      eth3     up            1500    0         0c42:a103:0016:054d
+            # pci_addr      dev_type dev_name dev_operstate dev_mtu pf_numvfs dev_guid (For IB only) eswitch_mode
+            # 0000:08:00.0  eth      eth2     up            1500    4         0c42:a103:0016:054c    legacy
+            # 0000:08:00.1  eth      eth3     up            1500    0         0c42:a103:0016:054d    switchdev
 
             mlx_dev_record_idx=$((mlx_dev_record_idx+1))
 
@@ -532,12 +560,13 @@ function find_mlx_vfs() {
     while [ ${num_mlx_devices} -gt 0 ]; do
         declare -a mlx_dev_info=(${mlx_devs_arr[$((num_mlx_devices-1))]})
 
-        # pci_addr dev_type dev_name dev_operstate dev_mtu pf_numvfs dev_guid
-        # [0]      [1]      [2]      [3]           [4]     [5]       [6]
+        # pci_addr dev_type dev_name dev_operstate dev_mtu pf_numvfs dev_guid eswitch_mode
+        # [0]      [1]      [2]      [3]           [4]     [5]       [6]      [7]
         mlnx_dev_pci=${mlx_dev_info[0]}
         mlnx_dev_type=${mlx_dev_info[1]}
         mlnx_dev_name=${mlx_dev_info[2]}
         mlnx_dev_numvfs=${mlx_dev_info[5]}
+        mlnx_dev_eswitch_mode=${mlx_dev_info[7]}
 
         if [ "${mlnx_dev_numvfs}" == "0" ]; then
             debug_print "Device ${mlnx_dev_name} does not have open VFs, skipping"
@@ -584,6 +613,95 @@ function find_mlx_vfs() {
     done
 }
 
+function find_switchdev_representors() {
+    debug_print "Function: ${FUNCNAME[0]}"
+    num_mlx_devices=${mlx_dev_record_idx-1}
+    timestamp_print "Query representors info from [${num_mlx_devices}] devices"
+
+    while [ ${num_mlx_devices} -gt 0 ]; do
+        declare -a mlx_dev_info=(${mlx_devs_arr[$((num_mlx_devices-1))]})
+
+        # pci_addr dev_type dev_name dev_operstate dev_mtu pf_numvfs dev_guid eswitch_mode
+        # [0]      [1]      [2]      [3]           [4]     [5]       [6]      [7]
+        mlnx_dev_pci=${mlx_dev_info[0]}
+        mlnx_dev_name=${mlx_dev_info[2]}
+        mlnx_dev_numvfs=${mlx_dev_info[5]}
+        mlnx_dev_eswitch_mode=${mlx_dev_info[7]}
+
+        if [ "${mlnx_dev_eswitch_mode}" != "switchdev" ]; then
+            debug_print "Device ${mlnx_dev_name} is not in switchdev mode, skipping"
+
+            num_mlx_devices=$(($num_mlx_devices-1))
+            continue
+        fi
+
+        regex="^p([0-9]+)$"
+        mlnx_dev_phys_port_name=$(cat /sys/class/net/"${mlnx_dev_name}"/phys_port_name 2>/dev/null)
+        if [[ "$mlnx_dev_phys_port_name" =~ $regex ]]; then
+            mlnx_dev_phys_port_num="${BASH_REMATCH[1]}"
+        else
+            debug_print "Device ${mlnx_dev_name} is not a PF, skipping"
+
+            num_mlx_devices=$(($num_mlx_devices-1))
+            continue
+        fi
+
+        mlnx_dev_phys_switch_id=$(cat /sys/class/net/"${mlnx_dev_name}"/phys_switch_id 2>/dev/null)
+
+        debug_print "Device phys port num ${mlnx_dev_phys_port_num} check"
+        debug_print "Device phys port name ${mlnx_dev_phys_port_name} check"
+
+        if [ "${mlnx_dev_numvfs}" == "0" ]; then
+            debug_print "Device ${mlnx_dev_name} does not have open VFs, skipping"
+
+            num_mlx_devices=$(($num_mlx_devices-1))
+            continue
+        fi
+
+        debug_print "Fetching [$mlnx_dev_numvfs] representors info for PCI device: ${mlnx_dev_pci} ($mlnx_dev_name)"
+
+        for netdev_path in /sys/class/net/"${mlnx_dev_name}"/subsystem/*; do
+            dev_phys_port_name=$(cat "${netdev_path}"/phys_port_name 2>/dev/null)
+
+            regex="^pf([0-9]+)vf([0-9]+)$"
+
+            # Use regex to parse the string and extract numbers
+            if [[ "$dev_phys_port_name" =~ $regex ]]; then
+                dev_pf_port_number="${BASH_REMATCH[1]}"
+                dev_vf_id_number="${BASH_REMATCH[2]}"
+            else
+                debug_print "Device ${netdev_path} is not a switchdev representor, skipping"
+                continue
+            fi
+
+            if [ "${mlnx_dev_phys_switch_id}" != "$(cat "${netdev_path}"/phys_switch_id 2>/dev/null)" ]; then
+                debug_print "Physical switch id of device ${netdev_path} does not match PF ${mlnx_dev_name}, skipping"
+                continue
+            fi
+
+            if [ "${dev_pf_port_number}" != "${mlnx_dev_phys_port_num}" ]; then
+                debug_print "Switchdev representor ${netdev_path} does not belong to this PF ${mlnx_dev_name}"
+                continue
+            fi
+
+            representor_name=$(basename "$netdev_path") && [[ -n $representor_name ]] || return 1
+            representor_operstate=$(cat "$netdev_path"/operstate) && [[ -n $representor_operstate ]] || return 1
+            representor_mtu_val=$(cat "$netdev_path"/mtu) && [[ -n $representor_mtu_val ]] || return 1
+
+            representor_record="$mlnx_dev_phys_switch_id $mlnx_dev_phys_port_num $dev_vf_id_number $representor_name $representor_operstate $representor_mtu_val"
+            debug_print "Storing switchdev representor record [${representor_record_idx}]: $representor_record"
+            switchdev_representors_arr[$representor_record_idx]="$representor_record"
+            # Example:
+            # pf_phys_switch_id pf_port_num vf_id representor_name representor_operstate representor_mtu_val
+            # 8a45730003da341c  1           3     enp3s1f1npf1vf3  up                    1500
+
+            representor_record_idx=$((representor_record_idx+1))
+        done
+
+        num_mlx_devices=$(($num_mlx_devices-1))
+    done
+}
+
 function restore_sriov_config() {
     debug_print "Function: ${FUNCNAME[0]}"
 
@@ -598,8 +716,8 @@ function restore_sriov_config() {
     while [ ${num_mlx_devices} -gt 0 ]; do
         declare -a mlx_dev_info=(${mlx_devs_arr[$((num_mlx_devices-1))]})
 
-        # pci_addr dev_type dev_name dev_operstate dev_mtu pf_numvfs dev_guid (For IB only)
-        # [0]      [1]      [2]      [3]           [4]     [5]       [6]
+        # pci_addr dev_type dev_name dev_operstate dev_mtu pf_numvfs dev_guid (For IB only) eswitch_mode
+        # [0]      [1]      [2]      [3]           [4]     [5]       [6]                    [7]
 
         pf_pci_addr=${mlx_dev_info[0]}
         pf_type=${mlx_dev_info[1]}
@@ -607,6 +725,7 @@ function restore_sriov_config() {
         pf_oper_state=${mlx_dev_info[3]}
         pf_mtu=${mlx_dev_info[4]}
         pf_numvfs=${mlx_dev_info[5]}
+        pf_eswitch_mode=${mlx_dev_info[7]}
 
         if [ "${pf_numvfs}" == "0" ]; then
             num_mlx_devices=$(($num_mlx_devices-1))
@@ -614,10 +733,19 @@ function restore_sriov_config() {
         fi
 
         pf_pci_dev_path="/sys/bus/pci/devices/${pf_pci_addr}"
-        pf_new_dev_name=$(ls "$pf_pci_dev_path/net/")
+        pf_new_dev_name=$(ls "$pf_pci_dev_path/net/" | head -n 1)
         pf_new_netdev_path="${pf_pci_dev_path}/net/${pf_new_dev_name}"
 
         timestamp_print "Restoring SR-IOV config for device: $pf_pci_addr (VFs=$pf_numvfs) netdev name: ${pf_new_dev_name}"
+
+        # To support the old kernel versions, we need to follow the recommended way of creating switchdev VFs
+        # 1) Set the NIC in legacy mode
+        # 2) Create the required amount of VFs
+        # 3) Unbind all of the VFs
+        # 4) Set the NIC in switchdev mode
+        if [ "${pf_eswitch_mode}" == "switchdev" ]; then
+            exec_cmd "devlink dev eswitch set pci/$pf_pci_addr mode legacy"
+        fi
 
         exec_cmd "ip link set dev ${pf_new_dev_name} $pf_oper_state"
         # Permission denied via sysfs
@@ -667,6 +795,12 @@ function restore_sriov_config() {
 
                  # Driver rebind VF
                 exec_cmd "echo ${vf_pci_addr} > ${DRIVER_PATH}/unbind"
+
+                # As per the comment above, we need to set the NIC in switchdev mode first before binding back the VFs
+                if [ "${pf_eswitch_mode}" == "switchdev" ]; then
+                    continue
+                fi
+
                 exec_cmd "echo ${vf_pci_addr} > ${DRIVER_PATH}/bind"
 
                 sleep ${BIND_DELAY_SEC}
@@ -677,9 +811,106 @@ function restore_sriov_config() {
             fi
         done
 
+        # Set the PF in switchdev mode and rebind its VFs to the driver
+        if [ "${pf_eswitch_mode}" == "switchdev" ]; then
+            exec_cmd "devlink dev eswitch set pci/$pf_pci_addr mode switchdev"
+
+            for vf_record in $(seq 0 1 $((vf_record_idx-1))); do
+                declare -a mlx_vf_info=(${mlx_vfs_arr[$vf_record]})
+
+                vf_parent_pci_addr=${mlx_vf_info[0]}
+
+                debug_print "Inspecting VF entry: ${mlx_vf_info[@]}"
+
+                if [ "${vf_parent_pci_addr}" == "${pf_pci_addr}" ]; then
+                    # pf_pci_addr vf_pci_addr dev_name vf_name mlnx_dev_type vf_index vf_operstate vf_mac vf_admin_mac vf_mtu_val vf_guid
+                    # [0]         [1]         [2]      [3]     [4]           [5]      [6]          [7]    [8]          [9]        [10]
+                    vf_pci_addr=${mlx_vf_info[1]}
+                    vf_operstate=${mlx_vf_info[6]}
+                    vf_mtu=${mlx_vf_info[9]}
+
+                    timestamp_print "Restoring VF configuration for switchdev device: $vf_pci_addr"
+
+                    exec_cmd "echo ${vf_pci_addr} > ${DRIVER_PATH}/bind"
+
+                    sleep ${BIND_DELAY_SEC}
+
+                    vf_pci_dev_path="/sys/bus/pci/devices/$vf_pci_addr"
+                    vf_new_dev_name=$(ls "$vf_pci_dev_path"/net/)
+
+                    vf_new_netdev_path="${vf_pci_dev_path}/net/${vf_new_dev_name}"
+
+                    exec_cmd "echo $vf_mtu > $vf_new_netdev_path/mtu"
+                    exec_cmd "ip link set dev ${vf_new_dev_name} $vf_operstate"
+                    # Permission denied via sysfs
+                fi
+            done
+
+        fi
+
         exec_cmd "echo $pf_mtu > $pf_new_netdev_path/mtu"
 
         num_mlx_devices=$(($num_mlx_devices-1))
+    done
+
+    for representor_record in $(seq 0 1 $((representor_record_idx-1))); do
+        declare -a representor_info=(${switchdev_representors_arr[$representor_record]})
+
+        debug_print "Inspecting switchdev representor entry: ${representor_info[@]}"
+
+        # pf_phys_switch_id pf_port_num vf_id representor_name representor_operstate representor_mtu_val
+        # [0]               [1]         [2]   [3]              [4]                   [5]
+        pf_phys_switch_id=${representor_info[0]}
+        pf_port_num=${representor_info[1]}
+        vf_id=${representor_info[2]}
+        representor_name=${representor_info[3]}
+        representor_operstate=${representor_info[4]}
+        representor_mtu_val=${representor_info[5]}
+
+        mlnx_dev_phys_switch_id=$(cat /sys/class/net/"${mlnx_dev_name}"/phys_switch_id 2>/dev/null)
+
+        for netdev_path in /sys/class/net/*; do
+            if [ "${pf_phys_switch_id}" != "$(cat "${netdev_path}"/phys_switch_id 2>/dev/null)" ]; then
+                debug_print "Physical switch id of device ${netdev_path} does not match the record, skipping"
+                continue
+            else
+                debug_print "Physical switch id of device ${netdev_path} matches the record"
+            fi
+
+            dev_phys_port_name=$(cat "${netdev_path}"/phys_port_name 2>/dev/null)
+
+            regex="^pf([0-9]+)vf([0-9]+)$"
+
+            # Use regex to parse the string and extract numbers
+            if [[ "$dev_phys_port_name" =~ $regex ]]; then
+                dev_pf_port_number="${BASH_REMATCH[1]}"
+                dev_vf_id_number="${BASH_REMATCH[2]}"
+            else
+                debug_print "Device ${netdev_path} is not a switchdev representor, skipping"
+                continue
+            fi
+
+            if [ "${dev_pf_port_number}" != "${pf_port_num}" ]; then
+                debug_print "Switchdev representor ${netdev_path} does not belong to this port ${pf_port_num}"
+                continue
+            fi
+
+            if [ "${dev_vf_id_number}" != "${vf_id}" ]; then
+                debug_print "Switchdev representor ${netdev_path} does not belong to this vf id ${vf_id}"
+                continue
+            fi
+
+            debug_print "Switchdev representor ${netdev_path} belongs to this vf id ${vf_id}, setting parameters"
+
+            representor_new_name=$(basename "$netdev_path") && [[ -n $representor_new_name ]]
+
+            exec_cmd "ip link set dev ${representor_new_name} name ${representor_name}"
+            exec_cmd "ip link set dev ${representor_name} mtu ${representor_mtu_val}"
+            exec_cmd "ip link set dev ${representor_name} ${representor_operstate}"
+
+            break
+        done
+
     done
 }
 
@@ -688,11 +919,13 @@ function store_devices_conf() {
 
     mlx_dev_record_idx=0
     vf_record_idx=0
+    representor_record_idx=0
     found_sriov_conf=0
 
     if ${mlx5_core_loaded}; then
         find_mlx_devs
         find_mlx_vfs
+        find_switchdev_representors
     else
         debug_print "Driver not loaded, skipped store netdev conf info"
     fi
@@ -708,14 +941,29 @@ function load_nfsrdma() {
     fi
 }
 
+# function check_loaded_kmod_srcver_vs_modinfo() returns 0 if all provided modules
+# srcversion from sysfs match information from modinfo
+function check_loaded_kmod_srcver_vs_modinfo() {
+    debug_print "Function: ${FUNCNAME[0]}"
+
+    for module in "$@"; do
+        debug_print "checking module $module"
+        local srcver_from_modinfo=$(/sbin/modinfo $module 2>/dev/null | grep srcversion | awk '{print $NF}')
+        local srcver_from_sysfs=$(/bin/cat /sys/module/$module/srcversion)
+        debug_print "module: $module, srcver_from_modinfo: $srcver_from_modinfo, srcver_from_sysfs: $srcver_from_sysfs"
+        if [[ "${srcver_from_modinfo}" != "${srcver_from_sysfs}" ]]; then
+            debug_print "module: $module, srcver differs"
+            return 1
+        fi
+    done
+    # all modules srcver match between modinfo and sysfs
+    return 0
+}
+
 function load_driver() {
     debug_print "Function: ${FUNCNAME[0]}"
 
-    candidate_drv_srcver=$(/sbin/modinfo mlx5_core 2>/dev/null | grep srcversion | awk '{print $NF}')
-
-    print_drivers_info 1
-
-    if [ "${loaded_drv_srcver}" != "${candidate_drv_srcver}" ]; then
+    if ! check_loaded_kmod_srcver_vs_modinfo mlx5_core mlx5_ib; then
         restart_driver
 
         new_driver_loaded=true
@@ -725,6 +973,7 @@ function load_driver() {
 
     else
         debug_print "Loaded and candidate drivers are identical, *skipping reload*"
+        new_driver_loaded=true
     fi
 
     print_loaded_drv_ver_str
@@ -908,25 +1157,13 @@ function print_loaded_drv_ver_str() {
         debug_print "Fetching driver info via ethtool from netdev ${mlx_net_dev_name} (${mlx_dev_pci})"
         drv_ver_str=$(ethtool --driver ${mlx_net_dev_name} | grep ^version | cut -d" " -f 2)
 
-        timestamp_print "Current driver version: ${drv_ver_str}"
+        timestamp_print "Current mlx5_core driver version: ${drv_ver_str}"
 
-        loaded_drv_srcver=$(/bin/cat /sys/module/mlx5_core/srcversion)
-        debug_print "Current driver srcversion: ${loaded_drv_srcver}"
+        local loaded_drv_srcver=$(/bin/cat /sys/module/mlx5_core/srcversion)
+        debug_print "Current mlx5_core driver srcversion: ${loaded_drv_srcver}"
 
     else
         timestamp_print "mlx5_core driver not loaded"
-    fi
-}
-
-function print_drivers_info() {
-    debug_print "Function: ${FUNCNAME[0]}"
-
-    info_detail=${1:-0}
-
-    print_loaded_drv_ver_str
-
-    if [ ${info_detail} -ge 1 ]; then
-        debug_print "Candidate driver srcversion: ${candidate_drv_srcver}"
     fi
 }
 
@@ -961,8 +1198,6 @@ pkg_dkms_suffix=""
 found_long_mlx_dev_id_net_name_path=false
 
 mlx5_core_loaded=false; [[ "$(lsmod | grep -i ^mlx5_core -c)" != "0" ]] && mlx5_core_loaded=true
-loaded_drv_srcver="<old-ver>"
-candidate_drv_srcver="<new-ver>"
 build_src=false
 build_precompiled=false
 reuse_driver_inventory=false
@@ -973,6 +1208,7 @@ RH_RT_MIN_MAJOR_VER=9
 
 declare -a mlx_devs_arr
 declare -a mlx_vfs_arr
+declare -a switchdev_representors_arr
 mlx_dev_record_idx=0
 
 if ${IS_OS_UBUNTU}; then
