@@ -62,7 +62,7 @@ RUN set -x && \
 # Install prerequirements
     dnf install -y curl --allowerasing \
 # Driver build requirements
-    autoconf python3-devel ethtool automake pciutils libtool hostname
+    autoconf python3-devel ethtool automake pciutils libtool hostname dracut
 
 RUN set -x && \
 # Download NVIDIA NIC driver sources
