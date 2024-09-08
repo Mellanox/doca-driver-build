@@ -1,0 +1,130 @@
+name: Build precompiled DOCA on new Kernel release
+# TODO: ask ivan (maybe also alex)  about what automation to maybe add for promotion from nvstaging to NGC
+# OFED releases: ask vlad.l who knows about it - perhaps mohamed.(!t)
+
+on:
+  schedule:
+  - cron: 0 9 * * mon-fri
+  push:  # TODO: remove after development
+    branches:
+    - feature/precompiled-ofed-per-kernel
+
+env:
+  NVCR_DOCKER_REGISTRY: nvcr.io/nvstaging/mellanox  # TODO: verify if NGC or nvstaging
+  DOCKER_IMAGE_NAME: doca-driver
+
+jobs:
+  fetch-latest-doca-and-kernel-versions:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Fetch latest DOCA and kernel versions
+      id: fetch-latest-doca-and-kernel-versions
+      run: |
+        echo latest_doca_version=$(  curl -fsSL    'https://linux.mellanox.com/public/repo/doca/?C=M;O=D' | grep -Eo  'href="([0-9\.]+)/"' | head -n 1 | grep -Eo  '[0-9\.]+') >> $GITHUB_OUTPUT
+        echo latest_kernel_version=$(curl -fsSL 'https://kernel.ubuntu.com/~kernel-ppa/mainline/?C=M&O=D' | grep -Eo 'href="(v[0-9\.]+)/"' | head -n 1 | grep -Eo 'v[0-9\.]+') >> $GITHUB_OUTPUT  # TODO: do we want the "v" prefix in the kernel version?
+        tail -n 2 $GITHUB_OUTPUT
+    outputs:
+      latest_doca_version:   ${{ steps.fetch-latest-doca-and-kernel-versions.outputs.latest_doca_version }}
+      latest_kernel_version: ${{ steps.fetch-latest-doca-and-kernel-versions.outputs.latest_kernel_version }}
+
+  precompile-and-publish-doca:
+    needs:
+    - fetch-latest-doca-and-kernel-versions
+    runs-on: ubuntu-latest
+    env:
+      RH_USERNAME: mzeevi@nvidia.com  # TODO: RH double check if there is a possibility for a service account instead of user account
+      LATEST_DOCA_VERSION:   ${{ needs.fetch-latest-doca-and-kernel-versions.outputs.latest_doca_version }}
+      LATEST_KERNEL_VERSION: ${{ needs.fetch-latest-doca-and-kernel-versions.outputs.latest_kernel_version }}
+    strategy:
+      matrix:
+        include:
+        # ubuntu 24.04 flavors
+        - os: ubuntu
+          version: '24.04'
+          flavor: generic
+        - os: ubuntu
+          version: '24.04'
+          flavor: aws
+        - os: ubuntu
+          version: '24.04'
+          flavor: azure
+        - os: ubuntu
+          version: '24.04'
+          flavor: oracle
+        - os: ubuntu
+          version: '24.04'
+          flavor: nvidia
+        # ubuntu 22.04 flavors
+        - os: ubuntu
+          version: '22.04'
+          flavor: generic
+        - os: ubuntu
+          version: '22.04'
+          flavor: aws
+        - os: ubuntu
+          version: '22.04'
+          flavor: azure
+        - os: ubuntu
+          version: '22.04'
+          flavor: oracle
+        - os: ubuntu
+          version: '22.04'
+          flavor: nvidia
+        # rhel versions
+        - os: rhel
+          version: '9.4'
+        - os: rhel
+          version: '9.3'
+        - os: rhel
+          version: '9.2'
+        - os: rhel
+          version: '8.10'
+        - os: rhel
+          version: '8.9'
+        - os: rhel
+          version: '8.8'
+        # rhcos versions
+        - os: rhcos
+          version: '4.16'
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: docker/login-action@v3
+      with:
+        registry: registry.redhat.io  # required for build
+        username: ${{ env.RH_USERNAME }}
+        password: ${{ secrets.RH_PASSWORD }}  # TODO: add secret in github
+    - uses: docker/login-action@v3
+      with:
+        registry: ${{ env.NVCR_DOCKER_REGISTRY }}
+        username: ${{ secrets.NVCR_USERNAME }}  # TODO: add secret in github
+        password: ${{ secrets.NVCR_TOKEN }}     # TODO: add secret in github
+    - name: Define and export docker tag
+      run: |
+        echo DOCKER_TAG=$LATEST_DOCA_VERSION-$LATEST_KERNEL_VERSION${{ matrix.flavor && '-' }}${{ matrix.flavor }}-${{ matrix.os }}${{ matrix.version }} >> $GITHUB_ENV
+    - name: Check if published precompiled DOCA for kernel version
+      id: check-if-published-precompiled-for-kernel
+      run: |
+        if skopeo list-tags docker://$NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME | jq '.Tags[]' -r | grep $DOCKER_TAG
+        then
+          echo NEW_BUILD_REQUIRED=false >> $GITHUB_ENV
+        else
+          echo NEW_BUILD_REQUIRED=true  >> $GITHUB_ENV
+        fi
+    - if: ${{ env.NEW_BUILD_REQUIRED }}
+      uses: docker/setup-qemu-action@v3
+    - if: ${{ env.NEW_BUILD_REQUIRED }}
+      uses: docker/setup-buildx-action@v3
+    - if: ${{ env.NEW_BUILD_REQUIRED }}
+      uses: docker/build-push-action@v4
+      with:
+        platforms: ${{ matrix.os == 'rhel' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}  # TODO: verifiy these are values are compatible for DOCA build
+        file: ${{ matrix.os == 'ubuntu' && 'Ubuntu_Dockerfile' || 'RHEL_Dockerfile' }}
+        build-args: |
+          ARG D_OS=${{ matrix.os }}${{ matrix.version }}
+          ARG D_ARCH=$TARGETPLATFORM  # TODO: consider omitting this argument
+          ARG D_OFED_OS_VERSION=${{ env.LATEST_DOCA_VERSION }}
+          ARG D_KERNEL_VER=${{ env.LATEST_KERNEL_VERSION }}${{ matrix.flavor && '-' }}${{ matrix.flavor }}
+          ARG D_BASE_IMAGE=${{ matrix.os }}:${{ matrix.version }}
+        tags: ${{ env.NVCR_DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_NAME }}:${{ env.DOCKER_TAG }}
+        push: false  # TODO: change to true once build successful and satisfied with the matrix
