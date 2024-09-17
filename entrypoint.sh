@@ -931,10 +931,33 @@ function store_devices_conf() {
     fi
 }
 
+function check_nvme_modules() {
+    debug_print "Function: ${FUNCNAME[0]}"
+
+    if [ -e /sys/module/nvme ]; then
+        if ! check_loaded_kmod_srcver_vs_modinfo nvme; then
+            timestamp_print "warning - nvme kernel module currently loaded does not match module from container"
+        fi
+    fi
+
+    if [ -e /sys/module/nvme-rdma ]; then
+        if ! check_loaded_kmod_srcver_vs_modinfo nvme-rdma; then
+            timestamp_print "warning - nvme-rdma kernel module currently loaded does not match module from container"
+        fi
+    fi
+}
+
 function load_nfsrdma() {
     debug_print "Function: ${FUNCNAME[0]}"
 
     if [[ "${ENABLE_NFSRDMA}" = true ]]; then
+        # ATM we load nvme, nvme-rdma modules if ENABLE_NFSRDMA is enabled.
+        # perform some check to ensure that either:
+        # 1. nvme modules are not loaded, that way modprobe commands will actually load nvme, nvme-rdma modules
+        # from container.
+        # 2.check if loaded modules already match srcver of nvme related modules from container.
+        check_nvme_modules
+
         exec_cmd "modprobe nvme"
         exec_cmd "modprobe nvme-rdma"
         exec_cmd "modprobe rpcrdma"
@@ -963,7 +986,12 @@ function check_loaded_kmod_srcver_vs_modinfo() {
 function load_driver() {
     debug_print "Function: ${FUNCNAME[0]}"
 
-    if ! check_loaded_kmod_srcver_vs_modinfo mlx5_core mlx5_ib; then
+    local modules_to_check=("mlx5_core" "mlx5_ib" "ib_core")
+    if  [[ "$ENABLE_NFSRDMA" = true ]]; then
+        modules_to_check+=("nvme_rdma" "rpcrdma")
+    fi
+
+    if ! check_loaded_kmod_srcver_vs_modinfo "${modules_to_check[@]}"; then
         restart_driver
 
         new_driver_loaded=true
