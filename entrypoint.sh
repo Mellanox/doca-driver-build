@@ -239,12 +239,11 @@ function redhat_install_prerequisites() {
 
     timestamp_print "Installing dependencies"
 
-    rt_substr="rt-"
+    rt_hp_substr=""
     k_ver="not_set"
     releasever_str="--releasever=${RHEL_VERSION}"
 
-    if [[ ! ${FULL_KVER} =~ rt ]]; then
-        rt_substr=""
+    if [[ ! ${FULL_KVER} =~ rt && ! ${FULL_KVER} =~ 64k ]]; then
         k_ver=$FULL_KVER
 
         eus_available=("8.4" "8.6" "8.8" "9.0" "9.2" "9.4")
@@ -264,9 +263,10 @@ function redhat_install_prerequisites() {
         exec_cmd "dnf -q -y ${releasever_str} install kernel-devel-${FULL_KVER}" --allowerasing
         exec_cmd "dnf -q -y ${releasever_str} install kernel-core-${FULL_KVER}"
 
-    else
+    elif [[ ${FULL_KVER} =~ rt ]]; then
         debug_print "RT kernel identified"
         releasever_str=""
+        rt_hp_substr="rt-"
 
         exec_cmd "cp /host/etc/yum.repos.d/redhat.repo /etc/yum.repos.d/"
 
@@ -279,13 +279,26 @@ function redhat_install_prerequisites() {
             k_ver=$FULL_KVER
 
         else
-            debug_print "Failed to identify RT kernel naming patter in kernel sring: ${FULL_KVER}"
+            debug_print "Failed to identify RT kernel naming pattern in kernel string: ${FULL_KVER}"
+            exit_entryp 1
+        fi
+    elif [[ ${FULL_KVER} =~ 64k ]]; then
+        debug_print "64k page size kernel identified"
+        releasever_str=""
+        rt_hp_substr="64k-"
+
+        exec_cmd "cp /host/etc/yum.repos.d/redhat.repo /etc/yum.repos.d/"
+
+        if [[ ${FULL_KVER} =~ 64k$ ]]; then
+            k_ver="${FULL_KVER%.*}.${ARCH}"
+        else
+            debug_print "Failed to identify 64k page size kernel naming pattern in kernel string: ${FULL_KVER}"
             exit_entryp 1
         fi
     fi
 
-    exec_cmd "dnf -q -y ${releasever_str} install kernel-${rt_substr}devel-${k_ver}"
-    exec_cmd "dnf -q -y ${releasever_str} install kernel-${rt_substr}modules-${k_ver}"
+    exec_cmd "dnf -q -y ${releasever_str} install kernel-${rt_hp_substr}devel-${k_ver}"
+    exec_cmd "dnf -q -y ${releasever_str} install kernel-${rt_hp_substr}modules-${k_ver}"
 
     exec_cmd "dnf -q -y --releasever=${RHEL_VERSION} install elfutils-libelf-devel kernel-rpm-macros numactl-libs lsof rpm-build patch hostname"
 
