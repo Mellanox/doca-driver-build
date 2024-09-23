@@ -112,7 +112,7 @@ ENV NVIDIA_NIC_DRIVER_VER=${D_OFED_VERSION}
 ENV NVIDIA_NIC_DRIVER_PATH=""
 ENV NVIDIA_NIC_CONTAINER_VER=${D_CONTAINER_VER}
 
-COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/RPMS/redhat-release-*/${D_ARCH}/*.rpm /root/
+COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/RPMS/redhat-release-*/*/*.rpm /root/
 
 WORKDIR /root/
 RUN set -x && \

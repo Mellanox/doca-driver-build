@@ -122,7 +122,7 @@ jobs:
         file: ${{ matrix.os == 'ubuntu' && 'Ubuntu_Dockerfile' || 'RHEL_Dockerfile' }}
         build-args: |
           ARG D_OS=${{ matrix.os }}${{ matrix.version }}
-          ARG D_ARCH=$TARGETPLATFORM  # TODO: consider omitting this argument
+          # ARG D_ARCH=$TARGETPLATFORM  # TODO: consider omitting this argument
           ARG D_OFED_OS_VERSION=${{ env.LATEST_DOCA_VERSION }}
           ARG D_KERNEL_VER=${{ env.LATEST_KERNEL_VERSION }}${{ matrix.flavor && '-' }}${{ matrix.flavor }}
           ARG D_BASE_IMAGE=${{ matrix.os }}:${{ matrix.version }}

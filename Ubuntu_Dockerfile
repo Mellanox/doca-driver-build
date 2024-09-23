@@ -112,7 +112,7 @@ RUN set -x && \
     rm -rf /var/lib/apt/lists/*
 
 # Install driver
-COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/DEBS/${D_OS}/${D_ARCH}/*.deb /root/
+COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/DEBS/${D_OS}/*/*.deb /root/
 RUN dpkg -i /root/*.deb
 
 # Prevent modprobe from giving a WARNING about missing files
