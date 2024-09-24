@@ -21,6 +21,7 @@ ARG D_PYTHON_VERSION="36"
 ARG D_PYTHON="python${D_PYTHON_VERSION}"
 
 FROM $D_BASE_IMAGE AS base
+RUN echo DEBUG xxx0 $D_KERNEL_VER  # TODO: rm after testing
 
 # Inherited global args
 ARG D_OS
@@ -40,6 +41,7 @@ RUN set -x && \
 # Stage: Download NVIDIA driver sources and install src driver container packages requirements
 
 FROM base AS driver-src
+RUN echo DEBUG xxx1 $D_KERNEL_VER  # TODO: rm after testing
 
 # Inherited global args
 ARG D_OFED_VERSION
@@ -86,6 +88,7 @@ ARG D_OS
 ARG D_KERNEL_VER
 ARG OFED_SRC_LOCAL_DIR
 
+RUN echo DEBUG xxx2 $D_KERNEL_VER  # TODO: rm after testing
 RUN set -x && \
 # MOFED installation requirements
     dnf install -y autoconf gcc make rpm-build
@@ -113,6 +116,12 @@ ENV NVIDIA_NIC_DRIVER_PATH=""
 ENV NVIDIA_NIC_CONTAINER_VER=${D_CONTAINER_VER}
 
 COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/RPMS/redhat-release-*/*/*.rpm /root/
+RUN echo debug aaa  # TODO: rm after testing
+RUN ls -l  ${OFED_SRC_LOCAL_DIR}/RPMS/redhat-release-*
+RUN echo debug bbb
+RUN ls -l  ${OFED_SRC_LOCAL_DIR}/RPMS/redhat-release-*/*/
+RUN echo debug ccc
+RUN exit 88
 
 WORKDIR /root/
 RUN set -x && \

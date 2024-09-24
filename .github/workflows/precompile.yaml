@@ -112,19 +112,33 @@ jobs:
           echo NEW_BUILD_REQUIRED=true  >> $GITHUB_ENV
         fi
     - if: ${{ env.NEW_BUILD_REQUIRED }}
-      uses: docker/setup-qemu-action@v3
+      uses: docker/setup-buildx-action@v3
     - if: ${{ env.NEW_BUILD_REQUIRED }}
       uses: docker/setup-buildx-action@v3
+    - if: ${{ env.NEW_BUILD_REQUIRED }}
+      name: Determine base image
+      run: |
+        if [[ "${{ matrix.os }}" == "ubuntu" ]]
+        then
+          echo BASE_IMAGE=${{ matrix.os }}:${{ matrix.version }} >> $GITHUB_ENV
+        elif [[ "${{ matrix.os }}" == "rhel" ]]
+        then
+          echo BASE_IMAGE=$(TBD) >> $GITHUB_ENV  # TODO: find dynamic command to lookup image
+        elif [[ "${{ matrix.os }}" == "rhcos" ]]
+        then
+          # podman login registry.redhat.io --username=${RH_USERNAME} --password=${RH_PASSWORD}  # TODO: see if required
+          echo BASE_IMAGE=$(oc adm release info ${{ matrix.version }}.0 --image-for=driver-toolkit) >> $GITHUB_ENV
+        fi
     - if: ${{ env.NEW_BUILD_REQUIRED }}
       uses: docker/build-push-action@v4
       with:
         platforms: ${{ matrix.os == 'rhel' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}  # TODO: verifiy these are values are compatible for DOCA build
         file: ${{ matrix.os == 'ubuntu' && 'Ubuntu_Dockerfile' || 'RHEL_Dockerfile' }}
         build-args: |
-          ARG D_OS=${{ matrix.os }}${{ matrix.version }}
-          # ARG D_ARCH=$TARGETPLATFORM  # TODO: consider omitting this argument
-          ARG D_OFED_OS_VERSION=${{ env.LATEST_DOCA_VERSION }}
-          ARG D_KERNEL_VER=${{ env.LATEST_KERNEL_VERSION }}${{ matrix.flavor && '-' }}${{ matrix.flavor }}
-          ARG D_BASE_IMAGE=${{ matrix.os }}:${{ matrix.version }}
+          D_OS=${{ matrix.os }}${{ matrix.version }}
+          D_OFED_OS_VERSION=${{ env.LATEST_DOCA_VERSION }}
+          D_KERNEL_VER=${{ env.LATEST_KERNEL_VERSION }}${{ matrix.flavor && '-' }}${{ matrix.flavor }}
+          D_BASE_IMAGE=${{ env.BASE_IMAGE }}
+        # ARG D_ARCH=$TARGETPLATFORM  # TODO: consider omitting this argument
         tags: ${{ env.NVCR_DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_NAME }}:${{ env.DOCKER_TAG }}
         push: false  # TODO: change to true once build successful and satisfied with the matrix

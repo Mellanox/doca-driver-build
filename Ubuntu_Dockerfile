@@ -83,6 +83,7 @@ ARG D_OS
 ARG D_KERNEL_VER
 ARG OFED_SRC_LOCAL_DIR
 
+RUN echo DEBUG xxx $D_KERNEL_VER  # TODO: rm after testing
 # Driver build manadatory packages
 RUN set -x && \
     apt-get update && \
@@ -112,7 +113,15 @@ RUN set -x && \
     rm -rf /var/lib/apt/lists/*
 
 # Install driver
+RUN echo DEBUG xxx $D_KERNEL_VER  # TODO: rm after testing
 COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/DEBS/${D_OS}/*/*.deb /root/
+RUN echo debug aaa  # TODO: rm after testing
+RUN ls -l  ${OFED_SRC_LOCAL_DIR}/DEBS/${D_OS}
+RUN echo debug bbb
+RUN ls -l  ${OFED_SRC_LOCAL_DIR}/DEBS/${D_OS}/*/
+RUN echo debug ccc
+RUN exit 88
+
 RUN dpkg -i /root/*.deb
 
 # Prevent modprobe from giving a WARNING about missing files
