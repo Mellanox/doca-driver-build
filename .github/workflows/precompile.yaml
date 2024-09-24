@@ -1,5 +1,5 @@
 name: Build precompiled DOCA on new Kernel release
-# TODO: ask ivan (maybe also alex)  about what automation to maybe add for promotion from nvstaging to NGC
+# TODO: ask ivan (maybe also alex) about what automation to maybe add for promotion from nvstaging to NGC
 # OFED releases: ask vlad.l who knows about it - perhaps mohamed.(!t)
 
 on:
@@ -14,79 +14,102 @@ env:
   DOCKER_IMAGE_NAME: doca-driver
 
 jobs:
-  fetch-latest-doca-and-kernel-versions:
+  fetch-latest-doca-version:
     runs-on: ubuntu-latest
     steps:
-    - name: Fetch latest DOCA and kernel versions
-      id: fetch-latest-doca-and-kernel-versions
+    - name: Fetch latest DOCA version
+      id: fetch-latest-doca-version
       run: |
-        echo latest_doca_version=$(  curl -fsSL    'https://linux.mellanox.com/public/repo/doca/?C=M;O=D' | grep -Eo  'href="([0-9\.]+)/"' | head -n 1 | grep -Eo  '[0-9\.]+') >> $GITHUB_OUTPUT
-        echo latest_kernel_version=$(curl -fsSL 'https://kernel.ubuntu.com/~kernel-ppa/mainline/?C=M&O=D' | grep -Eo 'href="(v[0-9\.]+)/"' | head -n 1 | grep -Eo 'v[0-9\.]+') >> $GITHUB_OUTPUT  # TODO: do we want the "v" prefix in the kernel version?
-        tail -n 2 $GITHUB_OUTPUT
+        echo latest_doca_version=$(curl -fsSL 'https://linux.mellanox.com/public/repo/doca/?C=M;O=D' | grep -Eo 'href="([0-9\.]+)/"' | head -n 1 | grep -Eo '[0-9\.]+') >> $GITHUB_OUTPUT
+        tail -n 1 $GITHUB_OUTPUT
     outputs:
-      latest_doca_version:   ${{ steps.fetch-latest-doca-and-kernel-versions.outputs.latest_doca_version }}
-      latest_kernel_version: ${{ steps.fetch-latest-doca-and-kernel-versions.outputs.latest_kernel_version }}
+      latest_doca_version: ${{ steps.fetch-latest-doca-version.outputs.latest_doca_version }}
 
-  precompile-and-publish-doca:
+  precompile-and-publish-doca-for-ubuntu:
     needs:
-    - fetch-latest-doca-and-kernel-versions
+    - fetch-latest-doca-version
     runs-on: ubuntu-latest
     env:
-      RH_USERNAME: mzeevi@nvidia.com  # TODO: RH double check if there is a possibility for a service account instead of user account
-      LATEST_DOCA_VERSION:   ${{ needs.fetch-latest-doca-and-kernel-versions.outputs.latest_doca_version }}
-      LATEST_KERNEL_VERSION: ${{ needs.fetch-latest-doca-and-kernel-versions.outputs.latest_kernel_version }}
+      LATEST_DOCA_VERSION: ${{ needs.fetch-latest-doca-version.outputs.latest_doca_version }}
     strategy:
       matrix:
+        flavor:
+        - generic
+        - aws
+        - azure
+        - oracle
+        - nvidia
+        version:
+        - '24.04'
+        - '22.04'
+    steps:
+    - uses: actions/checkout@v4
+    - uses: docker/login-action@v3
+      with:
+        registry: ${{ env.NVCR_DOCKER_REGISTRY }}
+        username: ${{ secrets.NVCR_USERNAME }}  # TODO: add secret in github
+        password: ${{ secrets.NVCR_TOKEN }}     # TODO: add secret in github
+    - name: Fetch latest Kernel version  # TODO: do we want the "v" prefix in the kernel version?
+      run: |
+        # echo LATEST_KERNEL_VERSION=$(curl -fsSL 'https://kernel.ubuntu.com/~kernel-ppa/mainline/?C=M&O=D' | grep -Eo 'href="(v[0-9\.]+)/"' | head -n 1 | grep -Eo 'v[0-9\.]+') >> $GITHUB_ENV  # TODO: approve new lookup method (below) and then remove old method/line
+        echo LATEST_KERNEL_VERSION=$(docker run --rm ubuntu:${{ matrix.version }} bash -c "
+          apt-get update > /dev/null
+          apt-cache search --names-only linux-image | grep -Eo 'linux-image-[0-9.-]+' | sed -E 's/linux-image-([0-9.-]+)-/\1/g' | sort -V | tail -n 1"
+        ) >> $GITHUB_ENV
+        tail -n 1 $GITHUB_ENV
+    - name: Define docker tag
+      run: |
+        echo DOCKER_TAG=$LATEST_DOCA_VERSION-$LATEST_KERNEL_VERSION-${{ matrix.flavor }}-ubuntu${{ matrix.version }} >> $GITHUB_ENV
+        tail -n 1 $GITHUB_ENV
+    - name: Check if published precompiled DOCA for kernel version
+      id: check-if-published-precompiled-for-kernel
+      run: |
+        if skopeo list-tags docker://$NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME | jq '.Tags[]' -r | grep $DOCKER_TAG
+        then
+          echo NEW_BUILD_REQUIRED=false >> $GITHUB_ENV
+        else
+          echo NEW_BUILD_REQUIRED=true  >> $GITHUB_ENV
+        fi
+    - if: ${{ env.NEW_BUILD_REQUIRED }}
+      uses: docker/setup-buildx-action@v3
+    - if: ${{ env.NEW_BUILD_REQUIRED }}
+      uses: docker/setup-buildx-action@v3
+    - if: ${{ env.NEW_BUILD_REQUIRED }}
+      uses: docker/build-push-action@v4
+      with:
+        platforms: linux/amd64,linux/arm64
+        file: Ubuntu_Dockerfile
+        build-args: |
+          D_OS=ubuntu${{ matrix.version }}
+          D_OFED_OS_VERSION=${{ env.LATEST_DOCA_VERSION }}
+          D_KERNEL_VER=${{ env.LATEST_KERNEL_VERSION }}-${{ matrix.flavor }}
+          D_BASE_IMAGE=ubuntu:${{ matrix.version }}
+        tags: ${{ env.NVCR_DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_NAME }}:${{ env.DOCKER_TAG }}
+        push: false  # TODO: change to true once build successful and satisfied with the matrix
+
+  precompile-and-publish-doca-for-redhat-and-coreos:
+    if: false
+    needs:
+    - fetch-latest-doca-version
+    runs-on: ubuntu-latest
+    env:
+      RH_MAJOR_VERSION_FOR_RHCOS: 9  # TODO: define what this should be (for rhcos), and how its value should be *manually* updated (perhaps highest from `matrix.version` list?)...
+      LATEST_DOCA_VERSION: ${{ needs.fetch-latest-doca-version.outputs.latest_doca_version }}
+      RH_USERNAME: mzeevi@nvidia.com  # TODO: RH double check if there is a possibility for a service account instead of user account
+    strategy:
+      matrix:
+        os:
+        - rhel
+        version:
+        - '9.4'
+        - '9.3'
+        - '9.2'
+        - '8.10'
+        - '8.9'
+        - '8.8'
         include:
-        # ubuntu 24.04 flavors
-        - os: ubuntu
-          version: '24.04'
-          flavor: generic
-        - os: ubuntu
-          version: '24.04'
-          flavor: aws
-        - os: ubuntu
-          version: '24.04'
-          flavor: azure
-        - os: ubuntu
-          version: '24.04'
-          flavor: oracle
-        - os: ubuntu
-          version: '24.04'
-          flavor: nvidia
-        # ubuntu 22.04 flavors
-        - os: ubuntu
-          version: '22.04'
-          flavor: generic
-        - os: ubuntu
-          version: '22.04'
-          flavor: aws
-        - os: ubuntu
-          version: '22.04'
-          flavor: azure
-        - os: ubuntu
-          version: '22.04'
-          flavor: oracle
-        - os: ubuntu
-          version: '22.04'
-          flavor: nvidia
-        # rhel versions
-        - os: rhel
-          version: '9.4'
-        - os: rhel
-          version: '9.3'
-        - os: rhel
-          version: '9.2'
-        - os: rhel
-          version: '8.10'
-        - os: rhel
-          version: '8.9'
-        - os: rhel
-          version: '8.8'
-        # rhcos versions
         - os: rhcos
           version: '4.16'
-
     steps:
     - uses: actions/checkout@v4
     - uses: docker/login-action@v3
@@ -99,9 +122,14 @@ jobs:
         registry: ${{ env.NVCR_DOCKER_REGISTRY }}
         username: ${{ secrets.NVCR_USERNAME }}  # TODO: add secret in github
         password: ${{ secrets.NVCR_TOKEN }}     # TODO: add secret in github
-    - name: Define and export docker tag
+    - name: Fetch latest Kernel version
       run: |
-        echo DOCKER_TAG=$LATEST_DOCA_VERSION-$LATEST_KERNEL_VERSION${{ matrix.flavor && '-' }}${{ matrix.flavor }}-${{ matrix.os }}${{ matrix.version }} >> $GITHUB_ENV
+        [[ "${{ matrix.os }}" == "rhcos" ]] && major_version=$RH_MAJOR_VERSION_FOR_RHCOS
+        echo LATEST_KERNEL_VERSION=$(docker run --rm redhat/ubi$major_version:latest yum repoquery | grep kernel-headers | cut -d ':' -f 2) >> $GITHUB_ENV
+        tail -n 1 $GITHUB_ENV
+    - name: Define docker tag
+      run: |
+        echo DOCKER_TAG=$LATEST_DOCA_VERSION-$LATEST_KERNEL_VERSION-${{ matrix.os }}${{ matrix.version }} >> $GITHUB_ENV
     - name: Check if published precompiled DOCA for kernel version
       id: check-if-published-precompiled-for-kernel
       run: |
@@ -118,10 +146,7 @@ jobs:
     - if: ${{ env.NEW_BUILD_REQUIRED }}
       name: Determine base image
       run: |
-        if [[ "${{ matrix.os }}" == "ubuntu" ]]
-        then
-          echo BASE_IMAGE=${{ matrix.os }}:${{ matrix.version }} >> $GITHUB_ENV
-        elif [[ "${{ matrix.os }}" == "rhel" ]]
+        if [[ "${{ matrix.os }}" == "rhel" ]]
         then
           echo BASE_IMAGE=$(TBD) >> $GITHUB_ENV  # TODO: find dynamic command to lookup image
         elif [[ "${{ matrix.os }}" == "rhcos" ]]
@@ -132,13 +157,12 @@ jobs:
     - if: ${{ env.NEW_BUILD_REQUIRED }}
       uses: docker/build-push-action@v4
       with:
-        platforms: ${{ matrix.os == 'rhel' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}  # TODO: verifiy these are values are compatible for DOCA build
-        file: ${{ matrix.os == 'ubuntu' && 'Ubuntu_Dockerfile' || 'RHEL_Dockerfile' }}
+        platforms: ${{ matrix.os == 'rhel' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+        file: RHEL_Dockerfile
         build-args: |
           D_OS=${{ matrix.os }}${{ matrix.version }}
           D_OFED_OS_VERSION=${{ env.LATEST_DOCA_VERSION }}
           D_KERNEL_VER=${{ env.LATEST_KERNEL_VERSION }}${{ matrix.flavor && '-' }}${{ matrix.flavor }}
           D_BASE_IMAGE=${{ env.BASE_IMAGE }}
-        # ARG D_ARCH=$TARGETPLATFORM  # TODO: consider omitting this argument
         tags: ${{ env.NVCR_DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_NAME }}:${{ env.DOCKER_TAG }}
         push: false  # TODO: change to true once build successful and satisfied with the matrix
