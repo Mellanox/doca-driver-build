@@ -1,5 +1,8 @@
 name: Build precompiled DOCA for latest Kernels
 
+# TODO: decide on and implement a retention policy for nvstaging
+# TODO: determine a publishing/promotion strategy for deployments (NGC)
+# TODO: ask alex petrovsky about retention in NGC
 on:
   schedule:
   - cron: 0 9 * * mon-fri
@@ -8,9 +11,7 @@ on:
     - feature/precompiled-ofed-per-kernel
 
 env:
-  # TODO: ask ivan (maybe also alex) about what automation to maybe add for promotion from nvstaging to NGC
-  # OFED releases: ask vlad.l who knows about it - perhaps mohamed.(!t)
-  NVCR_DOCKER_REGISTRY: nvcr.io/nvstaging/mellanox  # TODO: verify if to publish to NGC or directly to nvstaging
+  NVCR_DOCKER_REGISTRY: nvcr.io/nvstaging/mellanox
   DOCKER_IMAGE_NAME: doca-driver
 
 jobs:
@@ -83,6 +84,7 @@ jobs:
           D_OFED_VERSION=${{ env.LATEST_DOCA_VERSION }}
           D_KERNEL_VER=${{ env.LATEST_KERNEL_VERSION }}
           D_BASE_IMAGE=ubuntu:${{ matrix.version }}
+          DRIVER_BUILD_EXTRA_ARGS=--without-mlnx-nvme-modules
         tags: ${{ env.NVCR_DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE_NAME }}:${{ env.DOCKER_TAG }}
         push: false  # TODO: change to true once build successful and satisfied with the matrix
 

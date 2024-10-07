@@ -84,6 +84,8 @@ FROM driver-src AS driver-builder
 ARG D_OS
 ARG D_KERNEL_VER
 ARG OFED_SRC_LOCAL_DIR
+# Additional local arg (for precompiled CI)
+ARG DRIVER_BUILD_EXTRA_ARGS
 
 # Driver build manadatory packages
 RUN set -x && \
@@ -92,7 +94,7 @@ RUN set -x && \
 
 # Build driver
 RUN set -x && \
-    ${OFED_SRC_LOCAL_DIR}/install.pl --without-depcheck --distro ${D_OS} --without-dkms --kernel ${D_KERNEL_VER} --kernel-only --build-only --copy-ifnames-udev --with-mlnx-tools --without-knem-modules --without-srp-modules --without-kernel-mft-modules --without-iser-modules --without-isert-modules  || cat /tmp/OFED.*.logs/mlnx-nvme.debbuild.log && exit 88  # TODO: remove log dump after troubleshooting
+    ${OFED_SRC_LOCAL_DIR}/install.pl --without-depcheck --distro ${D_OS} --without-dkms --kernel ${D_KERNEL_VER} --kernel-only --build-only --copy-ifnames-udev --with-mlnx-tools --without-knem-modules --without-srp-modules --without-kernel-mft-modules --without-iser-modules --without-isert-modules ${DRIVER_BUILD_EXTRA_ARGS}
 
 ###################################
 # Stage: Install precompiled driver
@@ -113,12 +115,14 @@ RUN set -x && \
     apt-get clean autoclean && \
     rm -rf /var/lib/apt/lists/*
 
+# TODO: remove after debugging
+RUN echo DEBUG mz1
+RUN ls -l  ${OFED_SRC_LOCAL_DIR}/DEBS/${D_OS}    || true
+RUN echo DEBUG mz2
+RUN ls -l  ${OFED_SRC_LOCAL_DIR}/DEBS/${D_OS}/*/ || true
+
 # Install driver
 COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/DEBS/${D_OS}/*/*.deb /root/
-RUN echo DEBUG mz1
-RUN ls -l  ${OFED_SRC_LOCAL_DIR}/DEBS/${D_OS}     # TODO: remove after debugging
-RUN echo DEBUG mz2
-RUN ls -l  ${OFED_SRC_LOCAL_DIR}/DEBS/${D_OS}/*/  # TODO: remove after debugging
 
 RUN dpkg -i /root/*.deb
 
