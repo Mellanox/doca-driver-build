@@ -33,6 +33,7 @@ jobs:
     env:
       LATEST_DOCA_VERSION: ${{ needs.fetch_latest_doca_version.outputs.latest_doca_version }}
     strategy:
+      fail-fast: false
       matrix:
         flavor:
         - generic
@@ -94,6 +95,7 @@ jobs:
       LATEST_DOCA_VERSION: ${{ needs.fetch_latest_doca_version.outputs.latest_doca_version }}
       RH_USERNAME: mzeevi@nvidia.com  # TODO: check for an existing service account (or create one)
     strategy:
+      fail-fast: false
       matrix:
         os:
         - rhel
