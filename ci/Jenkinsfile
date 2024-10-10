@@ -1,97 +1,7 @@
 pipeline {
   agent {
     kubernetes {
-      yaml """
-apiVersion: v1
-kind: Pod
-spec:
-  containers:
-  - name: jnlp
-    image: harbor.mellanox.com/toolbox/c3po-jnlp:0.0.29
-    resources:
-      requests:
-        memory: "8Gi"
-        cpu: "4"
-      limits:
-        memory: "8Gi"
-        cpu: "4"
-    securityContext:
-      # uid=41522(svc-nbu-c3po-bot)
-      runAsUser: 41522
-    volumeMounts:
-    - mountPath: /labhome
-      name: labhome
-      mountPropagation: HostToContainer
-    - mountPath: /auto
-      name: auto
-      mountPropagation: HostToContainer
-
-  - name: kaniko
-    image: gcr.io/kaniko-project/executor:debug
-    imagePullPolicy: Always
-    resources:
-      requests:
-        memory: "8Gi"
-        cpu: "4"
-      limits:
-        memory: "8Gi"
-        cpu: "4"
-    tty: true
-    command:
-    - sleep
-    args:
-    - 9999999
-    volumeMounts:
-    - mountPath: /labhome
-      name: labhome
-      mountPropagation: HostToContainer
-    - mountPath: /auto
-      name: auto
-      mountPropagation: HostToContainer
-
-  - name: dind
-    image: harbor.mellanox.com/toolbox/devops-tools-build:0.0.13
-    imagePullPolicy: Always
-    resources:
-      requests:
-        memory: "8Gi"
-        cpu: "4"
-      limits:
-        memory: "8Gi"
-        cpu: "4"
-    tty: true
-    command: ['cat']
-    securityContext:
-      # uid=41522(svc-nbu-c3po-bot)
-      runAsUser: 41522
-    volumeMounts:
-    - name: labhome
-      mountPath: /labhome
-      mountPropagation: HostToContainer
-    env:
-    - name: DOCKER_HOST
-      value: tcp://localhost:2375
-
-  - name: docker-daemon
-    image: harbor.mellanox.com/toolbox/devops-tools-build:0.0.13
-    securityContext:
-      privileged: true
-    env:
-    - name: DOCKER_TLS_CERTDIR
-      value: ""
-
-  volumes:
-  - name: labhome
-    hostPath:
-      path: /labhome
-      type: Directory
-      readOnly: false
-  - name: auto
-    hostPath:
-      path: /auto
-      type: Directory
-      readOnly: false
-"""
+      yamlFile "ci/agent_pod.yaml"
     }
   }
 
@@ -112,7 +22,9 @@ spec:
           echo "FROM alpine" >> Dockerfile
           echo "RUN echo mock > main.txt" >> Dockerfile
         """)
-        sh("until nc -vz localhost 2375; do sleep 3; done")
+        container("dind") {
+          sh("until nc -vz localhost 2375; do sleep 2; done")
+        }
       }
     }
 
