@@ -1,0 +1,50 @@
+pipeline {
+  agent {
+    kubernetes {
+      yamlFile "ci/agent_pod.yaml"
+    }
+  }
+
+  options {
+    timestamps()
+    ansiColor("xterm")
+  }
+
+  stages {
+    stage("Init") {
+      steps {
+        sh("""
+          echo "FROM alpine" >> Dockerfile
+          echo "RUN echo mock > main.txt" >> Dockerfile
+        """)
+        sh("until nc -vz localhost 2375; do sleep 3; done")
+      }
+    }
+
+    stage("Sanity") {
+      parallel {
+        stage("Docker") {
+          steps {
+            container("dind") {
+              sh("""
+                docker info
+              """)
+            }
+          }
+        }
+
+        stage("Kaniko") {
+          steps {
+            container("kaniko") {
+              sh("""
+                executor version
+              """)
+            }
+          }
+        }
+
+      }
+    }
+  }
+}
+
