@@ -1,0 +1,117 @@
+pipeline {
+  agent {
+    kubernetes {
+      yamlFile "ci/agent_pod.yaml"
+    }
+  }
+
+  options {
+    timestamps()
+    ansiColor("xterm")
+  }
+
+  environment {
+    DOCKER_REGISTRY = "nvcr.io/nvstaging/mellanox"
+    DOCKER_IMAGE_NAME = "doca-driver"
+  }
+
+  stages {
+    stage("Init") {
+      steps {
+        sh("""
+          echo "FROM alpine" >> Dockerfile
+          echo "RUN echo mock > main.txt" >> Dockerfile
+        """)
+        container("dind") {
+          sh("until nc -vz localhost 2375; do sleep 3; done")
+        }
+      }
+    }
+
+    stage("Precompile build matrices") {
+      matrix {
+        axes {
+          axis {
+            name "ARCHITECTURE"
+            values "linux/amd64", "linux/arm64"
+          }
+          axis {
+            name "OS_VERSION"
+            values "9.4", "9.3", "9.2", "8.10", "8.9", "8.8", "4.16"
+          }
+          axis {
+            name "OS"
+            values "rhel", "rhcos"
+          }
+        }
+        excludes {
+          exclude {
+            axis {
+              name "OS"
+              values "rhel"
+            }
+            axis {
+              name "OS_VERSION"
+              values "4.16"
+            }
+          }
+          exclude {
+            axis {
+              name "OS"
+              values "rhcos"
+            }
+            axis {
+              name "OS_VERSION"
+            values "9.4", "9.3", "9.2", "8.10", "8.9", "8.8"
+            }
+          }
+          exclude {
+            axis {
+              name "OS"
+              values "rhel"
+            }
+            axis {
+              name "ARCHITECTURE"
+              values "linux/arm64"
+            }
+          }
+        }
+        environment {
+          RH_MAJOR_VERSION_TO_USE_FOR_LATEST_KERNEL_LOOKUPS = "9"
+        }
+        stages {
+
+          stage("Init") {
+            steps {
+              sh("""
+                echo DOCKER_TAG shall be $OS$OS_VERSION-$ARCHITECTURE
+              """)
+            }
+          }
+
+          stage("Kaniko") {
+            steps {
+              container("kaniko") {
+                sh("""
+                  /kaniko/executor version
+                """)
+              }
+            }
+          }
+
+          stage("Docker") {
+            steps {
+              container("dind") {
+                sh("""
+                  docker --version
+                """)
+              }
+            }
+          }
+
+        }
+      }
+    }
+  }
+}
+

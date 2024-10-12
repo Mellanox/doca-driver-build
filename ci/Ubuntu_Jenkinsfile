@@ -1,0 +1,98 @@
+pipeline {
+  agent {
+    kubernetes {
+      yamlFile "ci/agent_pod.yaml"
+    }
+  }
+
+  options {
+    timestamps()
+    ansiColor("xterm")
+  }
+
+  parameters {
+    string(name: "LATEST_DOCA_VERSION", defaultValue: "24.07-0.6.1.0", description: "The version of the DOCA sources to use")
+  }
+
+  environment {
+    DOCKER_REGISTRY = "nvcr.io/nvstaging/mellanox"
+    DOCKER_IMAGE_NAME = "doca-driver"
+  }
+
+  stages {
+    stage("Init") {
+      steps {
+        sh("""
+          echo "FROM alpine" >> Dockerfile
+          echo "RUN echo mock > main.txt" >> Dockerfile
+        """)
+        container("dind") {
+          sh("until nc -vz localhost 2375; do sleep 3; done")
+        }
+      }
+    }
+
+    stage("Precompile build matrices") {
+      matrix {
+        axes {
+          axis {
+            name "ARCHITECTURE"
+            values "linux/amd64", "linux/arm64"
+          }
+          axis {
+            name "FLAVOR"
+            values "generic", "aws", "azure", "oracle", "nvidia"
+          }
+          axis {
+            name "OS_VERSION"
+            values "24.04", "22.04"
+          }
+        }
+        stages {
+
+          stage("Init") {
+            steps {
+              script {
+                // Fetch latest Kernel version
+                env.LATEST_KERNEL_VERSION = sh(script: """
+                  docker run --rm ubuntu:$OS_VERSION bash -c "
+                    apt-get update > /dev/null
+                    apt-cache search --names-only linux-image | grep -Eo 'linux-image-[0-9.-]+$FLAVOR' | sed -E 's/linux-image-//g' | sort -V | tail -n 1
+                  "
+                """, returnStdout: true).trim()
+
+                // Determine Docker tag
+                env.DOCKER_TAG = "$params.LATEST_DOCA_VERSION-$LATEST_KERNEL_VERSION-ubuntu$OS_VERSION"  // example: 24.07-0.6.1.0-6.8.0-46-generic-ubuntu24.04
+              }
+            }
+          }
+
+          stage("Kaniko") {
+            steps {
+              container("kaniko") {
+                sh("""
+                env | grep LATEST_KERNEL_VERSION
+                env | grep LATEST_DOCA_VERSION
+                env | grep DOCKER_TAG
+                  /kaniko/executor version
+                """)
+              }
+            }
+          }
+
+          stage("Docker") {
+            steps {
+              container("dind") {
+                sh("""
+                  docker --version
+                """)
+              }
+            }
+          }
+
+        }
+      }
+    }
+  }
+}
+
