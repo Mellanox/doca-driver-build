@@ -22,10 +22,6 @@ pipeline {
   stages {
     stage("Init") {
       steps {
-        sh("""
-          echo "FROM alpine" >> Dockerfile
-          echo "RUN echo mock > main.txt" >> Dockerfile
-        """)
         container("dind") {
           sh("until nc -vz localhost 2375; do sleep 3; done")
         }
@@ -48,39 +44,57 @@ pipeline {
             values "24.04", "22.04"
           }
         }
+        environment {
+          OS_VERSION = "$OS_VERSION"  // workaround to access matrix values in `script{}` scope
+          FLAVOR = "$FLAVOR"          // workaround to access matrix values in `script{}` scope
+        }
         stages {
 
           stage("Init") {
             steps {
-              script {
-                // Fetch latest Kernel version
-                env.LATEST_KERNEL_VERSION = sh(script: """
-                  docker run --rm ubuntu:$OS_VERSION bash -c "
-                    apt-get update > /dev/null
-                    apt-cache search --names-only linux-image | grep -Eo 'linux-image-[0-9.-]+$FLAVOR' | sed -E 's/linux-image-//g' | sort -V | tail -n 1
-                  "
-                """, returnStdout: true).trim()
+              container("dind") {
+                script {
+                  // Fetch latest Kernel version
+                  env.LATEST_KERNEL_VERSION = sh(script: """
+                    docker run --rm ubuntu:$OS_VERSION bash -c "
+                      apt-get update > /dev/null
+                      apt-cache search --names-only linux-image | grep -Eo 'linux-image-[0-9.-]+$FLAVOR' | sed -E 's/linux-image-//g' | sort -V | tail -n 1
+                    "
+                  """, returnStdout: true).trim()  // example: 6.8.0-46-generic
 
-                // Determine Docker tag
-                env.DOCKER_TAG = "$params.LATEST_DOCA_VERSION-$LATEST_KERNEL_VERSION-ubuntu$OS_VERSION"  // example: 24.07-0.6.1.0-6.8.0-46-generic-ubuntu24.04
+                  // Determine Docker tag
+                  ARCH = ARCHITECTURE.tokenize("/")[1]
+                  env.DOCKER_TAG = "$params.LATEST_DOCA_VERSION-$LATEST_KERNEL_VERSION-ubuntu$OS_VERSION-$ARCH"  // example: 24.07-0.6.1.0-6.8.0-46-generic-ubuntu24.04-amd64
+
+                  // Check if precompiled DOCA for kernel version already exists
+                  env.PRECOMPILED_VERSION_EXISTS = sh(script: """
+                    skopeo list-tags docker://$NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME | \
+                      jq '.Tags[]' -r | \
+                      grep $LATEST_DOCA_VERSION | \
+                      grep $FLAVOR-ubuntu$OS_VERSION-$ARCH
+                  """, returnStatus: true)
+                }
               }
             }
           }
 
-          stage("Kaniko") {
+          stage("Build and push") {
+            when {
+              expression { env.PRECOMPILED_VERSION_EXISTS != 0 }
+            }
             steps {
               container("kaniko") {
                 sh("""
-                env | grep LATEST_KERNEL_VERSION
-                env | grep LATEST_DOCA_VERSION
-                env | grep DOCKER_TAG
                   /kaniko/executor version
                 """)
               }
             }
           }
 
-          stage("Docker") {
+          stage("Manifest creation") {
+            when {
+              expression { env.PRECOMPILED_VERSION_EXISTS != 0 }
+            }
             steps {
               container("dind") {
                 sh("""
