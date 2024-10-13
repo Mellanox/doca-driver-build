@@ -15,7 +15,7 @@ pipeline {
   }
 
   environment {
-    DOCKER_REGISTRY = "nvcr.io/nvstaging/mellanox"
+    NVCR_DOCKER_REGISTRY = "nvcr.io/nvstaging/mellanox"
     DOCKER_IMAGE_NAME = "doca-driver"
   }
 
@@ -65,6 +65,11 @@ pipeline {
                   // Determine Docker tag
                   ARCH = ARCHITECTURE.tokenize("/")[1]
                   env.DOCKER_TAG = "$params.LATEST_DOCA_VERSION-$LATEST_KERNEL_VERSION-ubuntu$OS_VERSION-$ARCH"  // example: 24.07-0.6.1.0-6.8.0-46-generic-ubuntu24.04-amd64
+
+                  // Docker login
+                  withCredentials([usernamePassword(credentialsId: "nvcr-username-and-token", usernameVariable: "NVCR_USERNAME", passwordVariable: "NVCR_TOKEN")]) {
+                    sh("echo '$NVCR_TOKEN' | docker login -u '\$oauthtoken' --password-stdin $NVCR_DOCKER_REGISTRY")
+                  }
 
                   // Check if precompiled DOCA for kernel version already exists
                   env.PRECOMPILED_VERSION_EXISTS = sh(script: """

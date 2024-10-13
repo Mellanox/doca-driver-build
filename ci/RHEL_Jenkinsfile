@@ -1,3 +1,4 @@
+// ON HOLD: due for 2025-01
 pipeline {
   agent {
     kubernetes {
@@ -15,7 +16,7 @@ pipeline {
   }
 
   environment {
-    DOCKER_REGISTRY = "nvcr.io/nvstaging/mellanox"
+    NVCR_DOCKER_REGISTRY = "nvcr.io/nvstaging/mellanox"
     DOCKER_IMAGE_NAME = "doca-driver"
   }
 
@@ -77,8 +78,9 @@ pipeline {
           }
         }
         environment {
-          RH_MAJOR_VERSION_TO_USE_FOR_LATEST_KERNEL_LOOKUPS = "9"
           OS = "$OS"  // workaround to access matrix values in `script{}` scope
+          RH_MAJOR_VERSION_TO_USE_FOR_LATEST_KERNEL_LOOKUPS = "9"
+          RH_DOCKER_REGISTRY = "registry.redhat.io"
         }
         stages {
 
@@ -97,6 +99,15 @@ pipeline {
                   // Determine Docker tag
                   ARCH = ARCHITECTURE.tokenize("/")[1]
                   env.DOCKER_TAG = "$params.LATEST_DOCA_VERSION-$LATEST_KERNEL_VERSION-$OS$OS_VERSION-$ARCH"  // example: 24.07-0.6.1.0-5.14.0-427.37.1.el9_4.x86_64-rhel9.4-amd64
+
+                  // Docker login
+                  // TODO: add crdentials in github
+                  withCredentials([usernamePassword(credentialsId: "redhat-username-and-password", usernameVariable: "RH_USERNAME", passwordVariable: "RH_PASSWORD")]) {
+                    sh("echo '$RH_PASSWORD' | docker login -u '$RH_USERNAME' --password-stdin $RH_DOCKER_REGISTRY")  // required during build
+                  }
+                  withCredentials([usernamePassword(credentialsId: "nvcr-username-and-token", usernameVariable: "NVCR_USERNAME", passwordVariable: "NVCR_TOKEN")]) {
+                    sh("echo '$NVCR_TOKEN' | docker login -u '\\$NVCR_USERNAME' --password-stdin $NVCR_DOCKER_REGISTRY")
+                  }
 
                   // Check if precompiled DOCA for kernel version already exists
                   env.PRECOMPILED_VERSION_EXISTS = sh(script: """
