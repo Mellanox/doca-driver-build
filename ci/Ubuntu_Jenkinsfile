@@ -23,6 +23,7 @@ pipeline {
     stage("Init") {
       steps {
         container("dind") {
+          sh("sudo apk add jq skopeo")
           sh("until nc -vz localhost 2375; do sleep 3; done")
         }
       }
@@ -68,7 +69,7 @@ pipeline {
 
                   // Docker login
                   withCredentials([usernamePassword(credentialsId: "nvcr-username-and-token", usernameVariable: "NVCR_USERNAME", passwordVariable: "NVCR_TOKEN")]) {
-                    sh("echo '$NVCR_TOKEN' | docker login -u '\$oauthtoken' --password-stdin $NVCR_DOCKER_REGISTRY")
+                    sh("echo '$NVCR_TOKEN' | docker login -u '$NVCR_USERNAME' --password-stdin $NVCR_DOCKER_REGISTRY")
                   }
 
                   // Check if precompiled DOCA for kernel version already exists
