@@ -85,7 +85,7 @@ ARG D_OS
 ARG D_KERNEL_VER
 ARG OFED_SRC_LOCAL_DIR
 # Additional local arg (for precompiled CI)
-ARG DRIVER_BUILD_EXTRA_ARGS
+ARG D_BUILD_EXTRA_ARGS
 
 # Driver build manadatory packages
 RUN set -x && \
@@ -94,7 +94,7 @@ RUN set -x && \
 
 # Build driver
 RUN set -x && \
-    ${OFED_SRC_LOCAL_DIR}/install.pl --without-depcheck --distro ${D_OS} --without-dkms --kernel ${D_KERNEL_VER} --kernel-only --build-only --copy-ifnames-udev --with-mlnx-tools --without-knem-modules --without-srp-modules --without-kernel-mft-modules --without-iser-modules --without-isert-modules ${DRIVER_BUILD_EXTRA_ARGS}
+    ${OFED_SRC_LOCAL_DIR}/install.pl --without-depcheck --distro ${D_OS} --without-dkms --kernel ${D_KERNEL_VER} --kernel-only --build-only --copy-ifnames-udev --with-mlnx-tools --without-knem-modules --without-srp-modules --without-kernel-mft-modules --without-iser-modules --without-isert-modules ${D_BUILD_EXTRA_ARGS}
 
 ###################################
 # Stage: Install precompiled driver

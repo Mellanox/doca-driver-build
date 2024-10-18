@@ -63,22 +63,21 @@ pipeline {
                     "
                   """, returnStdout: true).trim()  // example: 6.8.0-46-generic
 
-                  // Determine Docker tag
-                  ARCH = ARCHITECTURE.tokenize("/")[1]
-                  env.DOCKER_TAG = "$params.LATEST_DOCA_VERSION-$LATEST_KERNEL_VERSION-ubuntu$OS_VERSION-$ARCH"  // example: 24.07-0.6.1.0-6.8.0-46-generic-ubuntu24.04-amd64
-
                   // Docker login
                   withCredentials([usernamePassword(credentialsId: "nvcr-username-and-token", usernameVariable: "NVCR_USERNAME", passwordVariable: "NVCR_TOKEN")]) {
                     sh("echo '$NVCR_TOKEN' | docker login -u '$NVCR_USERNAME' --password-stdin $NVCR_DOCKER_REGISTRY")
                   }
 
                   // Check if precompiled DOCA for kernel version already exists
+                  ARCH = ARCHITECTURE.tokenize("/")[1]
                   env.PRECOMPILED_VERSION_EXISTS = sh(script: """
-                    skopeo list-tags docker://$NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME | \
-                      jq '.Tags[]' -r | \
+                    skopeo list-tags docker://$NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME | jq '.Tags[]' -r | \
                       grep $LATEST_DOCA_VERSION | \
                       grep $FLAVOR-ubuntu$OS_VERSION-$ARCH
                   """, returnStatus: true)
+
+                  // Determine Docker tag
+                  env.DOCKER_TAG = "$params.LATEST_DOCA_VERSION-$LATEST_KERNEL_VERSION-ubuntu$OS_VERSION"  // example: 24.07-0.6.1.0-6.8.0-46-generic-ubuntu24.04
                 }
               }
             }
@@ -91,20 +90,35 @@ pipeline {
             steps {
               container("kaniko") {
                 sh("""
-                  /kaniko/executor version
-                """)
+                  /kaniko/executor \
+                    --no-push \
+                    --dockerfile=Ubuntu_Dockerfile \
+                    --target-platform=$ARCHITECTURE \
+                    --build-arg D_OS=ubuntu$OS_VERSION \
+                    --build-arg D_BASE_IMAGE=ubuntu:$OS_VERSION \
+                    --build-arg D_OFED_VERSION=$LATEST_DOCA_VERSION \
+                    --build-arg D_KERNEL_VER=$LATEST_KERNEL_VERSION \
+                    --build-arg D_BUILD_EXTRA_ARGS=--without-mlnx-nvme-modules \
+                    --destination=$NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME:$DOCKER_TAG-$ARCH
+                """)  // TODO: remove `--no-push` after development
               }
             }
           }
 
+          // TODO: isolate stage to be after matrix?
           stage("Manifest creation") {
             when {
-              expression { env.PRECOMPILED_VERSION_EXISTS != 0 }
+              expression { false }
+              // expression { env.PRECOMPILED_VERSION_EXISTS != 0 }
             }
             steps {
               container("dind") {
                 sh("""
-                  docker --version
+                  docker manifest create \
+                    $NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME:$DOCKER_TAG \
+                    $NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME:$DOCKER_TAG-amd64 \
+                    $NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME:$DOCKER_TAG-arm64
+                  docker manifest push $NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME:$DOCKER_TAG
                 """)
               }
             }
