@@ -12,6 +12,7 @@ pipeline {
 
   parameters {
     string(name: "LATEST_DOCA_VERSION", defaultValue: "24.07-0.6.1.0", description: "The version of the DOCA sources to use")
+    booleanParam(name: "PUSH_IMAGES", defaultValue: false, description: "For dry-runs, disable pushing images to registry")  // TODO: change `defaultValue` to `true`, after development
   }
 
   environment {
@@ -38,11 +39,11 @@ pipeline {
           }
           axis {
             name "FLAVOR"
-            values "generic", "aws", "azure", "oracle", "nvidia"
+            values "generic" //, "aws", "azure", "oracle", "nvidia"  // TODO: debug build and then reenable full matrix
           }
           axis {
             name "OS_VERSION"
-            values "24.04", "22.04"
+            values "24.04" //, "22.04"  // TODO: debug build and then reenable full matrix
           }
         }
         environment {
@@ -65,7 +66,7 @@ pipeline {
 
                   // Docker login
                   withCredentials([usernamePassword(credentialsId: "nvcr-username-and-token", usernameVariable: "NVCR_USERNAME", passwordVariable: "NVCR_TOKEN")]) {
-                    sh("echo '$NVCR_TOKEN' | docker login -u '$NVCR_USERNAME' --password-stdin $NVCR_DOCKER_REGISTRY")
+                    sh('echo "$NVCR_TOKEN" | docker login -u "$NVCR_USERNAME" --password-stdin $NVCR_DOCKER_REGISTRY')
                   }
 
                   // Check if precompiled DOCA for kernel version already exists
@@ -76,8 +77,9 @@ pipeline {
                       grep $FLAVOR-ubuntu$OS_VERSION-$ARCH
                   """, returnStatus: true)
 
-                  // Determine Docker tag
+                  // Determine Docker manifest and tag
                   env.DOCKER_TAG = "$params.LATEST_DOCA_VERSION-$LATEST_KERNEL_VERSION-ubuntu$OS_VERSION"  // example: 24.07-0.6.1.0-6.8.0-46-generic-ubuntu24.04
+                  env.DOCKER_MANIFEST = "$NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME:$DOCKER_TAG"
                 }
               }
             }
@@ -91,34 +93,35 @@ pipeline {
               container("kaniko") {
                 sh("""
                   /kaniko/executor \
-                    --no-push \
                     --dockerfile=Ubuntu_Dockerfile \
-                    --target-platform=$ARCHITECTURE \
+                    --custom-platform=$ARCHITECTURE \
                     --build-arg D_OS=ubuntu$OS_VERSION \
                     --build-arg D_BASE_IMAGE=ubuntu:$OS_VERSION \
                     --build-arg D_OFED_VERSION=$LATEST_DOCA_VERSION \
                     --build-arg D_KERNEL_VER=$LATEST_KERNEL_VERSION \
                     --build-arg D_BUILD_EXTRA_ARGS=--without-mlnx-nvme-modules \
-                    --destination=$NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME:$DOCKER_TAG-$ARCH
-                """)  // TODO: remove `--no-push` after development
+                    --destination=$DOCKER_MANIFEST-$ARCH \
+                    ${params.PUSH_IMAGES ? "" : "--no-push"}
+                """)
               }
             }
           }
 
-          // TODO: isolate stage to be after matrix?
-          stage("Manifest creation") {
+          stage("Docker manifest") {
             when {
-              expression { false }
-              // expression { env.PRECOMPILED_VERSION_EXISTS != 0 }
+              expression { env.PRECOMPILED_VERSION_EXISTS != 0 && params.PUSH_IMAGES }
             }
             steps {
               container("dind") {
                 sh("""
-                  docker manifest create \
-                    $NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME:$DOCKER_TAG \
-                    $NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME:$DOCKER_TAG-amd64 \
-                    $NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME:$DOCKER_TAG-arm64
-                  docker manifest push $NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME:$DOCKER_TAG
+                  if docker manifest inspect $DOCKER_MANIFEST > /dev/null;
+                  then
+                    docker manifest annotate $DOCKER_MANIFEST $DOCKER_MANIFEST-$ARCH --os linux --arch $ARCH  # TODO: see if `os` & `arch` annotations are redundant
+                  else
+                    docker manifest create   $DOCKER_MANIFEST $DOCKER_MANIFEST-$ARCH
+                    docker manifest annotate $DOCKER_MANIFEST $DOCKER_MANIFEST-$ARCH --os linux --arch $ARCH  # TODO: see if `os` & `arch` annotations are redundant
+                  fi
+                  docker manifest push       $DOCKER_MANIFEST
                 """)
               }
             }
