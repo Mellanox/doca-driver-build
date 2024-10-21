@@ -1209,6 +1209,10 @@ function print_loaded_drv_ver_str() {
 }
 
 ############################## Exec start #####################################
+if ${ENTRYPOINT_DEBUG}; then
+    set -x
+fi
+
 [[ -f "/tmp/entrypoint_done" ]] && echo "Entrypoint already executed, restart container" && exit 0
 
 timestamp_print "NVIDIA driver container exec start"
