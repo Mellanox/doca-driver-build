@@ -1044,15 +1044,31 @@ function install_driver() {
     exec_cmd "depmod ${FULL_KVER}"
 }
 
+function calculate_driver_inventory_md5_checksum() {
+    find "${driver_inventory_path}" -type f -exec md5sum {} + | md5sum | awk '{ print $1 }'
+}
+
 function build_driver() {
     debug_print "Function: ${FUNCNAME[0]}"
 
     if ${reuse_driver_inventory}; then
         driver_inventory_path="${NVIDIA_NIC_DRIVERS_INVENTORY_PATH}/${FULL_KVER}/${NVIDIA_NIC_DRIVER_VER}"
+        checksum_path="${NVIDIA_NIC_DRIVERS_INVENTORY_PATH}/${FULL_KVER}/${NVIDIA_NIC_DRIVER_VER}.checksum"
 
         if [ -d "${driver_inventory_path}" ]; then
-            timestamp_print "Skipping driver build, reusing previously built packages for kernel ${FULL_KVER}"
-            return 0
+            if [ -f "${checksum_path}" ]; then
+                stored_checksum=$(cat "${checksum_path}")
+                current_checksum=$(calculate_driver_inventory_md5_checksum)
+
+                if [ "${stored_checksum}" == "${current_checksum}" ]; then
+                    timestamp_print "Skipping driver build, reusing previously built packages for kernel ${FULL_KVER}"
+                    return 0
+                else
+                    timestamp_print "Check sum of the existing artifacts does not match, building the driver again"
+                fi
+            else
+                timestamp_print "No check sum file found for the existing artifacts, building the driver again"
+            fi
         fi
     else
         driver_inventory_path=/tmp/nvidia_nic_driver_$(date +"%d-%m-%Y_%H-%M-%S")
@@ -1109,6 +1125,12 @@ function build_driver() {
         fi
     fi
 
+    if ${reuse_driver_inventory}; then
+        current_checksum=$(calculate_driver_inventory_md5_checksum)
+        timestamp_print "Storing the check sum for build artifacts at ${checksum_path}, check sum: ${current_checksum}"
+        echo ${current_checksum} > "${checksum_path}"
+    fi
+
     driver_build_incomplete=false
 }
 
@@ -1123,20 +1145,20 @@ function cleanup_driver_inventory() {
             continue
         fi
 
-        driver_ver_dirs=$(ls ${NVIDIA_NIC_DRIVERS_INVENTORY_PATH}/${kernel_ver_dir})
+        driver_ver_items=$(ls ${NVIDIA_NIC_DRIVERS_INVENTORY_PATH}/${kernel_ver_dir})
 
-        found_driver_ver_dirs=0
-        removed_driver_ver_dirs=0
-        for driver_ver_dir in ${driver_ver_dirs}; do
-            found_driver_ver_dirs=$((${found_driver_ver_dirs}+1))
+        found_driver_ver_items=0
+        removed_driver_ver_items=0
+        for driver_ver_item in ${driver_ver_items}; do
+            found_driver_ver_items=$((${found_driver_ver_items}+1))
 
-            if [ ${driver_ver_dir} != ${NVIDIA_NIC_DRIVER_VER} ]; then
-                exec_cmd "rm -rf ${NVIDIA_NIC_DRIVERS_INVENTORY_PATH}/${kernel_ver_dir}/${driver_ver_dir}"
-                removed_driver_ver_dirs=$((${removed_driver_ver_dirs}+1))
+            if [[ ${driver_ver_item} != "${NVIDIA_NIC_DRIVER_VER}" && ${driver_ver_item} != "${NVIDIA_NIC_DRIVER_VER}.checksum" ]]; then
+                exec_cmd "rm -rf ${NVIDIA_NIC_DRIVERS_INVENTORY_PATH}/${kernel_ver_dir}/${driver_ver_item}"
+                removed_driver_ver_items=$((${removed_driver_ver_items}+1))
             fi
         done
 
-        [[ ${found_driver_ver_dirs} -eq ${removed_driver_ver_dirs} ]] && exec_cmd "rm -rf ${NVIDIA_NIC_DRIVERS_INVENTORY_PATH}/${kernel_ver_dir}"
+        [[ ${found_driver_ver_items} -eq ${removed_driver_ver_items} ]] && exec_cmd "rm -rf ${NVIDIA_NIC_DRIVERS_INVENTORY_PATH}/${kernel_ver_dir}"
 
     done
 }
