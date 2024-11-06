@@ -47,6 +47,9 @@
 
 : ${NVIDIA_NIC_DRIVERS_INVENTORY_PATH:=""}
 
+: ${OFED_BLACKLIST_MODULES_FILE:=/etc/modprobe.d/blacklist-ofed-modules.conf}
+: ${OFED_BLACKLIST_MODULES:=mlx5_core:mlx5_ib:ib_umad:ib_uverbs:ib_ipoib:rdma_cm:rdma_ucm:ib_core:ib_cm}
+
 function timestamp_print () {
     date_time_stamp=$(date +'%d-%b-%y_%H:%M:%S')
     msg="[${date_time_stamp}] $@"
@@ -441,6 +444,25 @@ function unload_storage_modules() {
     fi
 }
 
+function generate_ofed_modules_blacklist(){
+    echo "Function: ${FUNCNAME[0]}"
+
+    # Setting modules delimiter by ":"
+    IFS=':' read -ra components <<< "${OFED_BLACKLIST_MODULES}"
+
+    echo -e "# blacklist ofed-related modules on host to prevent inbox or host OFED driver loading\n" > ${OFED_BLACKLIST_MODULES_FILE}
+    # Split module names and append to file
+    for component in "${components[@]}"; do
+        echo "blacklist $component" >> ${OFED_BLACKLIST_MODULES_FILE}
+    done
+
+    debug_print "`cat ${OFED_BLACKLIST_MODULES_FILE}`"
+}
+
+function remove_ofed_modules_blacklist(){
+    rm -rf ${OFED_BLACKLIST_MODULES_FILE}; timestamp_print "Remove blacklisted mofed modules file from host"
+}
+
 function restart_driver() {
     debug_print "Function: ${FUNCNAME[0]}"
 
@@ -467,9 +489,14 @@ function restart_driver() {
 
     ${load_pci_hyperv_intf} && exec_cmd "modprobe -d /host pci-hyperv-intf"
 
+    timestamp_print "Apply blacklisted mofed modules file to host (${OFED_BLACKLIST_MODULES_FILE})"
+    trap 'remove_ofed_modules_blacklist' EXIT
+    generate_ofed_modules_blacklist 
     ${UNLOAD_STORAGE_MODULES} && unload_storage_modules
 
     exec_cmd "/etc/init.d/openibd restart"
+    remove_ofed_modules_blacklist
+
 }
 
 function restructure_guid() {
