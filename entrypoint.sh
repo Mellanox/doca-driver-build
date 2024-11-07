@@ -529,7 +529,8 @@ function find_mlx_devs() {
 
             pci_addr=$(basename $(readlink ${netdev_path}/device)) && [[ -n $pci_addr ]] || return 1
             dev_name=$(basename "$netdev_path") && [[ -n $dev_name ]] || return 1
-            dev_operstate=$(cat "$netdev_path"/operstate) && [[ -n $dev_operstate ]] || return 1
+            dev_adminstate_flags=$(( $(cat "$netdev_path"/flags) & 1 )) && [[ -n $dev_adminstate_flags ]] || return 1
+            dev_adminstate=$([[ $dev_adminstate_flags -eq 1 ]] && echo "up" || echo "down")
             dev_mtu=$(cat "$netdev_path"/mtu) && [[ -n $dev_mtu ]] || return 1
             dev_type=""
             dev_guid=""
@@ -563,11 +564,11 @@ function find_mlx_devs() {
                 fi
             fi
 
-            dev_record="$pci_addr $dev_type $dev_name $dev_operstate $dev_mtu $pf_numvfs $dev_guid $eswitch_mode"
+            dev_record="$pci_addr $dev_type $dev_name $dev_adminstate $dev_mtu $pf_numvfs $dev_guid $eswitch_mode"
             debug_print "Storing device record [${mlx_dev_record_idx}] $dev_record"
             mlx_devs_arr[${mlx_dev_record_idx}]=$dev_record
             # Example:
-            # pci_addr      dev_type dev_name dev_operstate dev_mtu pf_numvfs dev_guid (For IB only) eswitch_mode
+            # pci_addr      dev_type dev_name dev_adminstate dev_mtu pf_numvfs dev_guid (For IB only) eswitch_mode
             # 0000:08:00.0  eth      eth2     up            1500    4         0c42:a103:0016:054c    legacy
             # 0000:08:00.1  eth      eth3     up            1500    0         0c42:a103:0016:054d    switchdev
 
@@ -600,7 +601,7 @@ function find_mlx_vfs() {
     while [ ${num_mlx_devices} -gt 0 ]; do
         declare -a mlx_dev_info=(${mlx_devs_arr[$((num_mlx_devices-1))]})
 
-        # pci_addr dev_type dev_name dev_operstate dev_mtu pf_numvfs dev_guid eswitch_mode
+        # pci_addr dev_type dev_name dev_adminstate dev_mtu pf_numvfs dev_guid eswitch_mode
         # [0]      [1]      [2]      [3]           [4]     [5]       [6]      [7]
         mlnx_dev_pci=${mlx_dev_info[0]}
         mlnx_dev_type=${mlx_dev_info[1]}
@@ -627,7 +628,8 @@ function find_mlx_vfs() {
             debug_print "Fetching VF device info for: $vf_netdev_path"
             vf_ip_link_json=$(ip -j link show $mlnx_dev_name | jq -r .[0].vfinfo_list[$vf_index]) && [[ -n $vf_ip_link_json ]] || return 1
 
-            vf_operstate=$(cat "$vf_netdev_path"/operstate) && [[ -n $vf_operstate ]] || return 1
+            vf_adminstate_flags=$(( $(cat "$vf_netdev_path"/flags) & 1 )) && [[ -n $vf_adminstate_flags ]] || return 1
+            vf_adminstate=$([[ $vf_adminstate_flags -eq 1 ]] && echo "up" || echo "down")
             vf_mac=$(cat "$vf_netdev_path"/address) && [[ -n $vf_mac ]] || return 1
             vf_admin_mac=$(echo ${vf_ip_link_json} | jq -r .address) && [[ -n $vf_admin_mac ]] || return 1
             vf_pci_addr=$(basename $(readlink "$vf_netdev_path"/device)) && [[ -n $vf_pci_addr ]] || return 1
@@ -639,11 +641,11 @@ function find_mlx_vfs() {
                 vf_guid="-"
             fi
 
-            vf_record="$mlnx_dev_pci $vf_pci_addr $mlnx_dev_name $vf_name $mlnx_dev_type $vf_index $vf_operstate $vf_mac $vf_admin_mac $vf_mtu_val $vf_guid"
+            vf_record="$mlnx_dev_pci $vf_pci_addr $mlnx_dev_name $vf_name $mlnx_dev_type $vf_index $vf_adminstate $vf_mac $vf_admin_mac $vf_mtu_val $vf_guid"
             debug_print "Storing VF record [${vf_record_idx}]: $vf_record"
             mlx_vfs_arr[$vf_record_idx]="$vf_record"
             # Example:
-            # pf_pci_addr  vf_pci_addr  mlnx_dev_name vf_name mlnx_dev_type vf_index vf_operstate vf_mac            vf_admin_mac      vf_mtu_val vf_guid
+            # pf_pci_addr  vf_pci_addr  mlnx_dev_name vf_name mlnx_dev_type vf_index vf_adminstate vf_mac            vf_admin_mac      vf_mtu_val vf_guid
             # 0000:08:00.0 0000:08:00.2 eth2          eth6    eth           0        down         2e:20:07:8a:7f:7c a1:01:cc:dd:ee:ff 1500       50:25:e1:32:af:a2:b8:a0
 
             vf_record_idx=$((vf_record_idx+1))
@@ -661,7 +663,7 @@ function find_switchdev_representors() {
     while [ ${num_mlx_devices} -gt 0 ]; do
         declare -a mlx_dev_info=(${mlx_devs_arr[$((num_mlx_devices-1))]})
 
-        # pci_addr dev_type dev_name dev_operstate dev_mtu pf_numvfs dev_guid eswitch_mode
+        # pci_addr dev_type dev_name dev_adminstate dev_mtu pf_numvfs dev_guid eswitch_mode
         # [0]      [1]      [2]      [3]           [4]     [5]       [6]      [7]
         mlnx_dev_pci=${mlx_dev_info[0]}
         mlnx_dev_name=${mlx_dev_info[2]}
@@ -725,14 +727,15 @@ function find_switchdev_representors() {
             fi
 
             representor_name=$(basename "$netdev_path") && [[ -n $representor_name ]] || return 1
-            representor_operstate=$(cat "$netdev_path"/operstate) && [[ -n $representor_operstate ]] || return 1
+            representor_adminstate_flags=$(( $(cat "$netdev_path"/flags) & 1 )) && [[ -n $representor_adminstate_flags ]] || return 1
+            representor_adminstate=$([[ $representor_adminstate_flags -eq 1 ]] && echo "up" || echo "down")
             representor_mtu_val=$(cat "$netdev_path"/mtu) && [[ -n $representor_mtu_val ]] || return 1
 
-            representor_record="$mlnx_dev_phys_switch_id $mlnx_dev_phys_port_num $dev_vf_id_number $representor_name $representor_operstate $representor_mtu_val"
+            representor_record="$mlnx_dev_phys_switch_id $mlnx_dev_phys_port_num $dev_vf_id_number $representor_name $representor_adminstate $representor_mtu_val"
             debug_print "Storing switchdev representor record [${representor_record_idx}]: $representor_record"
             switchdev_representors_arr[$representor_record_idx]="$representor_record"
             # Example:
-            # pf_phys_switch_id pf_port_num vf_id representor_name representor_operstate representor_mtu_val
+            # pf_phys_switch_id pf_port_num vf_id representor_name representor_adminstate representor_mtu_val
             # 8a45730003da341c  1           3     enp3s1f1npf1vf3  up                    1500
 
             representor_record_idx=$((representor_record_idx+1))
@@ -756,7 +759,7 @@ function restore_sriov_config() {
     while [ ${num_mlx_devices} -gt 0 ]; do
         declare -a mlx_dev_info=(${mlx_devs_arr[$((num_mlx_devices-1))]})
 
-        # pci_addr dev_type dev_name dev_operstate dev_mtu pf_numvfs dev_guid (For IB only) eswitch_mode
+        # pci_addr dev_type dev_name dev_adminstate dev_mtu pf_numvfs dev_guid (For IB only) eswitch_mode
         # [0]      [1]      [2]      [3]           [4]     [5]       [6]                    [7]
 
         pf_pci_addr=${mlx_dev_info[0]}
@@ -800,13 +803,13 @@ function restore_sriov_config() {
             debug_print "Inspecting VF entry: ${mlx_vf_info[@]}"
 
             if [ "${vf_parent_pci_addr}" == "${pf_pci_addr}" ]; then
-                # pf_pci_addr vf_pci_addr dev_name vf_name mlnx_dev_type vf_index vf_operstate vf_mac vf_admin_mac vf_mtu_val vf_guid
+                # pf_pci_addr vf_pci_addr dev_name vf_name mlnx_dev_type vf_index vf_adminstate vf_mac vf_admin_mac vf_mtu_val vf_guid
                 # [0]         [1]         [2]      [3]     [4]           [5]      [6]          [7]    [8]          [9]        [10]
                 vf_pci_addr=${mlx_vf_info[1]}
                 vf_name=${mlx_vf_info[3]}
                 vf_type=${mlx_vf_info[4]}
                 vf_index=${mlx_vf_info[5]}
-                vf_operstate=${mlx_vf_info[6]}
+                vf_adminstate=${mlx_vf_info[6]}
                 vf_mac=${mlx_vf_info[7]}
                 vf_admin_mac=${mlx_vf_info[8]}
                 vf_mtu=${mlx_vf_info[9]}
@@ -846,7 +849,7 @@ function restore_sriov_config() {
                 sleep ${BIND_DELAY_SEC}
 
                 exec_cmd "echo $vf_mtu > $vf_new_netdev_path/mtu"
-                exec_cmd "ip link set dev ${vf_new_dev_name} $vf_operstate"
+                exec_cmd "ip link set dev ${vf_new_dev_name} $vf_adminstate"
                 # Permission denied via sysfs
             fi
         done
@@ -863,10 +866,10 @@ function restore_sriov_config() {
                 debug_print "Inspecting VF entry: ${mlx_vf_info[@]}"
 
                 if [ "${vf_parent_pci_addr}" == "${pf_pci_addr}" ]; then
-                    # pf_pci_addr vf_pci_addr dev_name vf_name mlnx_dev_type vf_index vf_operstate vf_mac vf_admin_mac vf_mtu_val vf_guid
+                    # pf_pci_addr vf_pci_addr dev_name vf_name mlnx_dev_type vf_index vf_adminstate vf_mac vf_admin_mac vf_mtu_val vf_guid
                     # [0]         [1]         [2]      [3]     [4]           [5]      [6]          [7]    [8]          [9]        [10]
                     vf_pci_addr=${mlx_vf_info[1]}
-                    vf_operstate=${mlx_vf_info[6]}
+                    vf_adminstate=${mlx_vf_info[6]}
                     vf_mtu=${mlx_vf_info[9]}
 
                     timestamp_print "Restoring VF configuration for switchdev device: $vf_pci_addr"
@@ -881,7 +884,7 @@ function restore_sriov_config() {
                     vf_new_netdev_path="${vf_pci_dev_path}/net/${vf_new_dev_name}"
 
                     exec_cmd "echo $vf_mtu > $vf_new_netdev_path/mtu"
-                    exec_cmd "ip link set dev ${vf_new_dev_name} $vf_operstate"
+                    exec_cmd "ip link set dev ${vf_new_dev_name} $vf_adminstate"
                     # Permission denied via sysfs
                 fi
             done
@@ -898,13 +901,13 @@ function restore_sriov_config() {
 
         debug_print "Inspecting switchdev representor entry: ${representor_info[@]}"
 
-        # pf_phys_switch_id pf_port_num vf_id representor_name representor_operstate representor_mtu_val
+        # pf_phys_switch_id pf_port_num vf_id representor_name representor_adminstate representor_mtu_val
         # [0]               [1]         [2]   [3]              [4]                   [5]
         pf_phys_switch_id=${representor_info[0]}
         pf_port_num=${representor_info[1]}
         vf_id=${representor_info[2]}
         representor_name=${representor_info[3]}
-        representor_operstate=${representor_info[4]}
+        representor_adminstate=${representor_info[4]}
         representor_mtu_val=${representor_info[5]}
 
         mlnx_dev_phys_switch_id=$(cat /sys/class/net/"${mlnx_dev_name}"/phys_switch_id 2>/dev/null)
@@ -946,7 +949,7 @@ function restore_sriov_config() {
 
             exec_cmd "ip link set dev ${representor_new_name} name ${representor_name}"
             exec_cmd "ip link set dev ${representor_name} mtu ${representor_mtu_val}"
-            exec_cmd "ip link set dev ${representor_name} ${representor_operstate}"
+            exec_cmd "ip link set dev ${representor_name} ${representor_adminstate}"
 
             break
         done
