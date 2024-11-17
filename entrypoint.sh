@@ -192,10 +192,16 @@ function ubuntu_install_prerequisites() {
     exec_cmd "apt-get -yq install pkg-config linux-headers-${FULL_KVER}"
 }
 
+function sles_install_prerequisites() {
+    debug_print "Function: ${FUNCNAME[0]}"
+    CLEANED_KERNEL_VER=${FULL_KVER%-default}
+    exec_cmd "zypper --non-interactive install --no-recommends kernel-default-devel=${CLEANED_KERNEL_VER}"
+}
+
 function redhat_fetch_major_ver() {
     debug_print "Function: ${FUNCNAME[0]}"
 
-    if ${IS_OS_UBUNTU}; then
+    if ${IS_OS_UBUNTU} || ${IS_OS_SLES}; then
         debug_print "${FUNCNAME[0]}: unexpected call"
         exit_entryp 1
     else
@@ -359,6 +365,14 @@ function build_driver_from_src() {
         append_driver_build_flags="$append_driver_build_flags --without-dkms"
     fi
 
+    if ${IS_OS_SLES}; then
+        sub_path_str="RPMS"
+        os_str="sles"
+        package_type="rpm"
+        append_driver_build_flags="$append_driver_build_flags --disable-kmp"
+        append_driver_build_flags="$append_driver_build_flags --kernel-sources /lib/modules/${FULL_KVER}/build"
+    fi
+
     timestamp_print "Starting driver build"
     exec_cmd "${NVIDIA_NIC_DRIVER_PATH}/install.pl --without-depcheck --kernel ${FULL_KVER} --kernel-only --build-only --with-mlnx-tools --without-knem${pkg_dkms_suffix} --without-iser${pkg_dkms_suffix} --without-isert${pkg_dkms_suffix} --without-srp${pkg_dkms_suffix} --without-kernel-mft${pkg_dkms_suffix} --without-mlnx-rdma-rxe${pkg_dkms_suffix} ${append_driver_build_flags}"
 
@@ -479,7 +493,7 @@ function restart_driver() {
 
     # ARM does not contain relevant packages, also not a blocker for this OS type for mlx5_core load
     if [ "${ARCH}" != "aarch64" ]; then
-        if ! ${IS_OS_UBUNTU}; then
+        if ! ${IS_OS_UBUNTU}  && ! ${IS_OS_SLES}; then
             redhat_fetch_major_ver
             [[ $RHEL_MAJOR_VERSION -ge $RH_RT_MIN_MAJOR_VER ]] && load_pci_hyperv_intf=true
         else
@@ -1065,7 +1079,6 @@ function install_driver() {
 
     if ${IS_OS_UBUNTU}; then
         exec_cmd "dpkg -i ${driver_inventory_path}/*.deb"
-
     else
         exec_cmd "rpm -ivh --replacepkgs --nodeps ${driver_inventory_path}/*.rpm"
     fi
@@ -1145,6 +1158,8 @@ function build_driver() {
         if ${build_src}; then
             if ${IS_OS_UBUNTU}; then
                 ubuntu_install_prerequisites
+            elif ${IS_OS_SLES}; then
+                sles_install_prerequisites
             else
                 redhat_install_prerequisites
             fi
@@ -1272,6 +1287,7 @@ timestamp_print "NVIDIA driver container exec start"
 ARCH=$(uname -m)
 FULL_KVER=$(uname -r)
 IS_OS_UBUNTU=true; [[ "$(grep -i ubuntu /etc/os-release -c)" == "0" ]] && IS_OS_UBUNTU=false
+IS_OS_SLES=true; [[ "$(grep -i sles /etc/os-release -c)" == "0" ]] && IS_OS_SLES=false
 RHEL_MAJOR_VERSION=0
 OPENSHIFT_VERSION=""
 
@@ -1311,6 +1327,8 @@ mlx_dev_record_idx=0
 if ${IS_OS_UBUNTU}; then
     debug_print "OS is Ubuntu"
     pkg_dkms_suffix="-dkms"
+elif ${IS_OS_SLES}; then
+    debug_print "OS is SLES"
 else
     debug_print "OS is Red Hat"
 fi
