@@ -1,0 +1,104 @@
+pipeline {
+  agent {
+    kubernetes {
+      yamlFile "ci/agent_pod_upstream.yaml"
+    }
+  }
+
+  options {
+    timestamps()
+    ansiColor("xterm")
+  }
+
+  // TODO: talat said in january upstream job will change (check with him or daniel levi towards then)
+  parameters {
+    string(name: "LATEST_DOCA_VERSION", defaultValue: "",   description: "The version of the DOCA sources to use (e.g. `24.10-0.7.0.0`)")
+    booleanParam(name: "PUSH_IMAGES",   defaultValue: true, description: "For dry-runs, disable pushing images to registry")
+  }
+
+  environment {
+    NVCR_DOCKER_REGISTRY = "nvcr.io/nvstaging/mellanox"
+  }
+
+  stages {
+    stage("Init") {
+      steps {
+        script {
+          manifestsToCreate = [:]
+        }
+      }
+    }
+
+    stage("Precompile Matrix") {
+      failFast false
+      matrix {
+
+        axes {
+          axis {
+            name "ARCHITECTURE"
+            values "amd64", "arm64"
+          }
+          axis {
+            name "FLAVOR"
+            values "generic", "aws", "azure", "oracle"//, "nvidia"  // TODO: re-enable "nvidia" after bug resolved
+          }
+          axis {
+            name "OS_VERSION"
+            values "24.04", "22.04"
+          }
+        }
+
+        stages {
+          stage("Trigger downstream job") {
+            steps {
+              script {
+                buildResult = build(
+                  job: "precompiled-DOCA-build-downstream",
+                  parameters: [
+                    string(name: "LATEST_DOCA_VERSION", value: "$LATEST_DOCA_VERSION"),
+                    string(name: "FLAVOR",              value: "$FLAVOR"),
+                    string(name: "OS",                  value: "ubuntu"),
+                    string(name: "OS_VERSION",          value: "$OS_VERSION"),
+                    string(name: "ARCHITECTURE",        value: "$ARCHITECTURE"),
+                    booleanParam(name: "PUSH_IMAGE",    value: params.PUSH_IMAGES),
+                  ],
+                  wait: true,
+                )
+                manifestName  = buildResult.buildVariables.DOCKER_MANIFEST_NAME
+                fullImageName = buildResult.buildVariables.DOCKER_FULL_IMAGE_NAME
+                if (manifestsToCreate[manifestName]) {
+                  manifestsToCreate[manifestName] += fullImageName
+                } else {
+                  manifestsToCreate[manifestName] = [fullImageName]
+                }
+                manifestsToCreatePseudoMap = manifestsToCreate.collect { key, value -> "${key}=${value.join(' ')}" }.join(';')  // map converted because jenkins can only pass strings between stages
+              }
+            }
+          }
+        }
+
+      }
+    }
+
+    stage("Create manifests") {
+      when {
+        expression { manifestsToCreate && PUSH_IMAGES == "true" }
+      }
+      steps {
+        container("dind") {
+          withCredentials([usernamePassword(credentialsId: "nvcr-username-and-token", usernameVariable: "NVCR_USERNAME", passwordVariable: "NVCR_TOKEN")]) {
+            sh('echo "$NVCR_TOKEN" | docker login -u "$NVCR_USERNAME" --password-stdin $NVCR_DOCKER_REGISTRY')
+          }
+          script {
+            echo(manifestsToCreatePseudoMap)  // debug
+            manifestsToCreatePseudoMap.tokenize(";").each { manifest ->
+              (manifestName, fullImageNames) = manifest.tokenize("=")
+              sh("docker manifest create $manifestName $fullImageNames")
+              sh("docker manifest push   $manifestName")
+            }
+          }
+        }
+      }
+    }
+  }
+}

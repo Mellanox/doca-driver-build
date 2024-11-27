@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: main
+spec:
+  nodeSelector:
+    kubernetes.io/arch: amd64
+  containers:
+  - name: jnlp
+    image: jenkins/inbound-agent:latest-jdk21
+    resources:
+      requests:
+        memory: "4Gi"
+        cpu: "2"
+      limits:
+        memory: "4Gi"
+        cpu: "2"
+    securityContext:
+      runAsUser: 0
+
+  - name: dind
+    image: docker:20.10.13-dind
+    resources:
+      requests:
+        memory: "8Gi"
+        cpu: "4"
+      limits:
+        memory: "8Gi"
+        cpu: "4"
+    tty: true
+    command:
+    - cat
+    env:
+    - name: DOCKER_HOST
+      value: tcp://localhost:2375
+
+  - name: docker-daemon
+    image: docker:20.10.13-dind
+    resources:
+      requests:
+        memory: "4Gi"
+        cpu: "2"
+      limits:
+        memory: "4Gi"
+        cpu: "2"
+    securityContext:
+      privileged: true
+    env:
+    - name: DOCKER_TLS_CERTDIR
+      value: ""
