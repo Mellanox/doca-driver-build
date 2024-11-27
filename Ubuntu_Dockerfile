@@ -61,10 +61,12 @@ WORKDIR /root
 RUN set -x && \
 # Install prerequirements
     DEBIAN_FRONTEND=noninteractive apt-get -yq install curl \
-    dkms make autoconf autotools-dev chrpath automake hostname debhelper gcc quilt libc6-dev build-essential pkg-config && \
+    dkms make autoconf autotools-dev chrpath automake hostname debhelper gcc-12 quilt libc6-dev build-essential pkg-config && \
 # Cleanup
     apt-get clean autoclean && \
     rm -rf /var/lib/apt/lists/*
+
+RUN ln -fs gcc-12 /usr/bin/gcc  # 'build-essential' installs `gcc`, however we need `gcc-12`, so we overwrite it with this link
 
 RUN set -x && \
 # Download NVIDIA NIC driver sources
@@ -82,6 +84,8 @@ FROM driver-src AS driver-builder
 ARG D_OS
 ARG D_KERNEL_VER
 ARG OFED_SRC_LOCAL_DIR
+# Additional local arg (for precompiled CI)
+ARG D_BUILD_EXTRA_ARGS
 
 # Driver build manadatory packages
 RUN set -x && \
@@ -90,7 +94,7 @@ RUN set -x && \
 
 # Build driver
 RUN set -x && \
-    ${OFED_SRC_LOCAL_DIR}/install.pl --without-depcheck --distro ${D_OS} --without-dkms --kernel ${D_KERNEL_VER} --kernel-only --build-only --copy-ifnames-udev --with-mlnx-tools --without-knem-modules --without-srp-modules --without-kernel-mft-modules --without-iser-modules --without-isert-modules
+    ${OFED_SRC_LOCAL_DIR}/install.pl --without-depcheck --distro ${D_OS} --without-dkms --kernel ${D_KERNEL_VER} --kernel-only --build-only --copy-ifnames-udev --with-mlnx-tools --without-knem-modules --without-srp-modules --without-kernel-mft-modules --without-iser-modules --without-isert-modules ${D_BUILD_EXTRA_ARGS}
 
 ###################################
 # Stage: Install precompiled driver
@@ -112,7 +116,8 @@ RUN set -x && \
     rm -rf /var/lib/apt/lists/*
 
 # Install driver
-COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/DEBS/${D_OS}/${D_ARCH}/*.deb /root/
+COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/DEBS/${D_OS}/*/*.deb /root/
+
 RUN dpkg -i /root/*.deb
 
 # Prevent modprobe from giving a WARNING about missing files
