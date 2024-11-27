@@ -13,6 +13,7 @@ pipeline {
   // TODO: talat said in january upstream job will change (check with him or daniel levi towards then)
   parameters {
     string(name: "LATEST_DOCA_VERSION", defaultValue: "",   description: "The version of the DOCA sources to use (e.g. `24.10-0.7.0.0`)")
+    string(name: "CONTAINER_VER",       defaultValue: "0",  description: "")
     booleanParam(name: "PUSH_IMAGES",   defaultValue: true, description: "For dry-runs, disable pushing images to registry")
   }
 
@@ -56,6 +57,7 @@ pipeline {
                   job: "precompiled-DOCA-build-downstream",
                   parameters: [
                     string(name: "LATEST_DOCA_VERSION", value: "$LATEST_DOCA_VERSION"),
+                    string(name: "CONTAINER_VER",       value: "$CONTAINER_VER"),
                     string(name: "FLAVOR",              value: "$FLAVOR"),
                     string(name: "OS",                  value: "ubuntu"),
                     string(name: "OS_VERSION",          value: "$OS_VERSION"),

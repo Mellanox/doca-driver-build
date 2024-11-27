@@ -12,6 +12,7 @@ pipeline {
 
   parameters {
     string(name: "LATEST_DOCA_VERSION", defaultValue: "",   description: "The version of the DOCA sources to use")
+    string(name: "CONTAINER_VER",       defaultValue: "0",  description: "")
     string(name: "FLAVOR",              defaultValue: "",   description: "The flavor of Kernel to use (if not for Ubuntu, leave blank)")
     string(name: "OS",                  defaultValue: "",   description: "The operating system to build for")
     string(name: "OS_VERSION",          defaultValue: "",   description: "The operating system version to build for")
@@ -23,6 +24,7 @@ pipeline {
     NVCR_DOCKER_REGISTRY = "nvcr.io/nvstaging/mellanox"
     DOCKER_IMAGE_NAME    = "doca-driver"
     LATEST_DOCA_VERSION  = "$params.LATEST_DOCA_VERSION"
+    CONTAINER_VER        = "$params.CONTAINER_VER"
     FLAVOR               = "$params.FLAVOR"
     OS                   = "$params.OS"
     OS_VERSION           = "$params.OS_VERSION"
@@ -61,14 +63,14 @@ pipeline {
             // Check if precompiled DOCA for kernel version already exists
             env.PRECOMPILED_VERSION_EXISTS = sh(script: """
               skopeo list-tags docker://$NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME | jq '.Tags[]' -r | \
-                grep $LATEST_DOCA_VERSION | \
+                grep $LATEST_DOCA_VERSION-$CONTAINER_VER | \
                 grep $FLAVOR-$OS$OS_VERSION-$ARCHITECTURE
             """, returnStatus: true)
 
             // Set Docker manifest and build values
             env.DOCKERFILE             = "${OS.capitalize()}_Dockerfile"
             env.BUILD_EXTRA_ARGS       = "${OS == 'ubuntu' ? '--without-mlnx-nvme-modules' : ''}"
-            env.DOCKER_TAG             = "$LATEST_DOCA_VERSION-$KERNEL_VERSION-$OS$OS_VERSION"  // example: 24.07-0.6.1.0-6.8.0-46-generic-ubuntu24.04
+            env.DOCKER_TAG             = "$LATEST_DOCA_VERSION-$CONTAINER_VER-$KERNEL_VERSION-$OS$OS_VERSION"  // example: 24.07-0.6.1.0-0-6.8.0-46-generic-ubuntu24.04
             env.DOCKER_MANIFEST_NAME   = "$NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME:$DOCKER_TAG"
             env.DOCKER_FULL_IMAGE_NAME = "$DOCKER_MANIFEST_NAME${ARCHITECTURE == '' ? '' : '-'}$ARCHITECTURE"
           }
