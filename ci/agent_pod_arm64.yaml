@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: main
+spec:
+  nodeSelector:
+    kubernetes.io/arch: arm64
+  containers:
+  - name: jnlp
+    image: jenkins/inbound-agent:latest-jdk21
+    resources:
+      requests:
+        memory: "4Gi"
+        cpu: "2"
+      limits:
+        memory: "4Gi"
+        cpu: "2"
+    securityContext:
+      runAsUser: 0
+
+  - name: docker-daemon
+    image: docker:27-dind
+    resources:
+      requests:
+        memory: "4Gi"
+        cpu: "2"
+      limits:
+        memory: "4Gi"
+        cpu: "2"
+    securityContext:
+      privileged: true
+    env:
+    - name: DOCKER_TLS_CERTDIR
+      value: ""
+
+  - name: dind
+    image: docker:27-dind
+    resources:
+      requests:
+        memory: "8Gi"
+        cpu: "4"
+      limits:
+        memory: "8Gi"
+        cpu: "4"
+    tty: true
+    command:
+    - cat
+    volumeMounts:
+    - mountPath: /root/.docker
+      name: docker-config
+    - mountPath: /etc/docker
+      name: docker-daemon-config
+    - mountPath: /mswg
+      name: mswg
+      mountPropagation: HostToContainer
+    - mountPath: /auto
+      name: auto
+      mountPropagation: HostToContainer
+    env:
+    - name: DOCKER_HOST
+      value: tcp://localhost:2375
+
+  - name: kaniko
+    image: gcr.io/kaniko-project/executor:debug
+    resources:
+      requests:
+        memory: "8Gi"
+        cpu: "4"
+      limits:
+        memory: "8Gi"
+        cpu: "4"
+    tty: true
+    command:
+    - sleep
+    args:
+    - 1d
+    volumeMounts:
+    - mountPath: /kaniko/.docker
+      name: docker-config
+    - mountPath: /etc/docker
+      name: docker-daemon-config
+
+  volumes:
+  - name: docker-config
+    emptyDir: {}
+  - name: docker-daemon-config
+    emptyDir: {}
+  - name: mswg
+    hostPath:
+      path: /mswg
+      type: Directory
+      readOnly: true
+  - name: auto
+    hostPath:
+      path: /auto
+      type: Directory

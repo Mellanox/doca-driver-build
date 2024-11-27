@@ -1,0 +1,102 @@
+pipeline {
+  agent {
+    kubernetes {
+      yamlFile "ci/agent_pod_${params.ARCHITECTURE}.yaml"
+    }
+  }
+
+  options {
+    timestamps()
+    ansiColor("xterm")
+  }
+
+  parameters {
+    string(name: "LATEST_DOCA_VERSION", defaultValue: "",   description: "The version of the DOCA sources to use")
+    string(name: "FLAVOR",              defaultValue: "",   description: "The flavor of Kernel to use (if not for Ubuntu, leave blank)")
+    string(name: "OS",                  defaultValue: "",   description: "The operating system to build for")
+    string(name: "OS_VERSION",          defaultValue: "",   description: "The operating system version to build for")
+    string(name: "ARCHITECTURE",        defaultValue: "",   description: "The architecture to build on/for")
+    booleanParam(name: "PUSH_IMAGE",    defaultValue: true, description: "If to push resulting image to registry (disable for dry-run)")
+  }
+
+  environment {
+    NVCR_DOCKER_REGISTRY = "nvcr.io/nvstaging/mellanox"
+    DOCKER_IMAGE_NAME    = "doca-driver"
+    LATEST_DOCA_VERSION  = "$params.LATEST_DOCA_VERSION"
+    FLAVOR               = "$params.FLAVOR"
+    OS                   = "$params.OS"
+    OS_VERSION           = "$params.OS_VERSION"
+    ARCHITECTURE         = "$params.ARCHITECTURE"
+    PUSH_IMAGE           = "$params.PUSH_IMAGE"
+  }
+
+  stages {
+
+    stage("Init") {
+      steps {
+        container("dind") {
+          script {
+            // Misc
+            echo("Received parameters for '$FLAVOR $OS$OS_VERSION $ARCHITECTURE'")
+            sh("apk add jq skopeo")
+            sh("until nc -vz localhost 2375; do sleep 3; done")
+
+            // Docker logins
+            configFileProvider([configFile(fileId: "docker-daemon-configuration", variable: "DOCKER_DAEMON_CONFIGURATION")]) {
+              sh("mkdir -p /etc/docker")
+              sh("cat $DOCKER_DAEMON_CONFIGURATION > /etc/docker/daemon.json")
+            }
+            withCredentials([usernamePassword(credentialsId: "nvcr-username-and-token", usernameVariable: "NVCR_USERNAME", passwordVariable: "NVCR_TOKEN")]) {
+              sh('echo "$NVCR_TOKEN" | docker login -u "$NVCR_USERNAME" --password-stdin $NVCR_DOCKER_REGISTRY')
+            }
+
+            // Lookup Kernel version for OS/flavor
+            env.KERNEL_VERSION = sh(script: """
+              docker run --rm $OS:$OS_VERSION bash -c "
+                apt-get update > /dev/null
+                apt-cache search --names-only linux-image | grep -Eo 'linux-image-[0-9.-]+$FLAVOR' | sed -E 's/linux-image-//g' | sort -V | ${FLAVOR == 'generic' ? 'head' : 'tail'} -n 1
+              "
+            """, returnStdout: true).trim()  // example: 6.8.0-31-generic
+
+            // Check if precompiled DOCA for kernel version already exists
+            env.PRECOMPILED_VERSION_EXISTS = sh(script: """
+              skopeo list-tags docker://$NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME | jq '.Tags[]' -r | \
+                grep $LATEST_DOCA_VERSION | \
+                grep $FLAVOR-$OS$OS_VERSION-$ARCHITECTURE
+            """, returnStatus: true)
+
+            // Set Docker manifest and build values
+            env.DOCKERFILE             = "${OS.capitalize()}_Dockerfile"
+            env.BUILD_EXTRA_ARGS       = "${OS == 'ubuntu' ? '--without-mlnx-nvme-modules' : ''}"
+            env.DOCKER_TAG             = "$LATEST_DOCA_VERSION-$KERNEL_VERSION-$OS$OS_VERSION"  // example: 24.07-0.6.1.0-6.8.0-46-generic-ubuntu24.04
+            env.DOCKER_MANIFEST_NAME   = "$NVCR_DOCKER_REGISTRY/$DOCKER_IMAGE_NAME:$DOCKER_TAG"
+            env.DOCKER_FULL_IMAGE_NAME = "$DOCKER_MANIFEST_NAME${ARCHITECTURE == '' ? '' : '-'}$ARCHITECTURE"
+          }
+        }
+      }
+    }
+
+    stage("Build and push") {
+      when {
+        expression { env.PRECOMPILED_VERSION_EXISTS != 0 }
+      }
+      steps {
+        container("kaniko") {
+          sh("""
+            /kaniko/executor \
+              --context=$WORKSPACE \
+              --dockerfile=$DOCKERFILE \
+              --build-arg D_OS=$OS$OS_VERSION \
+              --build-arg D_BASE_IMAGE=$OS:$OS_VERSION \
+              --build-arg D_KERNEL_VER=$KERNEL_VERSION \
+              --build-arg D_OFED_VERSION=$LATEST_DOCA_VERSION \
+              --build-arg D_BUILD_EXTRA_ARGS=$BUILD_EXTRA_ARGS \
+              --destination=$DOCKER_FULL_IMAGE_NAME \
+              ${PUSH_IMAGE == "true" ? "" : "--no-push"}
+          """)
+        }
+      }
+    }
+
+  }
+}
