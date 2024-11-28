@@ -21,6 +21,9 @@ Before you begin, ensure that you have the following prerequisites:
 1. `oc` CLI tool [^3].
 2. OpenShift pull secret [^4].
 
+**SLES**:
+1. Active subscription.
+
 ## Dockerfile Overview
 
 To build the precompiled container, the Dockerfile is constructed in a multistage fashion.  
@@ -121,6 +124,19 @@ podman pull --authfile=/path/to/pull-secret.txt docker://quay.io/openshift-relea
     --build-arg D_OFED_VERSION=24.01-0.3.3.1 \  
     --tag 24.01-0.3.3.1-0-5.15.0-25-generic-ubuntu22.04-amd64 \  
     -f Ubuntu_Dockerfile \  
+    --target precompiled .
+```
+
+**SLES example**:
+```bash
+# docker build \
+    --build-arg D_OS=sles15.5 \
+    --build-arg D_ARCH=x86_64 \
+    --build-arg D_BASE_IMAGE=registry.suse.com/suse/sle15:15.5 \
+    --build-arg D_KERNEL_VER=5.14.21-150500.55.83-default \
+    --build-arg D_OFED_VERSION=24.01-0.3.3.1 \
+    --tag 24.01-0.3.3.1-0-5.14.21-150500.55.83-default-sles15.5-amd64 \
+    -f SLES_Dockerfile \
     --target precompiled .
 ```
 
