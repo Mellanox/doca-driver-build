@@ -1,0 +1,34 @@
+precompiled:
+- 5.15.0-25-generic-ubuntu22.04-amd64
+- 5.15.0-25-generic-ubuntu22.04-arm64
+- 6.8.0-31-generic-ubuntu24.04-amd64
+- 6.8.0-31-generic-ubuntu24.04-arm64
+- 6.8.0-1016-oracle-ubuntu22.04-amd64
+- 6.8.0-1016-oracle-ubuntu22.04-arm64
+- 6.8.0-1016-oracle-ubuntu24.04-amd64
+- 6.8.0-1016-oracle-ubuntu24.04-arm64
+- 6.8.0-1018-azure-ubuntu22.04-amd64
+- 6.8.0-1018-azure-ubuntu22.04-arm64
+- 6.8.0-1018-azure-ubuntu24.04-amd64
+- 6.8.0-1018-azure-ubuntu24.04-arm64
+- 6.8.0-1019-aws-ubuntu22.04-amd64
+- 6.8.0-1019-aws-ubuntu22.04-arm64
+- 6.8.0-1019-aws-ubuntu24.04-amd64
+- 6.8.0-1019-aws-ubuntu24.04-arm64
+dynamically_compiled:
+- rhcos4.14-amd64
+- rhcos4.15-amd64
+- rhcos4.15-arm64
+- rhcos4.16-amd64
+- rhcos4.16-arm64
+- rhel8.8-amd64
+- rhel8.9-amd64
+- rhel8.10-amd64
+- rhel9.2-amd64
+- rhel9.3-amd64
+- rhel9.4-amd64
+- ubuntu20.04-amd64
+- ubuntu22.04-amd64
+- ubuntu22.04-arm64
+- ubuntu24.04-amd64
+- ubuntu24.04-arm64
