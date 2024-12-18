@@ -78,6 +78,9 @@ ADD ./dtk_nic_driver_build.sh /root/dtk_nic_driver_build.sh
 ENTRYPOINT ["/root/entrypoint.sh"]
 CMD ["sources"]
 
+LABEL doca-version=${D_DOCA_VERSION}
+LABEL ofed-version=${D_OFED_VERSION}
+
 #####################
 # Stage: Build driver
 
