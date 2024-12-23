@@ -53,7 +53,7 @@ ARG D_OFED_BASE_URL="https://linux.mellanox.com/public/repo/doca/${D_DOCA_VERSIO
 ARG D_OFED_SRC_TYPE=""
 
 ARG D_OFED_SRC_ARCHIVE="MLNX_OFED_SRC-${D_OFED_SRC_TYPE}${D_OFED_VERSION}.tgz"
-ARG D_OFED_URL_PATH="${D_OFED_BASE_URL}/${D_OFED_SRC_ARCHIVE}"
+ARG D_OFED_URL_PATH="${D_OFED_BASE_URL}/${D_OFED_SRC_ARCHIVE}"  # although argument name says URL, local `*.tgz` compressed files may also be used (intended for internal use)
 
 ENV NVIDIA_NIC_DRIVER_VER=${D_OFED_VERSION}
 ENV NVIDIA_NIC_CONTAINER_VER=${D_CONTAINER_VER}
@@ -66,10 +66,15 @@ RUN set -x && \
 # Driver build requirements
     autoconf python3-devel ethtool automake pciutils libtool hostname dracut
 
-RUN set -x && \
-# Download NVIDIA NIC driver sources
-    mkdir -p ${D_OFED_SRC_DOWNLOAD_PATH} && \
-    cd ${D_OFED_SRC_DOWNLOAD_PATH} && (curl -sL ${D_OFED_URL_PATH} | tar -xzf -)
+# Download NVIDIA NIC driver
+RUN mkdir -p ${D_OFED_SRC_DOWNLOAD_PATH}
+WORKDIR ${D_OFED_SRC_DOWNLOAD_PATH}
+ADD ${D_OFED_URL_PATH} ${D_OFED_SRC_ARCHIVE}
+RUN if file ${D_OFED_SRC_ARCHIVE} | grep compressed; then \
+    tar -xzf ${D_OFED_SRC_ARCHIVE} \
+  else \
+    mv ${D_OFED_SRC_ARCHIVE}/MLNX_OFED_SRC-${D_OFED_VERSION} . ; \
+  fi
 
 WORKDIR /
 ADD ./entrypoint.sh /root/entrypoint.sh
