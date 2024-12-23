@@ -71,7 +71,7 @@ RUN mkdir -p ${D_OFED_SRC_DOWNLOAD_PATH}
 WORKDIR ${D_OFED_SRC_DOWNLOAD_PATH}
 ADD ${D_OFED_URL_PATH} ${D_OFED_SRC_ARCHIVE}
 RUN if file ${D_OFED_SRC_ARCHIVE} | grep compressed; then \
-    tar -xzf ${D_OFED_SRC_ARCHIVE} \
+    tar -xzf ${D_OFED_SRC_ARCHIVE}; \
   else \
     mv ${D_OFED_SRC_ARCHIVE}/MLNX_OFED_SRC-${D_OFED_VERSION} . ; \
   fi
