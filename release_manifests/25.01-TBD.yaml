@@ -1,32 +1,32 @@
 precompiled:
 - os: ubuntu24.04
-  arch: [amd64, arm64]
+  archs: [amd64, arm64]
   kernels: [TBD]
 - os: ubuntu22.04
-  arch: [amd64, arm64]
+  archs: [amd64, arm64]
   kernels: [TBD]
 dynamically_compiled:
 - os: ubuntu24.04
-  arch: [amd64, arm64]
+  archs: [amd64, arm64]
 - os: ubuntu22.04
-  arch: [amd64, arm64]
+  archs: [amd64, arm64]
 - os: rhcos4.17
-  arch: [amd64, arm64]
+  archs: [amd64, arm64]
 - os: rhcos4.16
-  arch: [amd64, arm64]
+  archs: [amd64, arm64]
 - os: rhcos4.15
-  arch: [amd64, arm64]
+  archs: [amd64, arm64]
 - os: rhcos4.14
-  arch: [amd64, arm64]
+  archs: [amd64, arm64]
 - os: rhel9.5
-  arch: [amd64, arm64]
+  archs: [amd64, arm64]
 - os: rhel9.4
-  arch: [amd64, arm64]
+  archs: [amd64, arm64]
 - os: rhel9.2
-  arch: [amd64, arm64]
+  archs: [amd64, arm64]
 - os: rhel8.10
-  arch: [amd64, arm64]
+  archs: [amd64, arm64]
 - os: rhel8.8
-  arch: [amd64, arm64]
+  archs: [amd64, arm64]
 - os: sles15sp6
-  arch: [amd64, arm64]
+  archs: [amd64, arm64]
