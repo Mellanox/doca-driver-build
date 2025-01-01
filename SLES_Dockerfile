@@ -33,7 +33,7 @@ RUN set -x && \
     perl pciutils kmod lsof python3 \
 # dh-python not found
 # Container functional requirements
-    jq iproute2 udev ethtool awk
+    jq iproute2 udev ethtool awk procps
 
 WORKDIR /
 ADD ./entrypoint.sh /root/entrypoint.sh
@@ -147,7 +147,7 @@ RUN set -x && \
     # MOFED functional requirements
     make autoconf chrpath automake hostname gcc quilt dracut rpm-build sysvinit-tools \
     # Container functional requirements
-    jq kmod
+    jq kmod procps
 
 # Prevent modprobe from giving a WARNING about missing files
 RUN touch /lib/modules/${D_KERNEL_VER}/modules.order /lib/modules/${D_KERNEL_VER}/modules.builtin && \
