@@ -28,5 +28,5 @@ dynamically_compiled:
   archs: [amd64, arm64]
 - os: rhel8.8
   archs: [amd64, arm64]
-- os: sles15sp6
+- os: sles15.6
   archs: [amd64, arm64]
