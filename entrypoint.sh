@@ -1248,7 +1248,7 @@ function prepare_gcc() {
     if [ ! -z "${kernel_gcc_ver}" ]; then
         debug_print "Kernel compiled with ${kernel_gcc_ver}"
 
-        exec_cmd "apt update; apt-get install ${kernel_gcc_ver}"
+        exec_cmd "apt-get -yq update; apt-get -yq install ${kernel_gcc_ver}"
         exec_cmd "update-alternatives --install /usr/bin/gcc gcc /usr/bin/${kernel_gcc_ver} ${ALT_GCC_PRIO}"
 
         timestamp_print "Set ${kernel_gcc_ver} for driver compilation, matching kernel compiled version"
@@ -1364,7 +1364,7 @@ case "$@" in
 
     debug_print "Drivers sources path: ${NVIDIA_NIC_DRIVER_PATH}"
 
-    prepare_gcc
+    # prepare_gcc TODO fix function to support all platforms
 
     build_src=true
 
