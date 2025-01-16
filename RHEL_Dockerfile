@@ -124,14 +124,7 @@ ENV NVIDIA_NIC_CONTAINER_VER=${D_CONTAINER_VER}
 
 COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/RPMS/redhat-release-*/${D_ARCH}/*.rpm /root/
 
-WORKDIR /root/
-RUN set -x && \
-    rpm -ivh --nodeps \
-    ./kmod-mlnx-nfsrdma-*.rpm \
-    ./kmod-mlnx-nvme-*.rpm \
-    ./kmod-mlnx-ofa_kernel-*.rpm \
-    ./mlnx-ofa_kernel-*.rpm \
-    ./mlnx-tools-*.rpm
+RUN rpm -ivh --nodeps /root/*.rpm
 
 RUN set -x && \
 # MOFED functional requirements
