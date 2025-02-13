@@ -60,14 +60,15 @@ ENV NVIDIA_NIC_DRIVER_PATH="${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_V
 
 WORKDIR /root
 RUN set -x && \
-# Install prerequirements
+    echo $D_OS | grep "ubuntu20.04" || GCC_VER="-12" && \
+# Install prerequirements \
     DEBIAN_FRONTEND=noninteractive apt-get -yq install curl \
-    dkms make autoconf autotools-dev chrpath automake hostname debhelper gcc-12 quilt libc6-dev build-essential pkg-config && \
-# Cleanup
+    dkms make autoconf autotools-dev chrpath automake hostname debhelper gcc$GCC_VER quilt libc6-dev build-essential pkg-config && \
+# Cleanup \
     apt-get clean autoclean && \
     rm -rf /var/lib/apt/lists/*
 
-RUN ln -fs gcc-12 /usr/bin/gcc  # 'build-essential' installs `gcc`, however we need `gcc-12`, so we overwrite it with this link
+RUN echo $D_OS | grep "ubuntu20.04" || ln -fs gcc-12 /usr/bin/gcc  # 'build-essential' installs `gcc`, however (if above ubuntu 20.04) we need `gcc-12`, so we overwrite it with this link
 
 # Download NVIDIA NIC driver
 RUN mkdir -p ${D_OFED_SRC_DOWNLOAD_PATH}
