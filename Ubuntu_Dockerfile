@@ -46,6 +46,7 @@ ENTRYPOINT ["/root/entrypoint.sh"]
 FROM base AS driver-src
 
 # Inherited global args
+ARG D_OS
 ARG D_DOCA_VERSION
 ARG D_OFED_VERSION
 ARG D_OFED_SRC_DOWNLOAD_PATH
