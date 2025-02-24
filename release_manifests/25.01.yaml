@@ -1,4 +1,4 @@
-driver_version: TBD
+driver_version: 25.01-0.6.0.0-0
 precompiled:
 - os: ubuntu24.04
   archs: [amd64, arm64]
