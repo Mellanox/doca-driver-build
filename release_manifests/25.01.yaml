@@ -15,8 +15,6 @@ dynamically_compiled:
   archs: [amd64, arm64]
 - os: rhcos4.16
   archs: [amd64, arm64]
-- os: rhcos4.15
-  archs: [amd64, arm64]
 - os: rhcos4.14
   archs: [amd64, arm64]
 - os: rhel9.5
