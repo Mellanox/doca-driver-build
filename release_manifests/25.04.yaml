@@ -1,0 +1,31 @@
+driver_version: TBD
+precompiled:
+- os: ubuntu24.04
+  archs: [amd64, arm64]
+  kernels: [TBD]
+- os: ubuntu22.04
+  archs: [amd64, arm64]
+  kernels: [TBD]
+dynamically_compiled:
+- os: ubuntu24.04
+  archs: [amd64, arm64]
+- os: ubuntu22.04
+  archs: [amd64, arm64]
+- os: rhcos4.18
+  archs: [amd64, arm64]
+- os: rhcos4.16
+  archs: [amd64, arm64]
+- os: rhcos4.14
+  archs: [amd64, arm64]
+- os: rhel9.6
+  archs: [amd64, arm64]
+- os: rhel9.5
+  archs: [amd64, arm64]
+- os: rhel9.4
+  archs: [amd64, arm64]
+- os: rhel8.10
+  archs: [amd64, arm64]
+- os: rhel8.8
+  archs: [amd64, arm64]
+- os: sles15.6
+  archs: [amd64, arm64]
