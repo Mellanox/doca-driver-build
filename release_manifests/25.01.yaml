@@ -1,31 +1,73 @@
 driver_version: 25.01-0.6.0.0-0
 precompiled:
 - os: ubuntu24.04
-  archs: [amd64, arm64]
-  kernels: [6.8.0-31-generic, 6.11.0-1008-azure, 6.8.0-1021-aws, 6.8.0-1019-oracle]
+  archs:
+  - amd64
+  - arm64
+  kernels:
+  - 9.9.0-95-mockflavor
+  - 9.9.0-94-mockflavor
+  - 9.9.0-95-mockflavor
+  - 9.9.0-94-mockflavor
+  - 9.9.0-95-mockflavor
+  - 9.9.0-95-mockflavor
+  - 9.9.0-94-mockflavor
+  - 9.9.0-94-mockflavor
 - os: ubuntu22.04
-  archs: [amd64, arm64]
-  kernels: [5.15.0-25-generic, 6.8.0-1021-azure, 6.8.0-1021-aws, 6.8.0-1019-oracle]
+  archs:
+  - amd64
+  - arm64
+  kernels:
+  - 9.9.0-95-mockflavor
+  - 9.9.0-95-mockflavor
+  - 9.9.0-95-mockflavor
+  - 9.9.0-96-mockflavor
+  - 9.9.0-96-mockflavor
+  - 9.9.0-95-mockflavor
+  - 9.9.0-95-mockflavor
+  - 9.9.0-95-mockflavor
 dynamically_compiled:
 - os: ubuntu24.04
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: ubuntu22.04
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: rhcos4.17
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: rhcos4.16
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: rhcos4.14
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: rhel9.5
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: rhel9.4
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: rhel9.2
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: rhel8.10
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: rhel8.8
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: sles15.6
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
