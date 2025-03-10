@@ -1015,6 +1015,11 @@ function load_nfsrdma() {
         # 2.check if loaded modules already match srcver of nvme related modules from container.
         check_nvme_modules
 
+       # Check if nvme-core depends on nvme-auth if so, load it.
+       if modinfo -Fdepends nvme-core | grep -qw nvme-auth; then
+          exec_cmd "modprobe -d /host nvme-auth"
+       fi
+
         exec_cmd "modprobe nvme"
         exec_cmd "modprobe nvme-rdma"
         exec_cmd "modprobe rpcrdma"
