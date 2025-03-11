@@ -1,31 +1,60 @@
-driver_version: TBD
+driver_version: 25.04-0.1.2.0-0
 precompiled:
 - os: ubuntu24.04
-  archs: [amd64, arm64]
-  kernels: [TBD]
+  archs:
+  - amd64
+  - arm64
+  kernels:
+  - 9.9.0-104-mockflavor
+  - 9.9.0-105-mockflavor
 - os: ubuntu22.04
-  archs: [amd64, arm64]
-  kernels: [TBD]
+  archs:
+  - amd64
+  - arm64
+  kernels:
+  - 9.9.0-105-mockflavor
 dynamically_compiled:
 - os: ubuntu24.04
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: ubuntu22.04
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: rhcos4.18
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: rhcos4.16
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: rhcos4.14
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: rhel9.6
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: rhel9.5
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: rhel9.4
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: rhel8.10
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: rhel8.8
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
 - os: sles15.6
-  archs: [amd64, arm64]
+  archs:
+  - amd64
+  - arm64
