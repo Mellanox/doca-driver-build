@@ -1,17 +1,17 @@
-driver_version: 25.04-0.1.2.0-0
+driver_version: 25.04-0.1.2.0-1
 precompiled:
 - os: ubuntu24.04
   archs:
   - amd64
   - arm64
   kernels:
-  - 9.9.0-106-mockflavor
+  - 9.9.0-107-mockflavor
 - os: ubuntu22.04
   archs:
   - amd64
   - arm64
   kernels:
-  - 9.9.0-106-mockflavor
+  - 9.9.0-107-mockflavor
 dynamically_compiled:
 - os: ubuntu24.04
   archs:
