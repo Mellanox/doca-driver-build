@@ -4,14 +4,12 @@ precompiled:
   archs:
   - amd64
   - arm64
-  kernels:
-  - 9.9.0-106-mockflavor
+  kernels: [generic, nvidia, azure, aws, oracle]
 - os: ubuntu22.04
   archs:
   - amd64
   - arm64
-  kernels:
-  - 9.9.0-106-mockflavor
+  kernels: [generic, nvidia, azure, aws, oracle]
 dynamically_compiled:
 - os: ubuntu24.04
   archs:
