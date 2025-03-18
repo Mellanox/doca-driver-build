@@ -41,10 +41,6 @@ dynamically_compiled:
   archs:
   - amd64
   - arm64
-- os: rhel9.6
-  archs:
-  - amd64
-  - arm64
 - os: rhel9.5
   archs:
   - amd64
