@@ -509,6 +509,11 @@ function restart_driver() {
     ${UNLOAD_STORAGE_MODULES} && unload_storage_modules
 
     exec_cmd "/etc/init.d/openibd restart"
+
+    # Explicitly load the mlx5_vdpa module from the container to prevent loading an incompatible version from the host.
+    # In Ubuntu 24.04, the inbox (built-in) mlx5_vdpa module is automatically loaded due to the "alias: auxiliary:mlx5_core.vnet" entry.
+    exec_cmd "modprobe mlx5_vdpa"
+
     remove_ofed_modules_blacklist
 
 }
