@@ -450,9 +450,13 @@ function unload_storage_modules() {
 
     # Update openibd to unload storage modules
     debug_print "Extending modules unload list with storage modules"
-    sed -i -e '/^UNLOAD_MODULES="[a-z]/aUNLOAD_MODULES="$UNLOAD_MODULES ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma ib_srpt"' /etc/init.d/openibd
+    unload_storage_script="/etc/init.d/openibd"
+    if [ -f "/usr/share/mlnx_ofed/mod_load_funcs" ]; then
+        unload_storage_script="/usr/share/mlnx_ofed/mod_load_funcs"
+    fi
+    sed -i -e '/^UNLOAD_MODULES="[a-z]/aUNLOAD_MODULES="$UNLOAD_MODULES ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma ib_srpt"' ${unload_storage_script}    
 
-    if [ `grep ib_isert /etc/init.d/openibd -c` -lt 1 ]; then
+    if [ `grep ib_isert ${unload_storage_script} -c` -lt 1 ]; then
         timestamp_print "Failed to inject storage modules for unload"
         exit_entryp 1
     fi
