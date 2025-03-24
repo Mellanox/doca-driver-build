@@ -33,11 +33,11 @@ dynamically_compiled:
   archs:
   - amd64
   - arm64
-- os: rhcos4.16
+- os: rhcos4.17
   archs:
   - amd64
   - arm64
-- os: rhcos4.14
+- os: rhcos4.16
   archs:
   - amd64
   - arm64
