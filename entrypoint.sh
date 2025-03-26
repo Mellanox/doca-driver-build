@@ -516,7 +516,17 @@ function restart_driver() {
 
     # Explicitly load the mlx5_vdpa module from the container to prevent loading an incompatible version from the host.
     # In Ubuntu 24.04, the inbox (built-in) mlx5_vdpa module is automatically loaded due to the "alias: auxiliary:mlx5_core.vnet" entry.
-    exec_cmd "modprobe mlx5_vdpa"
+    # Load mlx5_vdpa only if present
+
+    if modinfo mlx5_vdpa &>/dev/null; then
+        if ${IS_OS_SLES}; then
+            exec_cmd "modprobe --allow-unsupported mlx5_vdpa"
+        else
+            exec_cmd "modprobe mlx5_vdpa"
+        fi
+    else
+        debug_print "mlx5_vdpa module not found; skipping"
+    fi
 
     remove_ofed_modules_blacklist
 
