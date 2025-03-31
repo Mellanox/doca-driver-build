@@ -454,7 +454,8 @@ function unload_storage_modules() {
     if [ -f "/usr/share/mlnx_ofed/mod_load_funcs" ]; then
         unload_storage_script="/usr/share/mlnx_ofed/mod_load_funcs"
     fi
-    sed -i -e '/^UNLOAD_MODULES="[a-z]/aUNLOAD_MODULES="$UNLOAD_MODULES ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma ib_srpt"' ${unload_storage_script}    
+
+    sed -i -e '/^[[:space:]]*UNLOAD_MODULES="[a-z]/a\    UNLOAD_MODULES="$UNLOAD_MODULES ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma ib_srpt"' ${unload_storage_script}
 
     if [ `grep ib_isert ${unload_storage_script} -c` -lt 1 ]; then
         timestamp_print "Failed to inject storage modules for unload"
