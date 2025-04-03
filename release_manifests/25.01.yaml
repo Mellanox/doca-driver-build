@@ -1,4 +1,5 @@
 driver_version: 25.01-0.6.0.0-0
+doca_version: 2.10.0
 precompiled:
 - os: ubuntu24.04
   archs: [amd64, arm64]
