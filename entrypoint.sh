@@ -456,6 +456,9 @@ function unload_storage_modules() {
     fi
 
     sed -i -e '/^[[:space:]]*UNLOAD_MODULES="[a-z]/a\    UNLOAD_MODULES="$UNLOAD_MODULES ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma ib_srpt"' ${unload_storage_script}
+    if [[ "${ENABLE_NFSRDMA}" = true ]]; then
+        sed -i -e '/^[[:space:]]*UNLOAD_MODULES="[a-z]/a\    UNLOAD_MODULES="$UNLOAD_MODULES nvme nvme_tcp nvme_fabrics nvme_core"' ${unload_storage_script}
+    fi
 
     if [ `grep ib_isert ${unload_storage_script} -c` -lt 1 ]; then
         timestamp_print "Failed to inject storage modules for unload"
