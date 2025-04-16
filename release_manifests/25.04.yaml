@@ -6,21 +6,13 @@ precompiled:
   - amd64
   - arm64
   kernels:
-  - 6.11.0-1003-nvidia
-  - 6.11.0-1012-azure
-  - 6.8.0-1023-oracle
-  - 6.8.0-1026-aws
-  - 6.8.0-31-generic
+  - null
 - os: ubuntu22.04
   archs:
   - amd64
   - arm64
   kernels:
-  - 5.15.0-25-generic
-  - 6.8.0-1023-oracle
-  - 6.8.0-1024-aws
-  - 6.8.0-1025-azure
-  - 6.8.0-1025-nvidia
+  - null
 dynamically_compiled:
 - os: ubuntu24.04
   archs:
