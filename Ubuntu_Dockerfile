@@ -123,7 +123,7 @@ ARG OFED_SRC_LOCAL_DIR
 ENV NVIDIA_NIC_DRIVER_PATH=""
 
 RUN set -x && \
-    apt-get install -y lsb-release && \
+    apt-get install -y lsb-release linux-modules-extra-${D_KERNEL_VER} && \
 # Cleanup
     apt-get clean autoclean && \
     rm -rf /var/lib/apt/lists/*
