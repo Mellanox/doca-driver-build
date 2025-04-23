@@ -50,7 +50,6 @@ ARG D_OS
 ARG D_DOCA_VERSION
 ARG D_OFED_VERSION
 ARG D_OFED_SRC_DOWNLOAD_PATH
-ARG D_KERNEL_VER
 
 # Stage args
 ARG D_OFED_BASE_URL="https://linux.mellanox.com/public/repo/doca/${D_DOCA_VERSION}/SOURCES/MLNX_OFED"
@@ -65,7 +64,7 @@ RUN set -x && \
     echo $D_OS | grep "ubuntu20.04" || GCC_VER="-12" && \
 # Install prerequirements \
     DEBIAN_FRONTEND=noninteractive apt-get -yq install curl \
-    dkms make autoconf autotools-dev chrpath automake hostname debhelper gcc$GCC_VER quilt libc6-dev build-essential pkg-config linux-modules-extra-${D_KERNEL_VER} && \
+    dkms make autoconf autotools-dev chrpath automake hostname debhelper gcc$GCC_VER quilt libc6-dev build-essential pkg-config && \
 # Cleanup \
     apt-get clean autoclean && \
     rm -rf /var/lib/apt/lists/*
