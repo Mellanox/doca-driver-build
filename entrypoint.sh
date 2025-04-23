@@ -1103,7 +1103,16 @@ function install_driver() {
     exec_cmd "touch /lib/modules/${FULL_KVER}/modules.builtin"
 
     if ${IS_OS_UBUNTU}; then
-        exec_cmd "dpkg -i ${driver_inventory_path}/*.deb"
+        # Install all packages with --force-depends to bypass dependency checks
+        exec_cmd "dpkg --force-depends -i ${driver_inventory_path}/*.deb"
+        # Configure all packages that were just installed
+        # Skip packages that are already configured
+        for deb in ${driver_inventory_path}/*.deb; do
+            pkg=$(dpkg-deb -f $deb Package)
+            if ! dpkg-query -W $pkg >/dev/null 2>&1; then
+                exec_cmd "dpkg --configure $pkg"
+            fi
+        done
     else
         exec_cmd "rpm -ivh --replacepkgs --nodeps ${driver_inventory_path}/*.rpm"
     fi
