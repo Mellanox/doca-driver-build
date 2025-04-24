@@ -133,7 +133,7 @@ RUN set -x && \
 # Install driver
 COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/DEBS/${D_OS}/*/*.deb /root/
 
-RUN dpkg -i /root/*.deb
+RUN apt-get install -y /root/*.deb
 
 # Prevent modprobe from giving a WARNING about missing files
 RUN touch /lib/modules/${D_KERNEL_VER}/modules.order /lib/modules/${D_KERNEL_VER}/modules.builtin && \
