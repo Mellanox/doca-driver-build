@@ -1103,7 +1103,7 @@ function install_driver() {
     exec_cmd "touch /lib/modules/${FULL_KVER}/modules.builtin"
 
     if ${IS_OS_UBUNTU}; then
-        exec_cmd "apt-get install -y ${driver_inventory_path}/*.deb"
+        exec_cmd "apt-get install -y linux-modules-extra-${FULL_KVER} ${driver_inventory_path}/*.deb"
     else
         exec_cmd "rpm -ivh --replacepkgs --nodeps ${driver_inventory_path}/*.rpm"
     fi
