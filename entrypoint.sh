@@ -190,7 +190,6 @@ function ubuntu_install_prerequisites() {
 
     exec_cmd "apt-get update"
     exec_cmd "apt-get -yq install pkg-config linux-headers-${FULL_KVER}"
-    exec_cmd "LC_ALL=C apt-cache show linux-modules-extra-${FULL_KVER} 2>/dev/null | grep -q '^N:' || apt-get install -y linux-modules-extra-${FULL_KVER}"  # install extra kernel modules only if their package is available (`show`...) and locatable (no "N:" prefix)
 }
 
 function sles_install_prerequisites() {
@@ -1104,6 +1103,8 @@ function install_driver() {
     exec_cmd "touch /lib/modules/${FULL_KVER}/modules.builtin"
 
     if ${IS_OS_UBUNTU}; then
+        modules_extra_pkg=linux-modules-extra-${FULL_KVER}
+        exec_cmd "apt-get update && LC_ALL=C apt-cache show ${modules_extra_pkg} | grep ${modules_extra_pkg} && apt-get install -y ${modules_extra_pkg} || true"  # if modules extra package is available, install it
         exec_cmd "apt-get install -y ${driver_inventory_path}/*.deb"
     else
         exec_cmd "rpm -ivh --replacepkgs --nodeps ${driver_inventory_path}/*.rpm"
