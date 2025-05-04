@@ -455,7 +455,7 @@ function unload_storage_modules() {
         unload_storage_script="/usr/share/mlnx_ofed/mod_load_funcs"
     fi
 
-    sed -i -e '/^[[:space:]]*UNLOAD_MODULES="[a-z]/a\    UNLOAD_MODULES="$UNLOAD_MODULES ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma ib_srpt"' ${unload_storage_script}
+    sed -i -e '/^[[:space:]]*UNLOAD_MODULES="[a-z]/a\    UNLOAD_MODULES="$UNLOAD_MODULES ib_isert nvme_core nvme_rdma nvmet_rdma nvme_fabrics rpcrdma xprtrdma ib_srpt"' ${unload_storage_script}
 
     if [ `grep ib_isert ${unload_storage_script} -c` -lt 1 ]; then
         timestamp_print "Failed to inject storage modules for unload"
@@ -474,6 +474,12 @@ function generate_ofed_modules_blacklist(){
     for component in "${components[@]}"; do
         echo "blacklist $component" >> ${OFED_BLACKLIST_MODULES_FILE}
     done
+
+    if [[ "${UNLOAD_STORAGE_MODULES}" = true ]]; then
+        echo "blacklist nvme" >> ${OFED_BLACKLIST_MODULES_FILE}
+        echo "blacklist nvme_rdma" >> ${OFED_BLACKLIST_MODULES_FILE}
+        echo "blacklist rpcrdma" >> ${OFED_BLACKLIST_MODULES_FILE}
+    fi
 
     debug_print "`cat ${OFED_BLACKLIST_MODULES_FILE}`"
 }
