@@ -1,25 +1,23 @@
-driver_version: 24.10-2.1.8.0
+driver_version: 24.10-3.0.1.0-0
 precompiled:
 - os: ubuntu24.04
   archs:
   - amd64
   - arm64
   kernels:
-  - aws
-  - azure
-  - generic
-  - nvidia
-  - orcale
+  - 6.11.0-1003-nvidia
+  - 6.11.0-1014-azure
+  - 6.8.0-1028-aws
+  - 6.8.0-31-generic
 - os: ubuntu22.04
   archs:
   - amd64
   - arm64
   kernels:
-  - aws
-  - azure
-  - generic
-  - nvidia
-  - orcale
+  - 5.15.0-25-generic
+  - 6.8.0-1027-nvidia
+  - 6.8.0-1028-aws
+  - 6.8.0-1028-azure
 dynamically_compiled:
 - os: ubuntu24.04
   archs:
