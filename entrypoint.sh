@@ -47,7 +47,7 @@
 
 : ${NVIDIA_NIC_DRIVERS_INVENTORY_PATH:=""}
 
-: ${OFED_BLACKLIST_MODULES_FILE:=/etc/modprobe.d/blacklist-ofed-modules.conf}
+: ${OFED_BLACKLIST_MODULES_FILE:=/host/etc/modprobe.d/blacklist-ofed-modules.conf}
 : ${OFED_BLACKLIST_MODULES:=mlx5_core:mlx5_ib:ib_umad:ib_uverbs:ib_ipoib:rdma_cm:rdma_ucm:ib_core:ib_cm}
 
 function timestamp_print () {
