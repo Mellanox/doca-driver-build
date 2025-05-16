@@ -529,6 +529,11 @@ function restart_driver() {
         debug_print "mlx5_vdpa module not found; skipping"
     fi
 
+    # Restart NetworkManager on OpenShift only to ensure that the network
+    # configuration is applied correctly included bonding interfaces
+    if [ -n "${OPENSHIFT_VERSION}" ]; then
+        exec_cmd "systemctl restart NetworkManager"
+    fi
     remove_ofed_modules_blacklist
 
 }
