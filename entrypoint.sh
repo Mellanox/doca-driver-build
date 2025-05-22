@@ -32,7 +32,7 @@
 : ${UNLOAD_STORAGE_MODULES:=false}
 : ${CREATE_IFNAMES_UDEV:=false}
 : ${ENABLE_NFSRDMA:=false}
-: ${RESTORE_DRIVER_ON_POD_TERMINATION:=true}
+: ${RESTORE_DRIVER_ON_POD_TERMINATION:=false}
 
 : ${ENTRYPOINT_DEBUG:=false}
 : ${DEBUG_LOG_FILE:=/tmp/entrypoint_debug_cmds.log}
