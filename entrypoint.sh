@@ -32,6 +32,7 @@
 : ${UNLOAD_STORAGE_MODULES:=false}
 : ${CREATE_IFNAMES_UDEV:=false}
 : ${ENABLE_NFSRDMA:=false}
+: ${ENABLE_NFSRDMA_NO_NVME:=false}
 : ${RESTORE_DRIVER_ON_POD_TERMINATION:=true}
 
 : ${ENTRYPOINT_DEBUG:=false}
@@ -319,8 +320,10 @@ function redhat_install_prerequisites() {
 function set_append_driver_build_flags() {
     debug_print "Function: ${FUNCNAME[0]}"
 
-    if [[ "${ENABLE_NFSRDMA}" = false ]]; then
+    if [[ "${ENABLE_NFSRDMA}" = false ]] && [[ "${ENABLE_NFSRDMA_NO_NVME}" = false ]]; then
         append_driver_build_flags="$append_driver_build_flags --without-mlnx-nfsrdma${pkg_dkms_suffix} --without-mlnx-nvme${pkg_dkms_suffix}"
+    elif [[ "${ENABLE_NFSRDMA_NO_NVME}" = true ]]; then
+        append_driver_build_flags="$append_driver_build_flags --without-mlnx-nvme${pkg_dkms_suffix}"
     fi
 }
 
@@ -1027,7 +1030,7 @@ function check_nvme_modules() {
 function load_nfsrdma() {
     debug_print "Function: ${FUNCNAME[0]}"
 
-    if [[ "${ENABLE_NFSRDMA}" = true ]]; then
+    if [[ "${ENABLE_NFSRDMA}" = true ]] && [[ "${ENABLE_NFSRDMA_NO_NVME}" = false ]] ; then
         # ATM we load nvme, nvme-rdma modules if ENABLE_NFSRDMA is enabled.
         # perform some check to ensure that either:
         # 1. nvme modules are not loaded, that way modprobe commands will actually load nvme, nvme-rdma modules
@@ -1042,6 +1045,10 @@ function load_nfsrdma() {
 
         exec_cmd "modprobe nvme"
         exec_cmd "modprobe nvme-rdma"
+        exec_cmd "modprobe rpcrdma"
+    fi
+
+    if [[ "${ENABLE_NFSRDMA}" = true ]] || [[ "${ENABLE_NFSRDMA_NO_NVME}" = true ]] ; then
         exec_cmd "modprobe rpcrdma"
     fi
 }
