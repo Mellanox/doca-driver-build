@@ -1008,40 +1008,10 @@ function store_devices_conf() {
     fi
 }
 
-function check_nvme_modules() {
-    debug_print "Function: ${FUNCNAME[0]}"
-
-    if [ -e /sys/module/nvme ]; then
-        if ! check_loaded_kmod_srcver_vs_modinfo nvme; then
-            timestamp_print "warning - nvme kernel module currently loaded does not match module from container"
-        fi
-    fi
-
-    if [ -e /sys/module/nvme-rdma ]; then
-        if ! check_loaded_kmod_srcver_vs_modinfo nvme-rdma; then
-            timestamp_print "warning - nvme-rdma kernel module currently loaded does not match module from container"
-        fi
-    fi
-}
-
 function load_nfsrdma() {
     debug_print "Function: ${FUNCNAME[0]}"
 
     if [[ "${ENABLE_NFSRDMA}" = true ]]; then
-        # ATM we load nvme, nvme-rdma modules if ENABLE_NFSRDMA is enabled.
-        # perform some check to ensure that either:
-        # 1. nvme modules are not loaded, that way modprobe commands will actually load nvme, nvme-rdma modules
-        # from container.
-        # 2.check if loaded modules already match srcver of nvme related modules from container.
-        check_nvme_modules
-
-       # Check if nvme-core depends on nvme-auth if so, load it.
-       if modinfo -Fdepends nvme-core | grep -qw nvme-auth; then
-          exec_cmd "modprobe -d /host nvme-auth"
-       fi
-
-        exec_cmd "modprobe nvme"
-        exec_cmd "modprobe nvme-rdma"
         exec_cmd "modprobe rpcrdma"
     fi
 }
