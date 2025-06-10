@@ -50,6 +50,8 @@
 : ${OFED_BLACKLIST_MODULES_FILE:=/host/etc/modprobe.d/blacklist-ofed-modules.conf}
 : ${OFED_BLACKLIST_MODULES:=mlx5_core:mlx5_ib:ib_umad:ib_uverbs:ib_ipoib:rdma_cm:rdma_ucm:ib_core:ib_cm}
 
+: ${UBUNTU_PRO_TOKEN:=""}
+
 function timestamp_print () {
     date_time_stamp=$(date +'%d-%b-%y_%H:%M:%S')
     msg="[${date_time_stamp}] $@"
@@ -179,6 +181,17 @@ function mount_rootfs() {
     exec_cmd mount --rbind ${SHARED_KERNEL_HEADERS_DIR} ${MLX_DRIVERS_MOUNT}${SHARED_KERNEL_HEADERS_DIR}
 }
 
+function _enable_fips_if_required() {
+	if [[ -n "${UBUNTU_PRO_TOKEN}" ]]; then
+		export OPENSSL_FORCE_FIPS_MODE=0
+	        exec_cmd "update-ca-certificates"
+                pro attach --no-auto-enable ${UBUNTU_PRO_TOKEN}
+                pro enable --access-only --assume-yes fips-updates
+	        echo "Installing the OpenSSL FIPS modules"
+                apt-get -qq install --no-install-recommends ubuntu-fips-userspace > /dev/null
+	        unset OPENSSL_FORCE_FIPS_MODE
+	fi
+}
 function ubuntu_install_prerequisites() {
     debug_print "Function: ${FUNCNAME[0]}"
 
@@ -1090,6 +1103,8 @@ function calculate_driver_inventory_md5_checksum() {
 
 function build_driver() {
     debug_print "Function: ${FUNCNAME[0]}"
+
+    _enable_fips_if_required
 
     if ${reuse_driver_inventory}; then
         driver_inventory_path="${NVIDIA_NIC_DRIVERS_INVENTORY_PATH}/${FULL_KVER}/${NVIDIA_NIC_DRIVER_VER}"
