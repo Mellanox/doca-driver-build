@@ -50,6 +50,8 @@
 : ${OFED_BLACKLIST_MODULES_FILE:=/host/etc/modprobe.d/blacklist-ofed-modules.conf}
 : ${OFED_BLACKLIST_MODULES:=mlx5_core:mlx5_ib:ib_umad:ib_uverbs:ib_ipoib:rdma_cm:rdma_ucm:ib_core:ib_cm}
 
+: ${UBUNTU_PRO_TOKEN:=""}
+
 function timestamp_print () {
     date_time_stamp=$(date +'%d-%b-%y_%H:%M:%S')
     msg="[${date_time_stamp}] $@"
@@ -181,6 +183,13 @@ function mount_rootfs() {
 
 function ubuntu_install_prerequisites() {
     debug_print "Function: ${FUNCNAME[0]}"
+
+    if [[ -n "${UBUNTU_PRO_TOKEN}" ]]; then
+        exec_cmd "apt update"
+        exec_cmd "apt install -y ubuntu-advantage-tools"
+        exec_cmd "pro attach ${UBUNTU_PRO_TOKEN}"
+        exec_cmd "pro enable fips-updates --assume-yes"
+    fi
 
     if [[ ${FULL_KVER} =~ "realtime" ]]; then
         debug_print "RT kernel identified"
