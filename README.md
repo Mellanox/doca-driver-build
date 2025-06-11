@@ -41,8 +41,8 @@ The Dockerfile consists of the following stages:
 
 >[!IMPORTANT]
 >For proper Network Operator functionality container tag name must be in following pattern:
->**driver_ver-container_ver-kernel_ver-os-arch**
->For example: 24.10-1.1.4.0-0-5.15.0-25-generic-ubuntu22.04-amd64
+>**doca<doca_version>-<driver_ver>-<container_ver>-<kernel_ver-os-arch>**
+>For example: doca2.9.1-24.10-1.1.4.0-0-5.15.0-25-generic-ubuntu22.04-amd64
 
 ## Common _mandatory_ build parameters
 Before building the container, you need to provide following parameters as `build-arg` for container build:
@@ -102,7 +102,7 @@ podman pull --authfile=/path/to/pull-secret.txt docker://quay.io/openshift-relea
     --build-arg D_OFED_VERSION=24.10-1.1.4.0 \ 
     --build-arg D_BASE_IMAGE="registry.redhat.io/openshift4/driver-toolkit-rhel9:v4.13.0-202309112001.p0.gd719bdc.assembly.stream" \  
     --build-arg D_FINAL_BASE_IMAGE=registry.access.redhat.com/ubi9/ubi:latest \  
-    --tag 24.10-1.1.4.0-0-5.14.0-284.32.1.el9_2-rhel9.2-amd64 \  
+    --tag doca2.9.1-24.10-1.1.4.0-0-5.14.0-284.32.1.el9_2-rhel9.2-amd64 \
     -f RHEL_Dockerfile \  
     --target precompiled .
 ```
@@ -117,7 +117,7 @@ podman pull --authfile=/path/to/pull-secret.txt docker://quay.io/openshift-relea
     --build-arg D_OFED_VERSION=24.10-1.1.4.0 \ 
     --build-arg D_BASE_IMAGE="quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:dde3cd6a75d865a476aa7e1cab6fa8d97742401e87e0d514f3042c3a881e301f" \ 
     --build-arg D_FINAL_BASE_IMAGE=registry.access.redhat.com/ubi9/ubi:9.4 \ 
-    --tag 24.10-1.1.4.0-0-5.14.0-427.22.1.el9_4.x86_64-rhcos4.16-amd64 \ 
+    --tag doca2.9.1-24.10-1.1.4.0-0-5.14.0-427.22.1.el9_4.x86_64-rhcos4.16-amd64 \
     -f RHEL_Dockerfile \ 
     --target precompiled .
 ```
@@ -131,7 +131,7 @@ podman pull --authfile=/path/to/pull-secret.txt docker://quay.io/openshift-relea
     --build-arg D_KERNEL_VER=5.15.0-25-generic \  
     --build-arg D_DOCA_VERSION=2.9.1 \ 
     --build-arg D_OFED_VERSION=24.10-1.1.4.0 \ 
-    --tag 24.10-1.1.4.0-0-5.15.0-25-generic-ubuntu22.04-amd64 \  
+    --tag doca2.9.1-24.10-1.1.4.0-0-5.15.0-25-generic-ubuntu22.04-amd64 \
     -f Ubuntu_Dockerfile \  
     --target precompiled .
 ```
@@ -145,7 +145,7 @@ podman pull --authfile=/path/to/pull-secret.txt docker://quay.io/openshift-relea
     --build-arg D_KERNEL_VER=5.14.21-150500.55.83-default \ 
     --build-arg D_DOCA_VERSION=2.9.1 \ 
     --build-arg D_OFED_VERSION=24.10-1.1.4.0 \ 
-    --tag 24.10-1.1.4.0-0-5.14.21-150500.55.83-default-sles15.5-amd64 \ 
+    --tag doca2.9.1-24.10-1.1.4.0-0-5.14.21-150500.55.83-default-sles15.5-amd64 \
     -f SLES_Dockerfile \ 
     --target precompiled .
 ```
