@@ -1236,19 +1236,60 @@ function unload_blocking_modules() {
 function prepare_gcc() {
     debug_print "Function: ${FUNCNAME[0]}"
 
+    # Skip GCC setup for RHCOS/OpenShift
+    if [[ ! -z ${OPENSHIFT_VERSION} ]]; then
+        debug_print "RHCOS detected (OpenShift version: ${OPENSHIFT_VERSION}), skipping GCC setup"
+        return 0
+    fi
+
     ALT_GCC_PRIO=200
     proc_version=$(cat /proc/version)
-    kernel_gcc_ver=$(echo ${proc_version} | grep -o 'gcc-[0-9]*')
+    # Example outputs:
+    # Ubuntu: Linux version 6.6.87.1-microsoft-standard-WSL2 (root@af282157c79e) (gcc (GCC) 11.2.0, GNU ld (GNU Binutils) 2.37) #1 SMP PREEMPT_DYNAMIC Mon Apr 21 17:08:54 UTC 2025
+    # SLES: Linux version 6.4.0-150600.21-default (geeko@buildhost) (gcc (SUSE Linux) 7.5.0, GNU ld (GNU Binutils; SUSE Linux Enterprise 15) 2.41.0.20230908-150100.7.46) #1 SMP PREEMPT_DYNAMIC Thu May 16 11:09:22 UTC 2024 (36c1e09)
+    # RHEL: Linux version 5.14.0-570.12.1.el9_6.x86_64 (mockbuild@x86-64-03.build.eng.rdu2.redhat.com) (gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-5), GNU ld version 2.35.2-63.el9) #1 SMP PREEMPT_DYNAMIC Fri Apr 4 10:41:31 EDT 2025
+    
+    # Extract GCC version - flexible regex to catch anything between "gcc" and version number
+    gcc_version=$(echo "${proc_version}" | grep -oiE 'gcc[^0-9]*[0-9]+\.[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 
     debug_print "/proc/version: ${proc_version}"
 
-    if [ ! -z "${kernel_gcc_ver}" ]; then
-        debug_print "Kernel compiled with ${kernel_gcc_ver}"
+    if [ ! -z "${gcc_version}" ]; then
+        # Extract major version number (e.g., "11" from "11.2.0")
+        gcc_major_ver=$(echo "${gcc_version}" | cut -d. -f1)
 
-        exec_cmd "apt-get -yq update; apt-get -yq install ${kernel_gcc_ver}"
-        exec_cmd "update-alternatives --install /usr/bin/gcc gcc /usr/bin/${kernel_gcc_ver} ${ALT_GCC_PRIO}"
+        debug_print "Kernel compiled with GCC version ${gcc_version} (major: ${gcc_major_ver})"
+
+        if ${IS_OS_UBUNTU}; then
+            kernel_gcc_ver="gcc-${gcc_major_ver}"
+            exec_cmd "apt-get -yq update; apt-get -yq install ${kernel_gcc_ver}"
+            gcc_binary="/usr/bin/${kernel_gcc_ver}"
+        elif ${IS_OS_SLES}; then
+            kernel_gcc_ver_package="gcc${gcc_major_ver}"
+            kernel_gcc_ver_bin="gcc-${gcc_major_ver}"
+            exec_cmd "zypper --non-interactive install --no-recommends ${kernel_gcc_ver_package}"
+            gcc_binary="/usr/bin/${kernel_gcc_ver_bin}"
+        else
+            # RedHat/CentOS/Fedora using dnf - try gcc-toolset first, fallback to default
+            if dnf list available "gcc-toolset-${gcc_major_ver}" &>/dev/null; then
+                # gcc-toolset version is available
+                kernel_gcc_ver="gcc-toolset-${gcc_major_ver}-gcc"
+                exec_cmd "dnf -q -y install gcc-toolset-${gcc_major_ver}"
+                gcc_binary="/opt/rh/gcc-toolset-${gcc_major_ver}/root/usr/bin/gcc"
+            else
+                # Fall back to default gcc package
+                debug_print "gcc-toolset-${gcc_major_ver} not available, using default gcc package"
+                kernel_gcc_ver="gcc"
+                exec_cmd "dnf -q -y install gcc"
+                gcc_binary="/usr/bin/gcc"
+            fi
+        fi
+
+        exec_cmd "update-alternatives --install /usr/bin/gcc gcc ${gcc_binary} ${ALT_GCC_PRIO}"
 
         timestamp_print "Set ${kernel_gcc_ver} for driver compilation, matching kernel compiled version"
+    else
+        debug_print "Could not extract GCC version from /proc/version"
     fi
 }
 
@@ -1328,6 +1369,7 @@ elif ${IS_OS_SLES}; then
     debug_print "OS is SLES"
 else
     debug_print "OS is Red Hat"
+    redhat_fetch_major_ver
 fi
 
 debug_print "[os-release]: "$(cat /etc/os-release)
@@ -1361,7 +1403,8 @@ case "$@" in
 
     debug_print "Drivers sources path: ${NVIDIA_NIC_DRIVER_PATH}"
 
-    # prepare_gcc TODO fix function to support all platforms
+    # install gcc matching kernel compiled version
+    prepare_gcc
 
     build_src=true
 
