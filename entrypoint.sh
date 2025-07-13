@@ -212,13 +212,13 @@ function redhat_fetch_major_ver() {
         eval local $(cat ${host_os_info_file} | grep ^ID=)
         eval local $(cat ${host_os_info_file} | grep ^VERSION_ID=)
         eval local $(cat ${host_os_info_file} | grep ^RHEL_VERSION=)
+        eval $(cat ${host_os_info_file} | grep ^OPENSHIFT_VERSION=)
 
         if [ "${ID}" = "rhcos" ]; then
             OPENSHIFT_VERSION=${VERSION_ID:-4.9}
         elif [ "${ID}" = "rhel" ]; then
             RHEL_VERSION=${VERSION_ID:-8.4}
         else
-            eval local $(cat ${host_os_info_file} | grep ^VERSION_ID=)
             RHEL_VERSION=${VERSION_ID:-8.4}
         fi
         RHEL_MAJOR_VERSION=${RHEL_VERSION%%.*}
