@@ -33,7 +33,7 @@ RUN set -x && \
 # Driver build / install script requirements
     perl pciutils kmod lsof python3 dh-python \
 # Container functional requirements
-    jq iproute2 udev ethtool
+    jq iproute2 udev ethtool ca-certificates
 
 WORKDIR /
 ADD ./entrypoint.sh /root/entrypoint.sh
