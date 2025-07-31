@@ -1,0 +1,58 @@
+driver_version: 24.10-3.2.5.0-0
+doca_version: 2.9.3
+precompiled:
+- os: ubuntu24.04
+  archs:
+  - amd64
+  - arm64
+  kernels:
+  - 6.11.0-1003-nvidia
+  - 6.11.0-1014-azure
+  - 6.8.0-1028-aws
+  - 6.8.0-31-generic
+- os: ubuntu22.04
+  archs:
+  - amd64
+  - arm64
+  kernels:
+  - 5.15.0-25-generic
+  - 6.8.0-1027-nvidia
+  - 6.8.0-1028-aws
+  - 6.8.0-1028-azure
+dynamically_compiled:
+- os: ubuntu24.04
+  archs:
+  - amd64
+  - arm64
+- os: ubuntu22.04
+  archs:
+  - amd64
+  - arm64
+- os: rhcos4.18
+  archs:
+  - amd64
+  - arm64
+- os: rhcos4.17
+  archs:
+  - amd64
+  - arm64
+- os: rhcos4.16
+  archs:
+  - amd64
+  - arm64
+- os: rhel9.5
+  archs:
+  - amd64
+  - arm64
+- os: rhel9.4
+  archs:
+  - amd64
+  - arm64
+- os: rhel8.10
+  archs:
+  - amd64
+  - arm64
+- os: rhel8.8
+  archs:
+  - amd64
+  - arm64
