@@ -1313,6 +1313,18 @@ function print_loaded_drv_ver_str() {
     fi
 }
 
+function update_ca_certificates() {
+    if ${IS_OS_UBUNTU}; then
+        timestamp_print "Updating system CA certificates (Ubuntu)..."
+
+        if command -v update-ca-certificates >/dev/null 2>&1; then
+            exec_cmd "update-ca-certificates || true"
+        else
+            timestamp_print "[WARN] update-ca-certificates not found"
+        fi
+    fi
+}
+
 ############################## Exec start #####################################
 if ${ENTRYPOINT_DEBUG}; then
     set -x
@@ -1371,6 +1383,7 @@ else
     debug_print "OS is Red Hat"
     redhat_fetch_major_ver
 fi
+update_ca_certificates
 
 debug_print "[os-release]: "$(cat /etc/os-release)
 debug_print "[uname -a]: "$(uname -a)
