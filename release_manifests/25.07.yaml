@@ -8,15 +8,15 @@ precompiled:
   kernels:
   - 6.11.0-1018-azure
   - 6.14.0-1007-nvidia
-  - 6.14.0-1009-oracle
   - 6.14.0-1010-aws
-  - 6.8.0-31-generic
+  - 6.14.0-1010-oracle
+  - 6.8.0-71-generic
 - os: ubuntu22.04
   archs:
   - amd64
   - arm64
   kernels:
-  - 5.15.0-25-generic
+  - 5.15.0-151-generic
   - 6.8.0-1030-oracle
   - 6.8.0-1031-azure
   - 6.8.0-1032-nvidia
