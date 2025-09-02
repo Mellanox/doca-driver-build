@@ -1,5 +1,5 @@
 /*
- Copyright 2024, NVIDIA CORPORATION & AFFILIATES
+ Copyright 2025, NVIDIA CORPORATION & AFFILIATES
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -37,7 +37,8 @@ import (
 func main() {
 	cfg, err := config.GetConfig()
 	if err != nil {
-		panic("failed to parse configuration" + err.Error())
+		fmt.Fprintf(os.Stderr, "ERROR: failed to parse configuration: %v\n", err)
+		os.Exit(1)
 	}
 
 	log := getLogger(cfg)
@@ -57,6 +58,7 @@ func main() {
 	}
 	log.Info("start manager", "mode", containerMode)
 	if err := entrypoint.Run(getSignalChannel(), log, containerMode, cfg); err != nil {
+		log.Error(err, "Entrypoint Run failed")
 		os.Exit(1)
 	}
 }
@@ -91,7 +93,8 @@ func getLogger(cfg config.Config) logr.Logger {
 	}
 	zapLog, err := logConfig.Build()
 	if err != nil {
-		panic("can't init the logger: " + err.Error())
+		fmt.Fprintf(os.Stderr, "ERROR: can't init the logger %v\n", err)
+		os.Exit(1)
 	}
 	return zapr.NewLogger(zapLog)
 }

@@ -4,7 +4,6 @@ package driver
 
 import (
 	context "context"
-
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -169,12 +168,12 @@ func (_c *Interface_Load_Call) RunAndReturn(run func(context.Context) (bool, err
 	return _c
 }
 
-// Prepare provides a mock function with given fields: ctx
-func (_m *Interface) Prepare(ctx context.Context) error {
+// PreStart provides a mock function with given fields: ctx
+func (_m *Interface) PreStart(ctx context.Context) error {
 	ret := _m.Called(ctx)
 
 	if len(ret) == 0 {
-		panic("no return value specified for Prepare")
+		panic("no return value specified for PreStart")
 	}
 
 	var r0 error
@@ -187,30 +186,30 @@ func (_m *Interface) Prepare(ctx context.Context) error {
 	return r0
 }
 
-// Interface_Prepare_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Prepare'
-type Interface_Prepare_Call struct {
+// Interface_PreStart_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'PreStart'
+type Interface_PreStart_Call struct {
 	*mock.Call
 }
 
-// Prepare is a helper method to define mock.On call
+// PreStart is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *Interface_Expecter) Prepare(ctx interface{}) *Interface_Prepare_Call {
-	return &Interface_Prepare_Call{Call: _e.mock.On("Prepare", ctx)}
+func (_e *Interface_Expecter) PreStart(ctx interface{}) *Interface_PreStart_Call {
+	return &Interface_PreStart_Call{Call: _e.mock.On("PreStart", ctx)}
 }
 
-func (_c *Interface_Prepare_Call) Run(run func(ctx context.Context)) *Interface_Prepare_Call {
+func (_c *Interface_PreStart_Call) Run(run func(ctx context.Context)) *Interface_PreStart_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		run(args[0].(context.Context))
 	})
 	return _c
 }
 
-func (_c *Interface_Prepare_Call) Return(_a0 error) *Interface_Prepare_Call {
+func (_c *Interface_PreStart_Call) Return(_a0 error) *Interface_PreStart_Call {
 	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *Interface_Prepare_Call) RunAndReturn(run func(context.Context) error) *Interface_Prepare_Call {
+func (_c *Interface_PreStart_Call) RunAndReturn(run func(context.Context) error) *Interface_PreStart_Call {
 	_c.Call.Return(run)
 	return _c
 }

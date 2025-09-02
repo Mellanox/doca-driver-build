@@ -12,21 +12,6 @@ ARG OFED_SRC_LOCAL_DIR=${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_VERSIO
 ARG D_FINAL_BASE_IMAGE=registry.access.redhat.com/ubi9/ubi:latest
 
 ##################################################################
-# Stage: build go binary for entrypoint
-FROM golang:1.23 AS go_builder
-
-WORKDIR /workspace
-
-COPY entrypoint/go.mod go.mod
-COPY entrypoint/go.sum go.sum
-
-RUN go mod download
-
-COPY entrypoint/ .
-
-RUN TARGETARCH=${D_ARCH} TARGETOS=linux make build
-
-##################################################################
 # Stage: Minimal base image update and install common requirements
 
 # DTK base image (below example for specific kernel headers version)
@@ -92,13 +77,10 @@ RUN if file ${D_OFED_SRC_ARCHIVE} | grep compressed; then \
   fi
 
 WORKDIR /
-
-COPY --from=go_builder /workspace/build/entrypoint /root/entrypoint
 ADD ./entrypoint.sh /root/entrypoint.sh
 ADD ./dtk_nic_driver_build.sh /root/dtk_nic_driver_build.sh
-ADD ./loader.sh /root/loader.sh
 
-ENTRYPOINT ["/root/loader.sh"]
+ENTRYPOINT ["/root/entrypoint.sh"]
 CMD ["sources"]
 
 LABEL doca-version=${D_DOCA_VERSION}
@@ -156,10 +138,8 @@ RUN touch /lib/modules/${D_KERNEL_VER}/modules.order /lib/modules/${D_KERNEL_VER
     depmod ${D_KERNEL_VER}
 
 WORKDIR /
-COPY --from=go_builder /workspace/build/entrypoint /root/entrypoint
 ADD ./entrypoint.sh /root/entrypoint.sh
 ADD ./dtk_nic_driver_build.sh /root/dtk_nic_driver_build.sh
-ADD ./loader.sh /root/loader.sh
 
-ENTRYPOINT ["/root/loader.sh"]
+ENTRYPOINT ["/root/entrypoint.sh"]
 CMD ["precompiled"]

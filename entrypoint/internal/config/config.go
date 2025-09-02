@@ -1,5 +1,5 @@
 /*
- Copyright 2024, NVIDIA CORPORATION & AFFILIATES
+ Copyright 2025, NVIDIA CORPORATION & AFFILIATES
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -42,7 +42,7 @@ type Config struct {
 	DtkOcpNicSharedDir            string `env:"DTK_OCP_NIC_SHARED_DIR"            envDefault:"/mnt/shared-nvidia-nic-driver-toolkit"`
 	NvidiaNicDriversInventoryPath string `env:"NVIDIA_NIC_DRIVERS_INVENTORY_PATH"`
 
-	OfedBlacklistModulesFile string   `env:"OFED_BLACKLIST_MODULES_FILE" envDefault:"/etc/modprobe.d/blacklist-ofed-modules.conf"`
+	OfedBlacklistModulesFile string   `env:"OFED_BLACKLIST_MODULES_FILE" envDefault:"/host/etc/modprobe.d/blacklist-ofed-modules.conf"`
 	OfedBlacklistModules     []string `env:"OFED_BLACKLIST_MODULES"      envDefault:"mlx5_core:mlx5_ib:ib_umad:ib_uverbs:ib_ipoib:rdma_cm:rdma_ucm:ib_core:ib_cm" envSeparator:":"`
 	StorageModules           []string `env:"STORAGE_MODULES"             envDefault:"ib_isert:nvme_rdma:nvmet_rdma:rpcrdma:xprtrdma:ib_srpt"                      envSeparator:":"`
 

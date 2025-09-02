@@ -1,5 +1,5 @@
 /*
- Copyright 2024, NVIDIA CORPORATION & AFFILIATES
+ Copyright 2025, NVIDIA CORPORATION & AFFILIATES
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -141,7 +141,7 @@ func (e *entrypoint) lock() (func(), error) {
 		log.Error(err, "the container already running")
 		return nil, err
 	}
-	log.V(1).Info("accrued file-based lock")
+	log.V(1).Info("acquired file-based lock")
 	return func() {
 		log.V(1).Info("release file-based lock")
 		if err := fileLock.Unlock(); err != nil {
@@ -165,7 +165,7 @@ func (e *entrypoint) preStart(ctx context.Context) error {
 		return err
 	}
 
-	if err := e.drivermgr.Prepare(ctx); err != nil {
+	if err := e.drivermgr.PreStart(ctx); err != nil {
 		return err
 	}
 
