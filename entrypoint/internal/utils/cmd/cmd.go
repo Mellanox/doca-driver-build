@@ -1,5 +1,5 @@
 /*
- Copyright 2024, NVIDIA CORPORATION & AFFILIATES
+ Copyright 2025, NVIDIA CORPORATION & AFFILIATES
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -26,16 +26,16 @@ import (
 )
 
 // New initialize default implementation of the cmd.Interface.
-func New() Interface {
+func New() CmdInterface {
 	return &cmd{}
 }
 
-// Interface is the interface exposed by the cmd package.
-type Interface interface {
+// CmdInterface is the interface exposed by the cmd package.
+type CmdInterface interface {
 	// RunCommand runs a command.
 	RunCommand(ctx context.Context, command string, args ...string) (string, string, error)
-	// IsCommandNotFound checks if the error is "command not found" error.
-	IsCommandNotFound(err error) bool
+	// NotFound checks if the error is "command not found" error.
+	NotFound(err error) bool
 }
 
 type cmd struct{}
@@ -55,8 +55,8 @@ func (c *cmd) RunCommand(ctx context.Context, command string, args ...string) (s
 	return stdout.String(), stderr.String(), err
 }
 
-// IsCommandNotFound is the default implementation of the cmd.Interface.
-func (c *cmd) IsCommandNotFound(err error) bool {
+// NotFound is the default implementation of the cmd.Interface.
+func (c *cmd) NotFound(err error) bool {
 	if exitErr, ok := err.(*exec.ExitError); ok {
 		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.ExitStatus() == 127 {
 			return true

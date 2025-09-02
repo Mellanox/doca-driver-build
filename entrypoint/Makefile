@@ -1,6 +1,8 @@
 # Version information
 include Makefile.version
 
+GOPROXY ?=
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -47,7 +49,7 @@ $(MOCKERY): | $(LOCALBIN)
 	GOBIN=$(LOCALBIN) go install github.com/vektra/mockery/v2@$(MOCKERY_VERSION)
 
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
-GOLANGCI_LINT_VERSION ?= v1.62.0
+GOLANGCI_LINT_VERSION ?= v1.64.8
 .PHONY: golangci-lint ## Download golangci-lint locally if necessary.
 golangci-lint:
 	@[ -f $(GOLANGCI_LINT) ] || { \

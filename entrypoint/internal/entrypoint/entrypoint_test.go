@@ -74,7 +74,7 @@ var _ = Describe("Entrypoint", func() {
 			netconfigMock.On("Save", mock.Anything).Return(nil).Times(2)
 			netconfigMock.On("Restore", mock.Anything).Return(nil).Times(2)
 
-			driverMock.On("Prepare", mock.Anything).Return(nil).Once()
+			driverMock.On("PreStart", mock.Anything).Return(nil).Once()
 			driverMock.On("Build", mock.Anything).Return(nil).Once()
 			driverMock.On("Load", mock.Anything).Return(true, nil).Once()
 			driverMock.On("Unload", mock.Anything).Return(true, nil).Once()
@@ -88,7 +88,7 @@ var _ = Describe("Entrypoint", func() {
 			udevMock.On("RemoveRules", mock.Anything).Return(nil).Once()
 			readinessMock.On("Clear", mock.Anything).Return(nil).Times(1)
 
-			driverMock.On("Prepare", mock.Anything).Return(fmt.Errorf("test")).Once()
+			driverMock.On("PreStart", mock.Anything).Return(fmt.Errorf("test")).Once()
 			Expect(e.run(signalCH)).To(HaveOccurred())
 		})
 
@@ -102,7 +102,7 @@ var _ = Describe("Entrypoint", func() {
 			netconfigMock.On("Save", mock.Anything).Return(nil).Times(2)
 			netconfigMock.On("Restore", mock.Anything).Return(nil).Times(1)
 
-			driverMock.On("Prepare", mock.Anything).Return(nil).Once()
+			driverMock.On("PreStart", mock.Anything).Return(nil).Once()
 			driverMock.On("Build", mock.Anything).Return(nil).Once()
 			driverMock.On("Load", mock.Anything).Return(false, fmt.Errorf("test")).Once()
 			driverMock.On("Unload", mock.Anything).Return(true, nil).Once()
@@ -123,7 +123,7 @@ var _ = Describe("Entrypoint", func() {
 			netconfigMock.On("Save", mock.Anything).Return(nil).Times(2)
 			netconfigMock.On("Restore", mock.Anything).Return(nil).Times(1)
 
-			driverMock.On("Prepare", mock.Anything).Return(nil).Once()
+			driverMock.On("PreStart", mock.Anything).Return(nil).Once()
 			driverMock.On("Build", mock.Anything).Return(nil).Once()
 			driverMock.On("Load", mock.Anything).Return(true, nil).Once()
 			driverMock.On("Unload", mock.Anything).Return(false, fmt.Errorf("test")).Once()

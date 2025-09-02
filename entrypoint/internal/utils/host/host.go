@@ -1,5 +1,5 @@
 /*
- Copyright 2024, NVIDIA CORPORATION & AFFILIATES
+ Copyright 2025, NVIDIA CORPORATION & AFFILIATES
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ import (
 )
 
 // New initialize default implementation of the host.Interface.
-func New(c cmd.Interface, osWrapper wrappers.OSWrapper) Interface {
+func New(c cmd.CmdInterface, osWrapper wrappers.OSWrapper) Interface {
 	return &host{
 		cmd: c,
 		os:  osWrapper,
@@ -45,7 +45,7 @@ type Interface interface {
 }
 
 type host struct {
-	cmd cmd.Interface
+	cmd cmd.CmdInterface
 	os  wrappers.OSWrapper
 }
 

@@ -1,5 +1,5 @@
 /*
- Copyright 2024, NVIDIA CORPORATION & AFFILIATES
+ Copyright 2025, NVIDIA CORPORATION & AFFILIATES
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ import (
 
 // New creates a new instance of the driver manager
 func New(containerMode string, cfg config.Config,
-	c cmd.Interface, h host.Interface, osWrapper wrappers.OSWrapper,
+	c cmd.CmdInterface, h host.Interface, osWrapper wrappers.OSWrapper,
 ) Interface {
 	return &driverMgr{
 		cfg:           cfg,
@@ -45,9 +45,9 @@ func New(containerMode string, cfg config.Config,
 
 // Interface is the interface exposed by the driver package.
 type Interface interface {
-	// Prepare validates environment variables and performs required initialization for
+	// PreStart validates environment variables and performs required initialization for
 	// the requested containerMode
-	Prepare(ctx context.Context) error
+	PreStart(ctx context.Context) error
 	// Build installs required dependencies and build the driver
 	Build(ctx context.Context) error
 	// Load the new driver version. Returns a boolean indicating whether the driver was loaded successfully.
@@ -64,13 +64,13 @@ type driverMgr struct {
 	cfg           config.Config
 	containerMode string
 
-	cmd  cmd.Interface
+	cmd  cmd.CmdInterface
 	host host.Interface
 	os   wrappers.OSWrapper
 }
 
-// Prepare is the default implementation of the driver.Interface.
-func (d *driverMgr) Prepare(ctx context.Context) error {
+// PreStart is the default implementation of the driver.Interface.
+func (d *driverMgr) PreStart(ctx context.Context) error {
 	log := logr.FromContextOrDiscard(ctx)
 	switch d.containerMode {
 	case constants.DriverContainerModeSources:
