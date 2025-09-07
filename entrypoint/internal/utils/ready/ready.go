@@ -18,6 +18,7 @@ package ready
 
 import (
 	"context"
+	"path/filepath"
 
 	"github.com/go-logr/logr"
 
@@ -49,7 +50,23 @@ type ready struct {
 func (r *ready) Set(ctx context.Context) error {
 	log := logr.FromContextOrDiscard(ctx)
 	log.Info("set driver ready indicator")
-	// TODO add implementation
+
+	// Ensure the directory exists
+	dir := filepath.Dir(r.path)
+	if err := r.os.MkdirAll(dir, 0o755); err != nil {
+		log.Error(err, "failed to create directory for readiness indicator", "dir", dir)
+		return err
+	}
+
+	// Create the readiness indicator file (equivalent to 'touch' command)
+	file, err := r.os.Create(r.path)
+	if err != nil {
+		log.Error(err, "failed to create readiness indicator file", "path", r.path)
+		return err
+	}
+	defer file.Close()
+
+	log.Info("driver ready indicator set", "path", r.path)
 	return nil
 }
 
@@ -57,6 +74,14 @@ func (r *ready) Set(ctx context.Context) error {
 func (r *ready) Clear(ctx context.Context) error {
 	log := logr.FromContextOrDiscard(ctx)
 	log.Info("remove driver ready indicator")
-	// TODO add implementation
+
+	// Remove the readiness indicator file (equivalent to 'rm -f' command)
+	// RemoveAll will not return an error if the file doesn't exist
+	if err := r.os.RemoveAll(r.path); err != nil {
+		log.Error(err, "failed to remove readiness indicator file", "path", r.path)
+		return err
+	}
+
+	log.Info("driver ready indicator cleared", "path", r.path)
 	return nil
 }
