@@ -107,3 +107,11 @@ generate-mocks: mockery ## generate mock objects
 .PHONY: build
 build: $(BUILDDIR) ## Build manager binary.
 	$(GO_BUILD_OPTS) go build -ldflags $(GO_LDFLAGS) -gcflags="$(GO_GCFLAGS)" -o $(BUILDDIR)/entrypoint cmd/main.go
+
+.PHONY: check-go-modules
+check-go-modules: generate-go-modules
+	git diff --quiet HEAD go.sum; if [ $$? -eq 1 ] ; then echo "go.sum is out of date. Please commit after running 'make generate-go-modules' command"; exit 1; fi
+
+.PHONY: generate-go-modules
+generate-go-modules:
+	go mod tidy
