@@ -42,7 +42,7 @@ $(BUILDDIR):
 
 ##@ Binary Dependencies download
 MOCKERY ?= $(LOCALBIN)/mockery
-MOCKERY_VERSION ?= v2.46.3
+MOCKERY_VERSION ?= v2.53.3
 .PHONY: mockery
 mockery: $(MOCKERY) ## Download mockery locally if necessary.
 $(MOCKERY): | $(LOCALBIN)

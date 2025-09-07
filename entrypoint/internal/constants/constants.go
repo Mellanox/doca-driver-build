@@ -21,4 +21,14 @@ const (
 
 	DriverContainerModeSources     = "sources"
 	DriverContainerModePrecompiled = "precompiled"
+
+	// OS Types
+	OSTypeUbuntu    = "ubuntu"
+	OSTypeSLES      = "sles"
+	OSTypeRedHat    = "redhat"
+	OSTypeOpenShift = "openshift"
+
+	// Default versions
+	DefaultRHELVersion      = "8.4"
+	DefaultOpenShiftVersion = "4.9"
 )
