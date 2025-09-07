@@ -320,7 +320,7 @@ function set_append_driver_build_flags() {
     debug_print "Function: ${FUNCNAME[0]}"
 
     if [[ "${ENABLE_NFSRDMA}" = false ]]; then
-        append_driver_build_flags="$append_driver_build_flags --without-mlnx-nfsrdma${pkg_dkms_suffix} --without-mlnx-nvme${pkg_dkms_suffix}"
+        append_driver_build_flags="$append_driver_build_flags --without-mlnx-nfsrdma${pkg_suffix} --without-mlnx-nvme${pkg_suffix}"
     fi
 }
 
@@ -374,7 +374,7 @@ function build_driver_from_src() {
     fi
 
     timestamp_print "Starting driver build"
-    exec_cmd "${NVIDIA_NIC_DRIVER_PATH}/install.pl --without-depcheck --kernel ${FULL_KVER} --kernel-only --build-only --with-mlnx-tools --without-knem${pkg_dkms_suffix} --without-iser${pkg_dkms_suffix} --without-isert${pkg_dkms_suffix} --without-srp${pkg_dkms_suffix} --without-kernel-mft${pkg_dkms_suffix} --without-mlnx-rdma-rxe${pkg_dkms_suffix} ${append_driver_build_flags}"
+    exec_cmd "${NVIDIA_NIC_DRIVER_PATH}/install.pl --without-depcheck --kernel ${FULL_KVER} --kernel-only --build-only --with-mlnx-tools --without-knem${pkg_suffix} --without-iser${pkg_suffix} --without-isert${pkg_suffix} --without-srp${pkg_suffix} --without-kernel-mft${pkg_suffix} --without-mlnx-rdma-rxe${pkg_suffix} ${append_driver_build_flags}"
 
     # If build from src triggered driver was not previously built for current kernel
     if [ ${reuse_driver_inventory} ]; then
@@ -1357,7 +1357,7 @@ DRIVER_READY_FILE=/run/mellanox/drivers/.driver-ready
 new_driver_loaded=false
 
 append_driver_build_flags=""
-pkg_dkms_suffix=""
+pkg_suffix=""
 found_long_mlx_dev_id_net_name_path=false
 
 mlx5_core_loaded=false; [[ "$(lsmod | grep -i ^mlx5_core -c)" != "0" ]] && mlx5_core_loaded=true
@@ -1376,7 +1376,7 @@ mlx_dev_record_idx=0
 
 if ${IS_OS_UBUNTU}; then
     debug_print "OS is Ubuntu"
-    pkg_dkms_suffix="-dkms"
+    pkg_suffix="-modules"
 elif ${IS_OS_SLES}; then
     debug_print "OS is SLES"
 else
