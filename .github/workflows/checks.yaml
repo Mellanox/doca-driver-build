@@ -1,0 +1,59 @@
+name: "Checks"
+on: [push, pull_request]
+
+jobs:
+  lint-code:
+    name: golangci-lint
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Set up Go 1.x
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - name: checkout
+        uses: actions/checkout@v5
+      - name: lint
+        working-directory: ./entrypoint
+        run: make lint
+  diff-modules:
+    name: check go modules
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Set up Go 1.x
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - name: checkout
+        uses: actions/checkout@v5
+      - name: check go modules
+        working-directory: ./entrypoint
+        run: make check-go-modules
+  unit-tests:
+    name: Unit-tests
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Set up Go 1.x
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+      - name: checkout
+        uses: actions/checkout@v5
+      - name: test
+        working-directory: ./entrypoint
+        run: make unit-test
+      - name: Generate LCOV report
+        working-directory: ./entrypoint
+        run: |
+          go install github.com/jandelgado/gcov2lcov@latest
+          gcov2lcov -infile=cover.out -outfile=coverage.lcov
+      - name: Upload coverage to Coveralls
+        uses: coverallsapp/github-action@v2.3.6
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path-to-lcov: entrypoint/coverage.lcov
