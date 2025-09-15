@@ -78,6 +78,62 @@ func (_c *Interface_GetDebugInfo_Call) RunAndReturn(run func(context.Context) (s
 	return _c
 }
 
+// GetKernelVersion provides a mock function with given fields: ctx
+func (_m *Interface) GetKernelVersion(ctx context.Context) (string, error) {
+	ret := _m.Called(ctx)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetKernelVersion")
+	}
+
+	var r0 string
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context) (string, error)); ok {
+		return rf(ctx)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context) string); ok {
+		r0 = rf(ctx)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = rf(ctx)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// Interface_GetKernelVersion_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetKernelVersion'
+type Interface_GetKernelVersion_Call struct {
+	*mock.Call
+}
+
+// GetKernelVersion is a helper method to define mock.On call
+//   - ctx context.Context
+func (_e *Interface_Expecter) GetKernelVersion(ctx interface{}) *Interface_GetKernelVersion_Call {
+	return &Interface_GetKernelVersion_Call{Call: _e.mock.On("GetKernelVersion", ctx)}
+}
+
+func (_c *Interface_GetKernelVersion_Call) Run(run func(ctx context.Context)) *Interface_GetKernelVersion_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context))
+	})
+	return _c
+}
+
+func (_c *Interface_GetKernelVersion_Call) Return(_a0 string, _a1 error) *Interface_GetKernelVersion_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *Interface_GetKernelVersion_Call) RunAndReturn(run func(context.Context) (string, error)) *Interface_GetKernelVersion_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetOSType provides a mock function with given fields: ctx
 func (_m *Interface) GetOSType(ctx context.Context) (string, error) {
 	ret := _m.Called(ctx)
