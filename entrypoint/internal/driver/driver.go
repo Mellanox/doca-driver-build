@@ -20,6 +20,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/go-logr/logr"
 
@@ -133,13 +136,190 @@ func (d *driverMgr) Clear(ctx context.Context) error {
 }
 
 func (d *driverMgr) prepareGCC(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Get OS type first to check if it's OpenShift
 	osType, err := d.host.GetOSType(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get OS type: %w", err)
+	}
+
+	// Check if OpenShift is detected - skip GCC setup for RHCOS/OpenShift
+	if osType == constants.OSTypeOpenShift {
+		log.V(1).Info("RHCOS detected (OpenShift), skipping GCC setup")
+		return nil
+	}
+
+	// Extract GCC version from /proc/version
+	gccVersion, majorVersion, err := d.extractGCCInfo(ctx)
 	if err != nil {
 		return err
 	}
-	//nolint:gocritic
-	switch osType {
-	case "something":
+	if gccVersion == "" {
+		log.V(1).Info("Could not extract GCC version from /proc/version")
+		return nil
 	}
+
+	log.V(1).Info("Kernel compiled with GCC version", "version", gccVersion, "major", majorVersion)
+
+	// Install and configure GCC based on OS type
+	gccBinary, kernelGCCVer, err := d.installGCCForOS(ctx, osType, majorVersion)
+	if err != nil {
+		return err
+	}
+
+	// Set up alternatives for GCC binary
+	return d.setupGCCAlternatives(ctx, gccBinary, kernelGCCVer)
+}
+
+// extractGCCInfo extracts GCC version information from /proc/version
+func (d *driverMgr) extractGCCInfo(ctx context.Context) (string, int, error) {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Read /proc/version to extract GCC version
+	procVersion, err := d.os.ReadFile("/proc/version")
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to read /proc/version: %w", err)
+	}
+
+	log.V(1).Info("Kernel version info", "proc_version", string(procVersion))
+
+	// Extract GCC version using regex
+	gccVersion, err := d.extractGCCVersion(string(procVersion))
+	if err != nil {
+		log.V(1).Info("Could not extract GCC version from /proc/version", "error", err)
+		return "", 0, nil // Not a fatal error, continue without GCC setup
+	}
+
+	// Extract major version
+	majorVersion, err := d.extractMajorVersion(gccVersion)
+	if err != nil {
+		return "", 0, fmt.Errorf("failed to extract major version from %s: %w", gccVersion, err)
+	}
+
+	return gccVersion, majorVersion, nil
+}
+
+// installGCCForOS installs GCC package based on OS type
+func (d *driverMgr) installGCCForOS(ctx context.Context, osType string, majorVersion int) (string, string, error) {
+	switch osType {
+	case constants.OSTypeUbuntu:
+		return d.installGCCUbuntu(ctx, majorVersion)
+	case constants.OSTypeSLES:
+		return d.installGCCSLES(ctx, majorVersion)
+	case constants.OSTypeRedHat:
+		return d.installGCCRedHat(ctx, majorVersion)
+	default:
+		return "", "", fmt.Errorf("unsupported OS type: %s", osType)
+	}
+}
+
+// installGCCUbuntu installs GCC for Ubuntu
+func (d *driverMgr) installGCCUbuntu(ctx context.Context, majorVersion int) (string, string, error) {
+	log := logr.FromContextOrDiscard(ctx)
+	kernelGCCVer := fmt.Sprintf("gcc-%d", majorVersion)
+
+	log.V(1).Info("Installing GCC for Ubuntu", "package", kernelGCCVer)
+	_, _, err := d.cmd.RunCommand(ctx, "apt-get", "-yq", "update")
+	if err != nil {
+		return "", "", fmt.Errorf("failed to update apt packages: %w", err)
+	}
+	_, _, err = d.cmd.RunCommand(ctx, "apt-get", "-yq", "install", kernelGCCVer)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to install %s: %w", kernelGCCVer, err)
+	}
+
+	gccBinary := fmt.Sprintf("/usr/bin/%s", kernelGCCVer)
+	return gccBinary, kernelGCCVer, nil
+}
+
+// installGCCSLES installs GCC for SLES
+func (d *driverMgr) installGCCSLES(ctx context.Context, majorVersion int) (string, string, error) {
+	log := logr.FromContextOrDiscard(ctx)
+	kernelGCCVerPackage := fmt.Sprintf("gcc%d", majorVersion)
+	kernelGCCVerBin := fmt.Sprintf("gcc-%d", majorVersion)
+
+	log.V(1).Info("Installing GCC for SLES", "package", kernelGCCVerPackage)
+	_, _, err := d.cmd.RunCommand(ctx, "zypper", "--non-interactive", "install", "--no-recommends", kernelGCCVerPackage)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to install %s: %w", kernelGCCVerPackage, err)
+	}
+
+	gccBinary := fmt.Sprintf("/usr/bin/%s", kernelGCCVerBin)
+	return gccBinary, kernelGCCVerBin, nil
+}
+
+// installGCCRedHat installs GCC for RedHat
+func (d *driverMgr) installGCCRedHat(ctx context.Context, majorVersion int) (string, string, error) {
+	log := logr.FromContextOrDiscard(ctx)
+	toolsetPackage := fmt.Sprintf("gcc-toolset-%d", majorVersion)
+
+	log.V(1).Info("Checking for gcc-toolset availability", "package", toolsetPackage)
+
+	// Check if gcc-toolset is available
+	_, _, err := d.cmd.RunCommand(ctx, "dnf", "list", "available", toolsetPackage)
+	if err == nil {
+		// gcc-toolset version is available
+		kernelGCCVer := fmt.Sprintf("gcc-toolset-%d-gcc", majorVersion)
+		log.V(1).Info("Installing gcc-toolset for RedHat", "package", toolsetPackage)
+		_, _, err = d.cmd.RunCommand(ctx, "dnf", "-q", "-y", "install", toolsetPackage)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to install %s: %w", toolsetPackage, err)
+		}
+		gccBinary := fmt.Sprintf("/opt/rh/gcc-toolset-%d/root/usr/bin/gcc", majorVersion)
+		return gccBinary, kernelGCCVer, nil
+	}
+
+	// Fall back to default gcc package
+	log.V(1).Info("gcc-toolset not available, using default gcc package")
+	kernelGCCVer := "gcc"
+	_, _, err = d.cmd.RunCommand(ctx, "dnf", "-q", "-y", "install", "gcc")
+	if err != nil {
+		return "", "", fmt.Errorf("failed to install gcc: %w", err)
+	}
+	gccBinary := "/usr/bin/gcc"
+	return gccBinary, kernelGCCVer, nil
+}
+
+// setupGCCAlternatives sets up GCC alternatives
+func (d *driverMgr) setupGCCAlternatives(ctx context.Context, gccBinary, kernelGCCVer string) error {
+	log := logr.FromContextOrDiscard(ctx)
+	altGCCPrio := 200
+
+	log.V(1).Info("Setting up GCC alternatives", "gcc_binary", gccBinary, "priority", altGCCPrio)
+	_, _, err := d.cmd.RunCommand(ctx, "update-alternatives", "--install", "/usr/bin/gcc", "gcc", gccBinary, strconv.Itoa(altGCCPrio))
+	if err != nil {
+		return fmt.Errorf("failed to set up GCC alternatives: %w", err)
+	}
+
+	log.Info("Set GCC for driver compilation, matching kernel compiled version", "version", kernelGCCVer)
 	return nil
+}
+
+// extractGCCVersion extracts GCC version from /proc/version string
+func (d *driverMgr) extractGCCVersion(procVersion string) (string, error) {
+	// Regex to match gcc version pattern: gcc followed by optional non-digit characters and then version number
+	re := regexp.MustCompile(`(?i)gcc[^0-9]*([0-9]+\.[0-9]+\.[0-9]+)`)
+	matches := re.FindStringSubmatch(procVersion)
+
+	if len(matches) < 2 {
+		return "", fmt.Errorf("no GCC version found in /proc/version")
+	}
+
+	return matches[1], nil
+}
+
+// extractMajorVersion extracts the major version number from a version string like "11.5.0"
+func (d *driverMgr) extractMajorVersion(version string) (int, error) {
+	parts := strings.Split(version, ".")
+	if len(parts) == 0 {
+		return 0, fmt.Errorf("invalid version format: %s", version)
+	}
+
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse major version from %s: %w", version, err)
+	}
+
+	return major, nil
 }
