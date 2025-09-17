@@ -1,3 +1,7 @@
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](http://www.apache.org/licenses/LICENSE-2.0)
+[![Coverage Status](https://coveralls.io/repos/github/Mellanox/doca-driver-build/badge.svg)](https://coveralls.io/github/Mellanox/doca-driver-build)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Mellanox/doca-driver-build/entrypoint)](https://goreportcard.com/report/github.com/Mellanox/doca-driver-build/entrypoint)
+
 # Precompiled Container Build Instructions for NVIDIA NIC Drivers
 
 This document provides instructions on how to build container with NVIDIA NIC drivers, precompiled for **specific kernel version**.
