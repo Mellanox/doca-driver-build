@@ -18,6 +18,8 @@ package host
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/cmd"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/wrappers"
@@ -57,8 +59,33 @@ func (h *host) GetOSType(ctx context.Context) (string, error) {
 
 // GetDebugInfo is the default implementation of the host.Interface.
 func (h *host) GetDebugInfo(ctx context.Context) (string, error) {
-	// TODO: add implementation
-	return "", nil
+	var debugInfo strings.Builder
+
+	// Get OS release information
+	osReleaseContent, err := h.os.ReadFile("/etc/os-release")
+	if err != nil {
+		debugInfo.WriteString(fmt.Sprintf("[os-release]: Error reading /etc/os-release: %v\n", err))
+	} else {
+		debugInfo.WriteString(fmt.Sprintf("[os-release]: %s\n", string(osReleaseContent)))
+	}
+
+	// Get kernel information
+	stdout, stderr, err := h.cmd.RunCommand(ctx, "uname", "-a")
+	if err != nil {
+		debugInfo.WriteString(fmt.Sprintf("[uname -a]: Error executing uname -a: %v (stderr: %s)\n", err, stderr))
+	} else {
+		debugInfo.WriteString(fmt.Sprintf("[uname -a]: %s\n", stdout))
+	}
+
+	// Get memory information
+	stdout, stderr, err = h.cmd.RunCommand(ctx, "free", "-m")
+	if err != nil {
+		debugInfo.WriteString(fmt.Sprintf("[free -m]: Error executing free -m: %v (stderr: %s)\n", err, stderr))
+	} else {
+		debugInfo.WriteString(fmt.Sprintf("[free -m]: %s\n", stdout))
+	}
+
+	return debugInfo.String(), nil
 }
 
 // LoadedModule contains information about loaded kernel module.
