@@ -46,6 +46,9 @@ type OSWrapper interface {
 	// If path is already a directory, MkdirAll does nothing
 	// and returns nil.
 	MkdirAll(path string, perm os.FileMode) error
+	// Readlink returns the destination of the named symbolic link.
+	// If there is an error, it will be of type *PathError.
+	Readlink(name string) (string, error)
 }
 
 // NewOS returns a new instance of OSWrapper interface implementation
@@ -114,4 +117,10 @@ func (o *osWrapper) ReadDir(name string) ([]os.DirEntry, error) {
 // and returns nil.
 func (o *osWrapper) MkdirAll(path string, perm os.FileMode) error {
 	return os.MkdirAll(path, perm)
+}
+
+// Readlink returns the destination of the named symbolic link.
+// If there is an error, it will be of type *PathError.
+func (o *osWrapper) Readlink(name string) (string, error) {
+	return os.Readlink(name)
 }

@@ -27,7 +27,7 @@ type Config struct {
 	UnloadStorageModules          bool `env:"UNLOAD_STORAGE_MODULES"`
 	CreateIfnamesUdev             bool `env:"CREATE_IFNAMES_UDEV"`
 	EnableNfsRdma                 bool `env:"ENABLE_NFSRDMA"`
-	RestoreDriverOnPodTermination bool `env:"RESTORE_DRIVER_ON_POD_TERMINATION" envDefault:"true"`
+	RestoreDriverOnPodTermination bool `env:"RESTORE_DRIVER_ON_POD_TERMINATION" envDefault:"false"`
 
 	// driver manager advanced settings
 	DriverReadyPath  string `env:"DRIVER_READY_PATH"   envDefault:"/run/mellanox/drivers/.driver-ready"`
