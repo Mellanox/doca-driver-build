@@ -52,6 +52,8 @@ type RedhatVersionInfo struct {
 type Interface interface {
 	// GetOSType returns the name of the operating system as a string.
 	GetOSType(ctx context.Context) (string, error)
+	// GetKernelVersion returns the current kernel version.
+	GetKernelVersion(ctx context.Context) (string, error)
 	// GetDebugInfo returns a string containing debug information about the OS,
 	// such as kernel version and memory info. This information is printed to the debug log.
 	GetDebugInfo(ctx context.Context) (string, error)
@@ -330,4 +332,16 @@ func (h *host) GetRedHatVersionInfo(ctx context.Context) (*RedhatVersionInfo, er
 
 	// Return the cached RedHat version info (built during GetOSType)
 	return h.redhatVersionCache.value, h.redhatVersionCache.err
+}
+
+// GetKernelVersion is the default implementation of the host.Interface.
+func (h *host) GetKernelVersion(ctx context.Context) (string, error) {
+	// Execute uname -r to get kernel version
+	stdout, _, err := h.cmd.RunCommand(ctx, "uname", "-r")
+	if err != nil {
+		return "", fmt.Errorf("failed to get kernel version: %w", err)
+	}
+
+	// Trim whitespace and return
+	return strings.TrimSpace(stdout), nil
 }
