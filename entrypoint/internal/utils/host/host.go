@@ -19,6 +19,7 @@ package host
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/cmd"
@@ -100,13 +101,76 @@ type LoadedModule struct {
 
 // LsMod is the default implementation of the host.Interface.
 func (h *host) LsMod(ctx context.Context) (map[string]LoadedModule, error) {
-	// TODO: add implementation
-	//nolint:nilnil
-	return nil, nil
+	// Execute lsmod command
+	stdout, stderr, err := h.cmd.RunCommand(ctx, "lsmod")
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute lsmod command: %w, stderr: %s", err, stderr)
+	}
+
+	// Parse the output
+	modules := make(map[string]LoadedModule)
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+
+	// Skip the header line
+	for i, line := range lines {
+		if i == 0 {
+			continue // Skip header line "Module                  Size  Used by"
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Parse each line: module_name size ref_count [dependent_modules]
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue // Skip malformed lines
+		}
+
+		moduleName := fields[0]
+		refCountStr := fields[2]
+
+		// Parse reference count
+		refCount, err := strconv.Atoi(refCountStr)
+		if err != nil {
+			// If we can't parse the ref count, set it to 0
+			refCount = 0
+		}
+
+		// Parse dependent modules (everything after the ref count)
+		var usedBy []string
+		if len(fields) > 3 {
+			// Join all fields after ref count and split by comma
+			dependentStr := strings.Join(fields[3:], " ")
+			if dependentStr != "-" {
+				// Split by comma and clean up each module name
+				dependentModules := strings.Split(dependentStr, ",")
+				for _, dep := range dependentModules {
+					dep = strings.TrimSpace(dep)
+					if dep != "" {
+						usedBy = append(usedBy, dep)
+					}
+				}
+			}
+		}
+
+		modules[moduleName] = LoadedModule{
+			Name:     moduleName,
+			RefCount: refCount,
+			UsedBy:   usedBy,
+		}
+	}
+
+	return modules, nil
 }
 
 // RmMod is the default implementation of the host.Interface.
 func (h *host) RmMod(ctx context.Context, module string) error {
-	// TODO: add implementation
+	// Execute rmmod command to unload the kernel module
+	_, stderr, err := h.cmd.RunCommand(ctx, "rmmod", module)
+	if err != nil {
+		return fmt.Errorf("failed to unload kernel module %s: %w, stderr: %s", module, err, stderr)
+	}
 	return nil
 }
