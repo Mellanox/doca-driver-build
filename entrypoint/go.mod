@@ -5,7 +5,9 @@ go 1.24.0
 require (
 	github.com/go-logr/logr v1.4.3
 	github.com/gofrs/flock v0.13.0
+	github.com/k8snetworkplumbingwg/sriovnet v1.2.0
 	github.com/stretchr/testify v1.11.1
+	github.com/vishvananda/netlink v1.2.1-beta.2
 	go.uber.org/zap v1.27.1
 )
 
@@ -15,8 +17,11 @@ require (
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/pprof v0.0.0-20250403155104-27863c87afa6 // indirect
+	github.com/google/uuid v1.1.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/spf13/afero v1.9.4 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
+	github.com/vishvananda/netns v0.0.4 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/mod v0.27.0 // indirect
