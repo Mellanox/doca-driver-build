@@ -419,6 +419,155 @@ var _ = Describe("Netconfig", func() {
 			})
 		})
 	})
+
+	Context("Switchdev Flow", func() {
+		var (
+			nc           *netconfig
+			cmdMock      *cmdMockPkg.Interface
+			osMock       *osMockPkg.OSWrapper
+			hostMock     *hostMockPkg.Interface
+			sriovnetMock *sriovnetMockPkg.Lib
+			netlinkMock  *netlinkMockPkg.Lib
+			ctx          context.Context
+		)
+
+		BeforeEach(func() {
+			cmdMock = cmdMockPkg.NewInterface(GinkgoT())
+			osMock = osMockPkg.NewOSWrapper(GinkgoT())
+			hostMock = hostMockPkg.NewInterface(GinkgoT())
+			sriovnetMock = sriovnetMockPkg.NewLib(GinkgoT())
+			netlinkMock = netlinkMockPkg.NewLib(GinkgoT())
+			nc = New(cmdMock, osMock, hostMock, sriovnetMock, netlinkMock).(*netconfig)
+			ctx = context.Background()
+		})
+
+		Context("Helper functions for switchdev", func() {
+			Context("isRepresentorPhysPortName", func() {
+				It("should return true for valid representor phys port name", func() {
+					result := nc.isRepresentorPhysPortName("pf1vf0")
+					Expect(result).To(BeTrue())
+				})
+
+				It("should return false for invalid phys port name", func() {
+					result := nc.isRepresentorPhysPortName("p0")
+					Expect(result).To(BeFalse())
+				})
+
+				It("should return false for empty phys port name", func() {
+					result := nc.isRepresentorPhysPortName("")
+					Expect(result).To(BeFalse())
+				})
+			})
+
+			Context("parseRepresentorPhysPortName", func() {
+				It("should parse valid representor phys port name", func() {
+					pfID, vfID, err := nc.parseRepresentorPhysPortName("pf1vf0")
+					Expect(err).NotTo(HaveOccurred())
+					Expect(pfID).To(Equal("1"))
+					Expect(vfID).To(Equal("0"))
+				})
+
+				It("should return error for invalid format", func() {
+					_, _, err := nc.parseRepresentorPhysPortName("p0")
+					Expect(err).To(HaveOccurred())
+				})
+			})
+		})
+
+		Context("VF rebinding logic", func() {
+			It("should skip VF rebinding for switchdev mode", func() {
+				device := &MellanoxDevice{
+					PCIAddr:     "0000:08:00.1",
+					DevType:     devTypeEth,
+					AdminState:  adminStateDown,
+					MTU:         1500,
+					GUID:        "-",
+					EswitchMode: eswitchModeSwitchdev,
+					PfNumVfs:    1,
+					VFs: []VF{
+						{VFIndex: 0, VFPCIAddr: "0000:08:01.0", VFName: "eth10", AdminState: adminStateDown, MACAddress: "2a:c1:0b:f4:b5:3e", AdminMAC: "00:00:00:00:00:00", MTU: 1500, GUID: "-"},
+					},
+				}
+
+				// Mock VF configuration
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "eth3", "vf", "0", "mac", "00:00:00:00:00:00").Return("", "", nil).Once()
+
+				// Mock VF unbinding
+				osMock.On("WriteFile", "/sys/bus/pci/drivers/mlx5_core/unbind", []byte("0000:08:01.0"), os.FileMode(0o644)).Return(nil).Once()
+
+				// Mock Readlink for driver check
+				osMock.On("Readlink", "/sys/bus/pci/devices/0000:08:01.0/driver").Return("../../../../bus/pci/drivers/mlx5_core", nil).Once()
+
+				// Mock getCurrentDeviceName for VF
+				osMock.On("ReadDir", "/sys/bus/pci/devices/0000:08:01.0/net").Return([]os.DirEntry{&mockDirEntry{name: "eth10"}}, nil).Once()
+
+				// Mock netlink call for VF state restoration
+				mockLink := &mockLink{
+					attrs: &netlink.LinkAttrs{
+						Name:  "eth10",
+						Flags: net.FlagUp,
+						MTU:   1500,
+					},
+				}
+				netlinkMock.On("LinkByName", "eth10").Return(mockLink, nil).Once()
+				netlinkMock.On("LinkSetHardwareAddr", mockLink, mock.AnythingOfType("net.HardwareAddr")).Return(nil).Once()
+
+				err := nc.restoreVFConfigurations(ctx, "eth3", device, eswitchModeSwitchdev)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Verify VF was configured and unbound, but not rebound
+				cmdMock.AssertExpectations(GinkgoT())
+			})
+
+			It("should rebind VFs for legacy mode", func() {
+				device := &MellanoxDevice{
+					PCIAddr:     "0000:08:00.0",
+					DevType:     devTypeEth,
+					AdminState:  adminStateUp,
+					MTU:         1500,
+					GUID:        "-",
+					EswitchMode: eswitchModeLegacy,
+					PfNumVfs:    1,
+					VFs: []VF{
+						{VFIndex: 0, VFPCIAddr: "0000:08:00.2", VFName: "eth4", AdminState: adminStateUp, MACAddress: "aa:bb:cc:dd:ee:01", AdminMAC: "aa:bb:cc:dd:ee:01", MTU: 1500, GUID: "-"},
+					},
+				}
+
+				// Mock VF configuration
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "eth2", "vf", "0", "mac", "aa:bb:cc:dd:ee:01").Return("", "", nil).Maybe()
+
+				// Mock VF unbinding and rebinding
+				osMock.On("WriteFile", "/sys/bus/pci/drivers/mlx5_core/unbind", []byte("0000:08:00.2"), os.FileMode(0o644)).Return(nil).Maybe()
+				osMock.On("WriteFile", "/sys/bus/pci/drivers/mlx5_core/bind", []byte("0000:08:00.2"), os.FileMode(0o644)).Return(nil).Maybe()
+
+				// Mock Readlink for driver check
+				osMock.On("Readlink", "/sys/bus/pci/devices/0000:08:00.2/driver").Return("../../../../bus/pci/drivers/mlx5_core", nil).Maybe()
+
+				// Mock VF state restoration
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "eth4", "mtu", "1500").Return("", "", nil).Maybe()
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "eth4", "up").Return("", "", nil).Maybe()
+
+				// Mock getCurrentDeviceName for VF
+				osMock.On("ReadDir", "/sys/bus/pci/devices/0000:08:00.2/net").Return([]os.DirEntry{&mockDirEntry{name: "eth4"}}, nil).Maybe()
+
+				// Mock netlink call for VF state restoration
+				mockLink := &mockLink{
+					attrs: &netlink.LinkAttrs{
+						Name:  "eth4",
+						Flags: net.FlagUp,
+						MTU:   1500,
+					},
+				}
+				netlinkMock.On("LinkByName", "eth4").Return(mockLink, nil).Maybe()
+				netlinkMock.On("LinkSetHardwareAddr", mockLink, mock.AnythingOfType("net.HardwareAddr")).Return(nil).Maybe()
+				netlinkMock.On("LinkSetMTU", mockLink, 1500).Return(nil).Maybe()
+				netlinkMock.On("LinkSetUp", mockLink).Return(nil).Maybe()
+
+				err := nc.restoreVFConfigurations(ctx, "eth2", device, eswitchModeLegacy)
+				Expect(err).NotTo(HaveOccurred())
+			})
+		})
+	})
 })
 
 // mockDirEntry is a mock implementation of os.DirEntry for testing

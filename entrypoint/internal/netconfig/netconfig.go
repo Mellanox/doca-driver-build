@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -98,6 +99,19 @@ type VF struct {
 	GUID       string // VF GUID (for IB) or "-" for Ethernet
 }
 
+// Representor represents a switchdev representor device
+type Representor struct {
+	// Representor identification
+	PhysSwitchID string // Physical switch ID
+	PhysPortNum  string // Physical port number
+	VFID         string // VF ID
+	Name         string // Representor netdev name
+
+	// Representor configuration
+	AdminState string // Representor admin state: "up" or "down"
+	MTU        int    // Representor MTU value
+}
+
 // MellanoxDevice represents a Mellanox network device with all its attributes
 type MellanoxDevice struct {
 	// Basic device information
@@ -109,8 +123,9 @@ type MellanoxDevice struct {
 	EswitchMode string // Eswitch mode: "legacy" or "switchdev"
 
 	// SRIOV information
-	PfNumVfs int  // Number of VFs configured (from sriov_numvfs)
-	VFs      []VF // Array of VF information
+	PfNumVfs     int           // Number of VFs configured (from sriov_numvfs)
+	VFs          []VF          // Array of VF information
+	Representors []Representor // Array of representor information (for switchdev mode)
 }
 
 type netconfig struct {
@@ -152,6 +167,12 @@ func (n *netconfig) Save(ctx context.Context) error {
 	if len(devices) == 0 {
 		log.Info("No Mellanox devices found, skipping SRIOV configuration")
 		return nil
+	}
+
+	// Discover switchdev representors for devices in switchdev mode
+	if err := n.discoverSwitchdevRepresentors(ctx); err != nil {
+		log.Error(err, "Failed to discover switchdev representors")
+		return fmt.Errorf("failed to discover switchdev representors: %w", err)
 	}
 
 	log.Info("SRIOV configuration saved successfully", "devices", len(n.mellanoxDevices))
@@ -228,8 +249,8 @@ func (n *netconfig) restoreDeviceConfig(ctx context.Context, devName string, dev
 		return err
 	}
 
-	// Restore VF configurations
-	if err := n.restoreVFConfigurations(ctx, currentDevName, device); err != nil {
+	// Restore VF configurations (but don't rebind VFs if in switchdev mode)
+	if err := n.restoreVFConfigurations(ctx, currentDevName, device, device.EswitchMode); err != nil {
 		log.Error(err, "Failed to restore VF configurations", "device", currentDevName)
 		return err
 	}
@@ -252,6 +273,14 @@ func (n *netconfig) restoreDeviceConfig(ctx context.Context, devName string, dev
 	if err := n.setDeviceMTU(currentDevName, device.MTU); err != nil {
 		log.Error(err, "Failed to set PF MTU", "device", currentDevName, "mtu", device.MTU)
 		return err
+	}
+
+	// Restore representors if in switchdev mode
+	if device.EswitchMode == eswitchModeSwitchdev && len(device.Representors) > 0 {
+		if err := n.restoreRepresentors(ctx, currentDevName, device); err != nil {
+			log.Error(err, "Failed to restore representors", "device", currentDevName)
+			// Don't fail the entire restore for representor issues
+		}
 	}
 
 	return nil
@@ -318,13 +347,13 @@ func (n *netconfig) createVFs(pciAddr string, numVFs int) error {
 }
 
 // restoreVFConfigurations restores the configuration for all VFs
-func (n *netconfig) restoreVFConfigurations(ctx context.Context, devName string, device *MellanoxDevice) error {
+func (n *netconfig) restoreVFConfigurations(ctx context.Context, devName string, device *MellanoxDevice, eswitchMode string) error {
 	log := logr.FromContextOrDiscard(ctx)
 
 	for _, vf := range device.VFs {
 		log.V(1).Info("Restoring VF config", "device", devName, "vf_index", vf.VFIndex, "vf_pci", vf.VFPCIAddr)
 
-		if err := n.restoreSingleVFConfig(ctx, devName, vf, device.DevType); err != nil {
+		if err := n.restoreSingleVFConfig(ctx, devName, vf, device.DevType, eswitchMode); err != nil {
 			log.Error(err, "Failed to restore VF config", "device", devName, "vf_index", vf.VFIndex)
 			continue // Continue with other VFs
 		}
@@ -334,7 +363,7 @@ func (n *netconfig) restoreVFConfigurations(ctx context.Context, devName string,
 }
 
 // restoreSingleVFConfig restores the configuration for a single VF
-func (n *netconfig) restoreSingleVFConfig(ctx context.Context, devName string, vf VF, devType string) error {
+func (n *netconfig) restoreSingleVFConfig(ctx context.Context, devName string, vf VF, devType string, eswitchMode string) error {
 	log := logr.FromContextOrDiscard(ctx)
 
 	// Restore VF-specific configuration based on device type
@@ -354,26 +383,31 @@ func (n *netconfig) restoreSingleVFConfig(ctx context.Context, devName string, v
 		}
 	}
 
-	// Unbind VF from driver (except in switchdev mode - handled separately)
-	// This matches the bash script logic
+	// Unbind VF from driver (always unbind, matches bash script)
 	if err := n.unbindVFFromDriver(vf.VFPCIAddr); err != nil {
 		log.Error(err, "Failed to unbind VF from driver", "device", devName, "vf_index", vf.VFIndex, "vf_pci", vf.VFPCIAddr)
 		return err
 	}
 
-	// Rebind VF to driver (except in switchdev mode - handled separately)
-	if err := n.bindVFToDriver(vf.VFPCIAddr); err != nil {
-		log.Error(err, "Failed to rebind VF to driver", "device", devName, "vf_index", vf.VFIndex, "vf_pci", vf.VFPCIAddr)
-		return err
-	}
+	// Rebind VF to driver (skip if in switchdev mode - handled separately)
+	// This matches the bash script logic: if [ "${pf_eswitch_mode}" == "switchdev" ]; then continue; fi
+	if eswitchMode != eswitchModeSwitchdev {
+		if err := n.bindVFToDriver(vf.VFPCIAddr); err != nil {
+			log.Error(err, "Failed to rebind VF to driver", "device", devName, "vf_index", vf.VFIndex, "vf_pci", vf.VFPCIAddr)
+			return err
+		}
 
-	// Wait for bind delay (matches bash script)
-	time.Sleep(1 * time.Second) // BIND_DELAY_SEC equivalent
+		// Wait for bind delay (matches bash script)
+		time.Sleep(3 * time.Second) // BIND_DELAY_SEC equivalent
 
-	// Restore VF MTU and admin state after rebind
-	if err := n.restoreVFState(vf); err != nil {
-		log.Error(err, "Failed to restore VF state after rebind", "device", devName, "vf_index", vf.VFIndex, "vf_pci", vf.VFPCIAddr)
-		return err
+		// Restore VF MTU and admin state after rebind
+		if err := n.restoreVFState(vf); err != nil {
+			log.Error(err, "Failed to restore VF state after rebind", "device", devName, "vf_index", vf.VFIndex, "vf_pci", vf.VFPCIAddr)
+			return err
+		}
+	} else {
+		log.V(1).Info("Skipping VF rebind for switchdev mode - will be handled after switchdev mode is set",
+			"device", devName, "vf_index", vf.VFIndex)
 	}
 
 	return nil
@@ -460,7 +494,7 @@ func (n *netconfig) rebindVFsInSwitchdevMode(ctx context.Context, device *Mellan
 		}
 
 		// Wait for bind delay (matches bash script)
-		time.Sleep(1 * time.Second) // BIND_DELAY_SEC equivalent
+		time.Sleep(3 * time.Second) // BIND_DELAY_SEC equivalent
 
 		// Restore VF MTU and admin state
 		if err := n.restoreVFState(vf); err != nil {
@@ -1151,4 +1185,372 @@ func (n *netconfig) getVFAdminMACAndGUID(ctx context.Context, devName string, vf
 	}
 
 	return adminMAC, guid, nil
+}
+
+// discoverSwitchdevRepresentors discovers and stores switchdev representor information
+func (n *netconfig) discoverSwitchdevRepresentors(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+	log.Info("Discovering switchdev representors")
+
+	representorCount := 0
+
+	// Iterate through all discovered devices
+	for devName, device := range n.mellanoxDevices {
+		// Only process devices in switchdev mode
+		if device.EswitchMode != eswitchModeSwitchdev {
+			log.V(1).Info("Device not in switchdev mode, skipping representor discovery", "device", devName)
+			continue
+		}
+
+		// Skip devices with no VFs
+		if device.PfNumVfs == 0 {
+			log.V(1).Info("Device has no VFs, skipping representor discovery", "device", devName)
+			continue
+		}
+
+		log.Info("Discovering representors for device", "device", devName, "vfs", device.PfNumVfs)
+
+		// Get physical port information
+		physPortName, err := n.getPhysPortName(devName)
+		if err != nil {
+			log.Error(err, "Failed to get physical port name", "device", devName)
+			return fmt.Errorf("failed to get physical port name for device %s: %w", devName, err)
+		}
+
+		physSwitchID, err := n.getPhysSwitchID(devName)
+		if err != nil {
+			log.Error(err, "Failed to get physical switch ID", "device", devName)
+			return fmt.Errorf("failed to get physical switch ID for device %s: %w", devName, err)
+		}
+
+		// Parse physical port number from phys_port_name (format: "p1", "p2", etc.)
+		physPortNum, err := n.parsePhysPortNumber(physPortName)
+		if err != nil {
+			log.Error(err, "Failed to parse physical port number", "device", devName, "phys_port_name", physPortName)
+			return fmt.Errorf("failed to parse physical port number for device %s: %w", devName, err)
+		}
+
+		// Discover representors in the device's subsystem
+		representors, err := n.findDeviceRepresentors(ctx, devName, physSwitchID, physPortNum)
+		if err != nil {
+			log.Error(err, "Failed to find representors for device", "device", devName)
+			return fmt.Errorf("failed to find representors for device %s: %w", devName, err)
+		}
+
+		// Store representors in the device
+		device.Representors = representors
+		representorCount += len(representors)
+
+		log.Info("Found representors for device", "device", devName, "count", len(representors))
+	}
+
+	log.Info("Switchdev representor discovery completed", "total_representors", representorCount)
+	return nil
+}
+
+// getPhysPortName gets the physical port name for a device
+func (n *netconfig) getPhysPortName(devName string) (string, error) {
+	physPortPath := fmt.Sprintf("/sys/class/net/%s/phys_port_name", devName)
+	physPortName, err := n.os.ReadFile(physPortPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read phys_port_name: %w", err)
+	}
+	return strings.TrimSpace(string(physPortName)), nil
+}
+
+// getPhysSwitchID gets the physical switch ID for a device
+func (n *netconfig) getPhysSwitchID(devName string) (string, error) {
+	physSwitchPath := fmt.Sprintf("/sys/class/net/%s/phys_switch_id", devName)
+	physSwitchID, err := n.os.ReadFile(physSwitchPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read phys_switch_id: %w", err)
+	}
+	return strings.TrimSpace(string(physSwitchID)), nil
+}
+
+// parsePhysPortNumber parses the physical port number from phys_port_name
+// Format: "p1", "p2", etc. -> returns "1", "2", etc.
+func (n *netconfig) parsePhysPortNumber(physPortName string) (string, error) {
+	if !strings.HasPrefix(physPortName, "p") {
+		return "", fmt.Errorf("invalid phys_port_name format: %s", physPortName)
+	}
+	return strings.TrimPrefix(physPortName, "p"), nil
+}
+
+// findDeviceRepresentors finds representors for a specific device
+func (n *netconfig) findDeviceRepresentors(ctx context.Context, devName, physSwitchID, physPortNum string) ([]Representor, error) {
+	log := logr.FromContextOrDiscard(ctx)
+	representors := make([]Representor, 0, 10) // Pre-allocate with capacity
+
+	// Look for representors in the device's subsystem
+	subsystemPath := fmt.Sprintf("/sys/class/net/%s/subsystem", devName)
+	entries, err := n.os.ReadDir(subsystemPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read subsystem directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		representorName := entry.Name()
+		representorPath := fmt.Sprintf("/sys/class/net/%s/subsystem/%s", devName, representorName)
+
+		// Check if this is a representor by examining phys_port_name
+		physPortNamePath := fmt.Sprintf("%s/phys_port_name", representorPath)
+		physPortName, err := n.os.ReadFile(physPortNamePath)
+		if err != nil {
+			continue // Skip if we can't read phys_port_name
+		}
+
+		physPortNameStr := strings.TrimSpace(string(physPortName))
+
+		// Check if this is a representor (format: "pf{port_num}vf{vf_id}")
+		if !n.isRepresentorPhysPortName(physPortNameStr) {
+			continue
+		}
+
+		// Parse representor information
+		pfPortNum, vfID, err := n.parseRepresentorPhysPortName(physPortNameStr)
+		if err != nil {
+			log.V(1).Info("Failed to parse representor phys_port_name",
+				"representor", representorName, "phys_port_name", physPortNameStr, "error", err)
+			continue
+		}
+
+		// Verify this representor belongs to our PF
+		if pfPortNum != physPortNum {
+			log.V(1).Info("Representor does not belong to this PF",
+				"representor", representorName, "pf_port", physPortNum, "representor_pf_port", pfPortNum)
+			continue
+		}
+
+		// Verify physical switch ID matches
+		representorSwitchID, err := n.getPhysSwitchID(representorName)
+		if err != nil || representorSwitchID != physSwitchID {
+			log.V(1).Info("Representor switch ID does not match PF",
+				"representor", representorName, "pf_switch_id", physSwitchID, "representor_switch_id", representorSwitchID)
+			continue
+		}
+
+		// Get representor configuration
+		representor, err := n.collectRepresentorInfo(representorName, physSwitchID, physPortNum, vfID)
+		if err != nil {
+			log.Error(err, "Failed to collect representor info", "representor", representorName)
+			continue
+		}
+
+		representors = append(representors, *representor)
+		log.V(1).Info("Found representor", "name", representorName, "vf_id", vfID, "admin_state", representor.AdminState, "mtu", representor.MTU)
+	}
+
+	return representors, nil
+}
+
+// isRepresentorPhysPortName checks if a phys_port_name indicates a representor
+func (n *netconfig) isRepresentorPhysPortName(physPortName string) bool {
+	// Format: "pf{port_num}vf{vf_id}" (e.g., "pf1vf3")
+	re := regexp.MustCompile(`^pf(\d+)vf(\d+)$`)
+	return re.MatchString(physPortName)
+}
+
+// parseRepresentorPhysPortName parses representor phys_port_name to extract PF port and VF ID
+func (n *netconfig) parseRepresentorPhysPortName(physPortName string) (pfPortNum, vfID string, err error) {
+	re := regexp.MustCompile(`^pf(\d+)vf(\d+)$`)
+	matches := re.FindStringSubmatch(physPortName)
+	if len(matches) != 3 {
+		return "", "", fmt.Errorf("invalid representor phys_port_name format: %s", physPortName)
+	}
+	return matches[1], matches[2], nil
+}
+
+// collectRepresentorInfo collects configuration information for a representor
+func (n *netconfig) collectRepresentorInfo(representorName, physSwitchID, physPortNum, vfID string) (*Representor, error) {
+	// Get admin state and MTU using netlink
+	link, err := n.netlinkLib.LinkByName(representorName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get representor link: %w", err)
+	}
+
+	attrs := link.Attrs()
+
+	// Get admin state from netlink flags
+	var adminState string
+	if attrs.Flags&net.FlagUp != 0 {
+		adminState = adminStateUp
+	} else {
+		adminState = adminStateDown
+	}
+
+	// Get MTU from netlink attributes
+	mtu := attrs.MTU
+
+	return &Representor{
+		PhysSwitchID: physSwitchID,
+		PhysPortNum:  physPortNum,
+		VFID:         vfID,
+		Name:         representorName,
+		AdminState:   adminState,
+		MTU:          mtu,
+	}, nil
+}
+
+// restoreRepresentors restores representor configurations
+func (n *netconfig) restoreRepresentors(ctx context.Context, pfName string, device *MellanoxDevice) error {
+	log := logr.FromContextOrDiscard(ctx)
+	log.Info("Restoring representors", "device", pfName, "count", len(device.Representors))
+
+	// Get PF physical switch ID for matching
+	pfPhysSwitchID, err := n.getPhysSwitchID(pfName)
+	if err != nil {
+		return fmt.Errorf("failed to get PF physical switch ID: %w", err)
+	}
+
+	// Get PF physical port number for matching
+	pfPhysPortName, err := n.getPhysPortName(pfName)
+	if err != nil {
+		return fmt.Errorf("failed to get PF physical port name: %w", err)
+	}
+
+	pfPhysPortNum, err := n.parsePhysPortNumber(pfPhysPortName)
+	if err != nil {
+		return fmt.Errorf("failed to parse PF physical port number: %w", err)
+	}
+
+	// Restore each representor
+	for _, representor := range device.Representors {
+		log.Info("Restoring representor",
+			"name", representor.Name, "vf_id", representor.VFID, "admin_state", representor.AdminState, "mtu", representor.MTU)
+
+		// Find the current representor device
+		currentRepresentorName, err := n.findCurrentRepresentor(ctx, pfPhysSwitchID, pfPhysPortNum, representor.VFID)
+		if err != nil {
+			log.Error(err, "Failed to find current representor", "original_name", representor.Name, "vf_id", representor.VFID)
+			continue
+		}
+
+		// Rename representor if needed
+		if currentRepresentorName != representor.Name {
+			if err := n.renameRepresentor(ctx, currentRepresentorName, representor.Name); err != nil {
+				log.Error(err, "Failed to rename representor", "current_name", currentRepresentorName, "target_name", representor.Name)
+				continue
+			}
+			log.Info("Renamed representor", "from", currentRepresentorName, "to", representor.Name)
+		}
+
+		// Set representor MTU
+		if err := n.setRepresentorMTU(representor.Name, representor.MTU); err != nil {
+			log.Error(err, "Failed to set representor MTU", "representor", representor.Name, "mtu", representor.MTU)
+			continue
+		}
+
+		// Set representor admin state
+		if err := n.setRepresentorAdminState(representor.Name, representor.AdminState); err != nil {
+			log.Error(err, "Failed to set representor admin state", "representor", representor.Name, "state", representor.AdminState)
+			continue
+		}
+
+		log.Info("Successfully restored representor", "name", representor.Name)
+	}
+
+	log.Info("Representor restoration completed", "device", pfName)
+	return nil
+}
+
+// findCurrentRepresentor finds the current representor device based on physical attributes
+func (n *netconfig) findCurrentRepresentor(ctx context.Context, physSwitchID, physPortNum, vfID string) (string, error) {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Scan all network devices to find the representor
+	entries, err := n.os.ReadDir("/sys/class/net")
+	if err != nil {
+		return "", fmt.Errorf("failed to read network devices: %w", err)
+	}
+
+	for _, entry := range entries {
+		devName := entry.Name()
+
+		// Skip the PF itself
+		if devName == "lo" {
+			continue
+		}
+
+		// Check if this device has the matching physical attributes
+		devPhysSwitchID, err := n.getPhysSwitchID(devName)
+		if err != nil {
+			continue // Skip if we can't read phys_switch_id
+		}
+
+		if devPhysSwitchID != physSwitchID {
+			continue // Different switch
+		}
+
+		// Check phys_port_name to see if it's a representor for our VF
+		devPhysPortName, err := n.getPhysPortName(devName)
+		if err != nil {
+			continue // Skip if we can't read phys_port_name
+		}
+
+		// Check if this is a representor for our VF
+		if !n.isRepresentorPhysPortName(devPhysPortName) {
+			continue
+		}
+
+		// Parse representor information
+		pfPortNum, devVFID, err := n.parseRepresentorPhysPortName(devPhysPortName)
+		if err != nil {
+			continue
+		}
+
+		// Check if this representor belongs to our PF and VF
+		if pfPortNum == physPortNum && devVFID == vfID {
+			log.V(1).Info("Found current representor", "name", devName, "vf_id", vfID)
+			return devName, nil
+		}
+	}
+
+	return "", fmt.Errorf("representor not found for VF ID %s", vfID)
+}
+
+// renameRepresentor renames a representor device
+func (n *netconfig) renameRepresentor(ctx context.Context, currentName, newName string) error {
+	// Use ip link set dev {current_name} name {new_name}
+	_, stderr, err := n.cmd.RunCommand(ctx, "ip", "link", "set", "dev", currentName, "name", newName)
+	if err != nil {
+		return fmt.Errorf("failed to rename representor from %s to %s: %w, stderr: %s", currentName, newName, err, stderr)
+	}
+	return nil
+}
+
+// setRepresentorMTU sets the MTU for a representor
+func (n *netconfig) setRepresentorMTU(representorName string, mtu int) error {
+	// Use netlink for better error handling
+	link, err := n.netlinkLib.LinkByName(representorName)
+	if err != nil {
+		return fmt.Errorf("failed to get representor link %s: %w", representorName, err)
+	}
+
+	if err := n.netlinkLib.LinkSetMTU(link, mtu); err != nil {
+		return fmt.Errorf("failed to set representor MTU to %d: %w", mtu, err)
+	}
+
+	return nil
+}
+
+// setRepresentorAdminState sets the admin state for a representor
+func (n *netconfig) setRepresentorAdminState(representorName, state string) error {
+	// Use netlink for better error handling
+	link, err := n.netlinkLib.LinkByName(representorName)
+	if err != nil {
+		return fmt.Errorf("failed to get representor link %s: %w", representorName, err)
+	}
+
+	if state == adminStateUp {
+		err = n.netlinkLib.LinkSetUp(link)
+	} else {
+		err = n.netlinkLib.LinkSetDown(link)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to set representor admin state to %s: %w", state, err)
+	}
+
+	return nil
 }
