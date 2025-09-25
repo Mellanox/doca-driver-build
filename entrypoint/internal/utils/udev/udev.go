@@ -18,11 +18,16 @@ package udev
 
 import (
 	"context"
+	_ "embed"
+	"os"
 
 	"github.com/go-logr/logr"
 
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/wrappers"
 )
+
+//go:embed 70-mlnx-ofed-naming.rules
+var udevRulesContent string
 
 // New initialize default implementation of the udev.Interface.
 func New(path string, osWrapper wrappers.OSWrapper) Interface {
@@ -50,15 +55,50 @@ type udev struct {
 
 // CreateRules is the default implementation of the udev.Interface.
 func (u *udev) CreateRules(ctx context.Context) error {
-	_ = logr.FromContextOrDiscard(ctx)
-	// TODO add implementation
+	log := logr.FromContextOrDiscard(ctx)
+	log.Info("create udev rules")
+
+	// Write the udev rules file
+	if err := u.os.WriteFile(u.path, []byte(udevRulesContent), 0o644); err != nil {
+		log.Error(err, "failed to create udev rules file", "path", u.path)
+		return err
+	}
+
+	log.Info("udev rules file created successfully", "path", u.path)
+
+	// Log the file content on debug level (equivalent to bash: debug_print `cat ${MLX_UDEV_RULES_FILE}`)
+	log.V(1).Info("udev rules file content", "path", u.path, "content", udevRulesContent)
+
 	return nil
 }
 
 // RemoveRules is the default implementation of the udev.Interface.
 func (u *udev) RemoveRules(ctx context.Context) error {
-	_ = logr.FromContextOrDiscard(ctx)
-	// TODO add implementation
+	log := logr.FromContextOrDiscard(ctx)
+	log.Info("remove udev rules")
+
+	// Check if the udev rules file exists
+	_, err := u.os.Stat(u.path)
+	if err != nil {
+		// Check if it's a "file not found" error
+		if os.IsNotExist(err) {
+			// File doesn't exist, log and skip
+			log.Info("udev rules file was not previously created, skipping", "path", u.path)
+			return nil
+		}
+		// Other errors (permission denied, etc.) should be returned
+		log.Error(err, "failed to check if udev rules file exists", "path", u.path)
+		return err
+	}
+
+	// File exists, delete it
+	log.Info("deleting udev rules", "path", u.path)
+	if err := u.os.RemoveAll(u.path); err != nil {
+		log.Error(err, "failed to remove udev rules file", "path", u.path)
+		return err
+	}
+
+	log.Info("udev rules file deleted successfully", "path", u.path)
 	return nil
 }
 
