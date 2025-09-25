@@ -72,8 +72,9 @@ type Interface interface {
 }
 
 type driverMgr struct {
-	cfg           config.Config
-	containerMode string
+	cfg             config.Config
+	containerMode   string
+	newDriverLoaded bool
 
 	cmd  cmd.Interface
 	host host.Interface
@@ -209,16 +210,93 @@ func (d *driverMgr) Load(ctx context.Context) (bool, error) {
 	if err := d.generateOfedModulesBlacklist(ctx); err != nil {
 		return false, err
 	}
-	if err := d.removeOfedModulesBlacklist(ctx); err != nil {
-		return false, err
+	defer func() {
+		if err := d.removeOfedModulesBlacklist(ctx); err != nil {
+			log := logr.FromContextOrDiscard(ctx)
+			log.Error(err, "Failed to remove OFED modules blacklist during cleanup")
+		}
+	}()
+
+	log := logr.FromContextOrDiscard(ctx)
+	log.V(1).Info("Loading driver modules")
+
+	// Define modules to check
+	modulesToCheck := []string{"mlx5_core", "mlx5_ib", "ib_core"}
+
+	// Add NFS RDMA modules if enabled
+	if d.cfg.EnableNfsRdma {
+		modulesToCheck = append(modulesToCheck, "nvme_rdma", "rpcrdma")
 	}
+
+	// Check if loaded kernel modules match expected versions
+	modulesMatch, err := d.checkLoadedKmodSrcverVsModinfo(ctx, modulesToCheck)
+	if err != nil {
+		return false, fmt.Errorf("failed to check module versions: %w", err)
+	}
+
+	if !modulesMatch {
+		log.V(1).Info("Module versions don't match, restarting driver")
+
+		// Restart driver
+		if err := d.restartDriver(ctx); err != nil {
+			return false, fmt.Errorf("failed to restart driver: %w", err)
+		}
+
+		// Mark that a new driver was loaded
+		d.newDriverLoaded = true
+
+		// Load NFS RDMA modules if enabled
+		if d.cfg.EnableNfsRdma {
+			if err := d.loadNfsRdma(ctx); err != nil {
+				log.V(1).Info("Failed to load NFS RDMA modules", "error", err)
+				// Non-fatal error, continue
+			}
+		}
+	} else {
+		log.V(1).Info("Loaded and candidate drivers are identical, skipping reload")
+	}
+
+	// Print loaded driver version
+	if err := d.printLoadedDriverVersion(ctx); err != nil {
+		log.V(1).Info("Failed to print driver version", "error", err)
+		// Non-fatal error, continue
+	}
+
+	log.Info("Driver loaded successfully")
 	return true, nil
 }
 
 // Unload is the default implementation of the driver.Interface.
 func (d *driverMgr) Unload(ctx context.Context) (bool, error) {
-	// TODO: Implement
-	return true, nil
+	log := logr.FromContextOrDiscard(ctx)
+
+	if d.newDriverLoaded {
+		// Check if mlnxofedctl exists
+		if _, err := d.os.Stat("/usr/sbin/mlnxofedctl"); err == nil {
+			log.Info("Restoring Mellanox OFED Driver from host...")
+
+			// Execute mlnxofedctl --alt-mods force-restart
+			_, _, err := d.cmd.RunCommand(ctx, "/usr/sbin/mlnxofedctl", "--alt-mods", "force-restart")
+			if err != nil {
+				return false, fmt.Errorf("failed to restore driver with mlnxofedctl: %w", err)
+			}
+
+			// Print loaded driver version
+			if err := d.printLoadedDriverVersion(ctx); err != nil {
+				log.V(1).Info("Failed to print driver version after restore", "error", err)
+				// Non-fatal error, continue
+			}
+
+			log.Info("Driver restored successfully")
+			return true, nil
+		} else {
+			log.V(1).Info("mlnxofedctl not found, cannot restore driver")
+		}
+	} else {
+		log.Info("Keeping currently loaded Mellanox OFED Driver...")
+	}
+
+	return false, nil
 }
 
 // Clear is the default implementation of the driver.Interface.
@@ -1172,6 +1250,269 @@ func (d *driverMgr) analyzeKernelType(
 	}
 
 	return kernelTypeStandard, kVer, rtHpSubstr, releaseverStr
+}
+
+// checkLoadedKmodSrcverVsModinfo checks if loaded kernel module srcversion matches modinfo
+func (d *driverMgr) checkLoadedKmodSrcverVsModinfo(ctx context.Context, modules []string) (bool, error) {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Get list of loaded modules using host interface
+	loadedModules, err := d.host.LsMod(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to get loaded modules: %w", err)
+	}
+
+	for _, module := range modules {
+		log.V(1).Info("Checking module", "module", module)
+
+		// Check if module is loaded
+		if _, exists := loadedModules[module]; !exists {
+			log.V(1).Info("Module not loaded", "module", module)
+			return false, nil // Module not loaded, need to reload
+		}
+
+		// Get srcversion from modinfo
+		srcverFromModinfo, _, err := d.cmd.RunCommand(ctx, "modinfo", module)
+		if err != nil {
+			log.V(1).Info("Failed to get modinfo for module", "module", module, "error", err)
+			return false, nil // Module not found, need to reload
+		}
+
+		// Extract srcversion from modinfo output
+		srcverFromModinfo = strings.TrimSpace(srcverFromModinfo)
+		lines := strings.Split(srcverFromModinfo, "\n")
+		var modinfoSrcver string
+		for _, line := range lines {
+			if strings.Contains(line, "srcversion") {
+				parts := strings.Fields(line)
+				if len(parts) > 0 {
+					modinfoSrcver = parts[len(parts)-1]
+					break
+				}
+			}
+		}
+
+		// Get srcversion from sysfs
+		sysfsPath := fmt.Sprintf("/sys/module/%s/srcversion", module)
+		srcverFromSysfs, _, err := d.cmd.RunCommand(ctx, "cat", sysfsPath)
+		if err != nil {
+			log.V(1).Info("Failed to read sysfs srcversion for module", "module", module, "error", err)
+			return false, nil // Module not loaded, need to reload
+		}
+
+		srcverFromSysfs = strings.TrimSpace(srcverFromSysfs)
+
+		log.V(1).Info("Module version check", "module", module, "modinfo", modinfoSrcver, "sysfs", srcverFromSysfs)
+
+		if modinfoSrcver != srcverFromSysfs {
+			log.V(1).Info("Module srcversion differs", "module", module)
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+// restartDriver restarts the driver modules
+func (d *driverMgr) restartDriver(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	log.V(1).Info("Restarting driver modules")
+
+	// Load dependencies
+	_, _, err := d.cmd.RunCommand(ctx, "modprobe", "-d", "/host", "tls")
+	if err != nil {
+		log.V(1).Info("Failed to load tls module", "error", err)
+		// Non-fatal, continue
+	}
+
+	_, _, err = d.cmd.RunCommand(ctx, "modprobe", "-d", "/host", "psample")
+	if err != nil {
+		log.V(1).Info("Failed to load psample module", "error", err)
+		// Non-fatal, continue
+	}
+
+	// Check if mlx5_ib depends on macsec and load it if needed
+	depends, _, err := d.cmd.RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib")
+	if err == nil && strings.Contains(depends, "macsec") {
+		_, _, err = d.cmd.RunCommand(ctx, "modprobe", "-d", "/host", "macsec")
+		if err != nil {
+			log.V(1).Info("Failed to load macsec module", "error", err)
+			// Non-fatal, continue
+		}
+	}
+
+	// Load pci-hyperv-intf if needed (simplified logic)
+	arch := d.getArchitecture(ctx)
+	if arch != "aarch64" {
+		_, _, err = d.cmd.RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf")
+		if err != nil {
+			log.V(1).Info("Failed to load pci-hyperv-intf module", "error", err)
+			// Non-fatal, continue
+		}
+	}
+
+	// Unload storage modules if enabled
+	if d.cfg.UnloadStorageModules {
+		if err := d.unloadStorageModules(ctx); err != nil {
+			log.V(1).Info("Failed to unload storage modules", "error", err)
+			// Non-fatal, continue
+		}
+	}
+
+	// Restart openibd service
+	_, _, err = d.cmd.RunCommand(ctx, "/etc/init.d/openibd", "restart")
+	if err != nil {
+		return fmt.Errorf("failed to restart openibd service: %w", err)
+	}
+
+	// Load mlx5_vdpa if available
+	_, _, err = d.cmd.RunCommand(ctx, "modinfo", "mlx5_vdpa")
+	if err == nil {
+		// Module exists, try to load it
+		_, _, err = d.cmd.RunCommand(ctx, "modprobe", "mlx5_vdpa")
+		if err != nil {
+			log.V(1).Info("Failed to load mlx5_vdpa module", "error", err)
+			// Non-fatal, continue
+		}
+	} else {
+		log.V(1).Info("mlx5_vdpa module not found, skipping")
+	}
+
+	return nil
+}
+
+// loadNfsRdma loads NFS RDMA modules if enabled
+func (d *driverMgr) loadNfsRdma(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	if !d.cfg.EnableNfsRdma {
+		return nil
+	}
+
+	log.V(1).Info("Loading NFS RDMA modules")
+
+	_, _, err := d.cmd.RunCommand(ctx, "modprobe", "rpcrdma")
+	if err != nil {
+		return fmt.Errorf("failed to load rpcrdma module: %w", err)
+	}
+
+	return nil
+}
+
+// printLoadedDriverVersion prints the currently loaded driver version
+func (d *driverMgr) printLoadedDriverVersion(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Check if mlx5_core is loaded using host interface
+	loadedModules, err := d.host.LsMod(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to check loaded modules: %w", err)
+	}
+
+	// Check if mlx5_core is loaded
+	if _, exists := loadedModules["mlx5_core"]; !exists {
+		log.V(1).Info("mlx5_core module not loaded")
+		return nil
+	}
+
+	// Get first Mellanox network device name
+	netdevName, err := d.getFirstMlxNetdevName(ctx)
+	if err != nil {
+		log.V(1).Info("No Mellanox network device found", "error", err)
+		return nil
+	}
+
+	// Get driver version via ethtool
+	ethtoolOutput, _, err := d.cmd.RunCommand(ctx, "ethtool", "--driver", netdevName)
+	if err != nil {
+		log.V(1).Info("Failed to get driver version via ethtool", "error", err)
+		return nil
+	}
+
+	// Extract version from ethtool output
+	lines := strings.Split(ethtoolOutput, "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "version:") {
+			version := strings.TrimSpace(strings.TrimPrefix(line, "version:"))
+			log.Info("Current mlx5_core driver version", "version", version)
+			break
+		}
+	}
+
+	return nil
+}
+
+// getFirstMlxNetdevName gets the first Mellanox network device name
+func (d *driverMgr) getFirstMlxNetdevName(ctx context.Context) (string, error) {
+	// List network devices
+	netdevOutput, _, err := d.cmd.RunCommand(ctx, "ls", "/sys/class/net/")
+	if err != nil {
+		return "", fmt.Errorf("failed to list network devices: %w", err)
+	}
+
+	devices := strings.Fields(netdevOutput)
+	for _, device := range devices {
+		// Check if this is a Mellanox device by looking at driver
+		driverPath := fmt.Sprintf("/sys/class/net/%s/device/driver", device)
+		driverLink, _, err := d.cmd.RunCommand(ctx, "readlink", driverPath)
+		if err != nil {
+			continue
+		}
+
+		if strings.Contains(driverLink, "mlx5") {
+			return device, nil
+		}
+	}
+
+	return "", fmt.Errorf("no Mellanox network device found")
+}
+
+// unloadStorageModules modifies the openibd script to include storage modules in the unload list
+func (d *driverMgr) unloadStorageModules(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	log.V(1).Info("Unloading storage modules")
+
+	// Determine the unload storage script path
+	unloadStorageScript := "/etc/init.d/openibd"
+	if _, err := d.os.Stat("/usr/share/mlnx_ofed/mod_load_funcs"); err == nil {
+		unloadStorageScript = "/usr/share/mlnx_ofed/mod_load_funcs"
+	}
+
+	log.V(1).Info("Using unload storage script", "script", unloadStorageScript)
+
+	// Create the sed command to add storage modules to UNLOAD_MODULES
+	// This matches the bash script:
+	// sed -i -e '/^[[:space:]]*UNLOAD_MODULES="[a-z]/a\    UNLOAD_MODULES="$UNLOAD_MODULES \
+	// ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma ib_srpt"'
+	storageModulesStr := strings.Join(d.cfg.StorageModules, " ")
+	sedCommand := fmt.Sprintf(`/^[[:space:]]*UNLOAD_MODULES="[a-z]/a\    UNLOAD_MODULES="$UNLOAD_MODULES %s"`, storageModulesStr)
+	log.V(1).Info("Executing sed command", "sedCommand", sedCommand, "storageModules", d.cfg.StorageModules)
+
+	// Execute sed command to modify the script
+	_, _, err := d.cmd.RunCommand(ctx, "sed", "-i", "-e", sedCommand, unloadStorageScript)
+	if err != nil {
+		return fmt.Errorf("failed to modify unload storage script: %w", err)
+	}
+
+	// Verify the modification was successful by checking if storage modules are now in the script
+	// This matches the bash script: if [ `grep ib_isert ${unload_storage_script} -c` -lt 1 ]; then
+	grepCmd := fmt.Sprintf("grep %s %s -c", d.cfg.StorageModules[0], unloadStorageScript)
+	_, stdout, err := d.cmd.RunCommand(ctx, "sh", "-c", grepCmd)
+	if err != nil {
+		return fmt.Errorf("failed to verify storage modules injection: %w", err)
+	}
+
+	count := strings.TrimSpace(stdout)
+	log.V(1).Info("Verification result", "grepCmd", grepCmd, "count", count)
+
+	if count == "0" {
+		return fmt.Errorf("failed to inject storage modules for unload")
+	}
+
+	log.V(1).Info("Successfully added storage modules to unload script", "modules", d.cfg.StorageModules)
+	return nil
 }
 
 // setupSpecialKernelRepos sets up repositories for RT and 64k kernels
