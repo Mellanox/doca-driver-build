@@ -19,7 +19,9 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os/exec"
+	"strings"
 	"syscall"
 
 	"github.com/go-logr/logr"
@@ -40,6 +42,15 @@ type Interface interface {
 
 type cmd struct{}
 
+// formatCommandOutput formats command output for logging, making carriage returns visible
+func formatCommandOutput(output string) string {
+	// Replace carriage returns with [CR] for visibility
+	formatted := strings.ReplaceAll(output, "\r", "[CR]")
+	// Note: We don't replace \n here because the logger will handle newlines naturally
+	// when the output is displayed in the log message
+	return formatted
+}
+
 // RunCommand is the default implementation of the cmd.Interface.
 func (c *cmd) RunCommand(ctx context.Context, command string, args ...string) (string, string, error) {
 	log := logr.FromContextOrDiscard(ctx)
@@ -51,7 +62,21 @@ func (c *cmd) RunCommand(ctx context.Context, command string, args ...string) (s
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
-	log.V(1).Info("RunCommand()", "output", stdout.String(), "error", err)
+
+	// Format output for logging
+	stdoutFormatted := formatCommandOutput(stdout.String())
+	stderrFormatted := formatCommandOutput(stderr.String())
+
+	// Log with actual line breaks by using string formatting instead of structured logging
+	logMessage := fmt.Sprintf("RunCommand() command=%s args=%v error=%v", command, args, err)
+	if stdoutFormatted != "" {
+		logMessage += fmt.Sprintf("\nstdout:\n%s", stdoutFormatted)
+	}
+	if stderrFormatted != "" {
+		logMessage += fmt.Sprintf("\nstderr:\n%s", stderrFormatted)
+	}
+
+	log.V(1).Info(logMessage)
 	return stdout.String(), stderr.String(), err
 }
 
