@@ -119,7 +119,12 @@ func (d *driverMgr) Build(ctx context.Context) error {
 
 // Load is the default implementation of the driver.Interface.
 func (d *driverMgr) Load(ctx context.Context) (bool, error) {
-	// TODO: Implement
+	if err := d.generateOfedModulesBlacklist(ctx); err != nil {
+		return false, err
+	}
+	if err := d.removeOfedModulesBlacklist(ctx); err != nil {
+		return false, err
+	}
 	return true, nil
 }
 
@@ -322,4 +327,65 @@ func (d *driverMgr) extractMajorVersion(version string) (int, error) {
 	}
 
 	return major, nil
+}
+
+// generateOfedModulesBlacklist creates a blacklist file for OFED modules to prevent
+// inbox or host OFED driver loading. This function writes module blacklist entries
+// to the configured blacklist file.
+func (d *driverMgr) generateOfedModulesBlacklist(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+	log.V(1).Info("Generating OFED modules blacklist")
+
+	// Create the blacklist file
+	file, err := d.os.Create(d.cfg.OfedBlacklistModulesFile)
+	if err != nil {
+		log.Error(err, "Failed to create blacklist file", "file", d.cfg.OfedBlacklistModulesFile)
+		return fmt.Errorf("failed to create blacklist file %s: %w", d.cfg.OfedBlacklistModulesFile, err)
+	}
+	defer file.Close()
+
+	// Build the entire content first
+	var content strings.Builder
+	content.WriteString("# blacklist ofed-related modules on host to prevent inbox or host OFED driver loading\n\n")
+
+	// Add blacklist entries for each module
+	for _, module := range d.cfg.OfedBlacklistModules {
+		module = strings.TrimSpace(module)
+		if module == "" {
+			continue
+		}
+		content.WriteString(fmt.Sprintf("blacklist %s\n", module))
+		log.V(2).Info("Added module to blacklist", "module", module)
+	}
+
+	// Write all content at once
+	if _, err := file.WriteString(content.String()); err != nil {
+		log.Error(err, "Failed to write blacklist content to file")
+		return fmt.Errorf("failed to write blacklist content to file: %w", err)
+	}
+
+	log.Info("Successfully generated OFED modules blacklist", "file", d.cfg.OfedBlacklistModulesFile, "modules", d.cfg.OfedBlacklistModules)
+	return nil
+}
+
+// removeOfedModulesBlacklist removes the OFED modules blacklist file from the host.
+// This function is typically called during cleanup or when the blacklist is no longer needed.
+func (d *driverMgr) removeOfedModulesBlacklist(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+	log.V(1).Info("Removing OFED modules blacklist file")
+
+	// Check if file exists before attempting to remove
+	if _, err := d.os.Stat(d.cfg.OfedBlacklistModulesFile); os.IsNotExist(err) {
+		log.V(1).Info("Blacklist file does not exist, nothing to remove", "file", d.cfg.OfedBlacklistModulesFile)
+		return nil
+	}
+
+	// Remove the blacklist file
+	if err := d.os.RemoveAll(d.cfg.OfedBlacklistModulesFile); err != nil {
+		log.Error(err, "Failed to remove blacklist file", "file", d.cfg.OfedBlacklistModulesFile)
+		return fmt.Errorf("failed to remove blacklist file %s: %w", d.cfg.OfedBlacklistModulesFile, err)
+	}
+
+	log.Info("Successfully removed OFED modules blacklist file", "file", d.cfg.OfedBlacklistModulesFile)
+	return nil
 }
