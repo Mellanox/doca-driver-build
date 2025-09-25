@@ -84,6 +84,13 @@ type driverMgr struct {
 // PreStart is the default implementation of the driver.Interface.
 func (d *driverMgr) PreStart(ctx context.Context) error {
 	log := logr.FromContextOrDiscard(ctx)
+
+	// Update CA certificates at the very beginning
+	if err := d.updateCACertificates(ctx); err != nil {
+		log.V(1).Info("Failed to update CA certificates", "error", err)
+		// Non-fatal error, continue
+	}
+
 	switch d.containerMode {
 	case constants.DriverContainerModeSources:
 		log.Info("Executing driver sources container")
@@ -1564,5 +1571,63 @@ func (d *driverMgr) installRedHatDependencies(ctx context.Context, versionInfo *
 		_, _, _ = d.cmd.RunCommand(ctx, "dnf", "config-manager", "--set-disabled", repoName)
 	}
 
+	return nil
+}
+
+// updateCACertificates updates system CA certificates for supported OS types
+func (d *driverMgr) updateCACertificates(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Constants for CA certificate update commands
+	const updateCaCertificatesCmd = "update-ca-certificates"
+	const updateCaTrustCmd = "update-ca-trust extract"
+
+	// Get OS type to determine the appropriate CA certificate update command
+	osType, err := d.host.GetOSType(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get OS type: %w", err)
+	}
+
+	// Determine the command and log message based on OS type
+	var command string
+	var logMessage string
+
+	switch osType {
+	case constants.OSTypeUbuntu:
+		command = updateCaCertificatesCmd
+		logMessage = "Updating system CA certificates (Ubuntu)..."
+	case constants.OSTypeSLES:
+		command = updateCaCertificatesCmd
+		logMessage = "Updating system CA certificates (SLES)..."
+	case constants.OSTypeRedHat, constants.OSTypeOpenShift:
+		command = updateCaTrustCmd
+		logMessage = "Updating system CA certificates (RHEL/OpenShift)..."
+	default:
+		log.V(1).Info("Skipping CA certificate update for unsupported OS", "os", osType)
+		return nil
+	}
+
+	log.Info(logMessage)
+
+	// Extract the base command for existence check (remove arguments)
+	baseCommand := strings.Fields(command)[0]
+
+	// Check if the command exists using shell with 'command -v'
+	_, _, err = d.cmd.RunCommand(ctx, "sh", "-c", "command -v "+baseCommand)
+	if err != nil {
+		log.Info("[WARN] CA certificate update command not found", "command", baseCommand)
+		// Command not found is not a fatal error, continue execution
+		return nil //nolint:nilerr // Intentionally ignoring error - command not found is not fatal
+	}
+
+	// Run the appropriate command with || true to ignore errors
+	// This matches the bash script pattern: exec_cmd "command || true"
+	_, _, err = d.cmd.RunCommand(ctx, "sh", "-c", command+" || true")
+	if err != nil {
+		log.V(1).Info("CA certificate update command failed", "command", command, "error", err)
+		// Non-fatal error, continue
+	}
+
+	log.V(1).Info("CA certificate update completed", "os", osType)
 	return nil
 }

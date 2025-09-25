@@ -81,6 +81,12 @@ var _ = Describe("Driver", func() {
 			})
 
 			It("should succeed when all required fields are set", func() {
+				// Mock updateCACertificates call
+				hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+				cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-certificates").Return("", "", nil)
+				cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-certificates || true").Return("", "", nil)
+
+				// Mock the main PreStart logic
 				hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
 				osMock.EXPECT().ReadFile("/proc/version").Return([]byte("Linux version 5.4.0-74-generic (buildd@lcy01-amd64-001) (gcc version 11.5.0) #83-Ubuntu SMP Sat May 8 02:35:39 UTC 2021"), nil)
 				cmdMock.EXPECT().RunCommand(ctx, "apt-get", "-yq", "update").Return("", "", nil)
@@ -95,6 +101,11 @@ var _ = Describe("Driver", func() {
 				cfg.NvidiaNicDriverPath = ""
 				dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
 
+				// Mock updateCACertificates call
+				hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+				cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-certificates").Return("", "", nil)
+				cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-certificates || true").Return("", "", nil)
+
 				err := dm.PreStart(ctx)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("NVIDIA_NIC_DRIVER_PATH environment variable must be set"))
@@ -106,6 +117,12 @@ var _ = Describe("Driver", func() {
 				cfg.NvidiaNicDriversInventoryPath = inventoryDir
 				dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
 
+				// Mock updateCACertificates call
+				hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+				cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-certificates").Return("", "", nil)
+				cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-certificates || true").Return("", "", nil)
+
+				// Mock the main PreStart logic
 				hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
 				osMock.EXPECT().ReadFile("/proc/version").Return([]byte("Linux version 5.4.0-74-generic (buildd@lcy01-amd64-001) (gcc version 11.5.0) #83-Ubuntu SMP Sat May 8 02:35:39 UTC 2021"), nil)
 				cmdMock.EXPECT().RunCommand(ctx, "apt-get", "-yq", "update").Return("", "", nil)
@@ -122,6 +139,12 @@ var _ = Describe("Driver", func() {
 				cfg.NvidiaNicDriversInventoryPath = inventoryFile
 				dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
 
+				// Mock updateCACertificates call
+				hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+				cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-certificates").Return("", "", nil)
+				cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-certificates || true").Return("", "", nil)
+
+				// Mock the main PreStart logic
 				hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
 				osMock.EXPECT().ReadFile("/proc/version").Return([]byte("Linux version 5.4.0-74-generic (buildd@lcy01-amd64-001) (gcc version 11.5.0) #83-Ubuntu SMP Sat May 8 02:35:39 UTC 2021"), nil)
 				cmdMock.EXPECT().RunCommand(ctx, "apt-get", "-yq", "update").Return("", "", nil)
@@ -137,6 +160,12 @@ var _ = Describe("Driver", func() {
 				cfg.NvidiaNicDriversInventoryPath = "/nonexistent/path"
 				dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
 
+				// Mock updateCACertificates call
+				hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+				cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-certificates").Return("", "", nil)
+				cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-certificates || true").Return("", "", nil)
+
+				// Mock the main PreStart logic
 				hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
 				osMock.EXPECT().ReadFile("/proc/version").Return([]byte("Linux version 5.4.0-74-generic (buildd@lcy01-amd64-001) (gcc version 11.5.0) #83-Ubuntu SMP Sat May 8 02:35:39 UTC 2021"), nil)
 				cmdMock.EXPECT().RunCommand(ctx, "apt-get", "-yq", "update").Return("", "", nil)
@@ -155,6 +184,11 @@ var _ = Describe("Driver", func() {
 			})
 
 			It("should succeed without additional validation", func() {
+				// Mock updateCACertificates call
+				hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+				cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-certificates").Return("", "", nil)
+				cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-certificates || true").Return("", "", nil)
+
 				err := dm.PreStart(ctx)
 				Expect(err).NotTo(HaveOccurred())
 			})
@@ -166,6 +200,11 @@ var _ = Describe("Driver", func() {
 			})
 
 			It("should return an error", func() {
+				// Mock updateCACertificates call
+				hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+				cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-certificates").Return("", "", nil)
+				cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-certificates || true").Return("", "", nil)
+
 				err := dm.PreStart(ctx)
 				Expect(err).To(HaveOccurred())
 				Expect(err.Error()).To(ContainSubstring("unknown containerMode"))
@@ -1996,6 +2035,233 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "ethtool", "--driver", "eth0").Return("driver: mlx5_core\nbus-info: 0000:01:00.0", "", nil)
 
 			err := dm.printLoadedDriverVersion(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("updateCACertificates", func() {
+		BeforeEach(func() {
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+		})
+
+		It("should update CA certificates successfully for Ubuntu", func() {
+			// Mock GetOSType to return Ubuntu
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+
+			// Mock command existence check
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-certificates").Return("", "", nil)
+
+			// Mock CA certificate update command
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-certificates || true").Return("", "", nil)
+
+			err := dm.updateCACertificates(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should update CA certificates successfully for SLES", func() {
+			// Mock GetOSType to return SLES
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeSLES, nil)
+
+			// Mock command existence check
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-certificates").Return("", "", nil)
+
+			// Mock CA certificate update command
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-certificates || true").Return("", "", nil)
+
+			err := dm.updateCACertificates(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should update CA certificates successfully for RedHat", func() {
+			// Mock GetOSType to return RedHat
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeRedHat, nil)
+
+			// Mock command existence check for update-ca-trust
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-trust").Return("", "", nil)
+
+			// Mock CA certificate update command
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-trust extract || true").Return("", "", nil)
+
+			err := dm.updateCACertificates(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should update CA certificates successfully for OpenShift", func() {
+			// Mock GetOSType to return OpenShift
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeOpenShift, nil)
+
+			// Mock command existence check for update-ca-trust
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-trust").Return("", "", nil)
+
+			// Mock CA certificate update command
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-trust extract || true").Return("", "", nil)
+
+			err := dm.updateCACertificates(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should skip CA certificate update for unsupported OS", func() {
+			// Mock GetOSType to return unsupported OS
+			hostMock.EXPECT().GetOSType(ctx).Return("unsupported", nil)
+
+			// No command execution should happen
+			err := dm.updateCACertificates(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should return error when GetOSType fails", func() {
+			expectedError := errors.New("failed to get OS type")
+			hostMock.EXPECT().GetOSType(ctx).Return("", expectedError)
+
+			err := dm.updateCACertificates(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to get OS type"))
+		})
+
+		It("should handle command not found gracefully for Ubuntu", func() {
+			// Mock GetOSType to return Ubuntu
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+
+			// Mock command existence check failure
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-certificates").Return("", "", errors.New("command not found"))
+
+			// No CA certificate update command should be executed
+			err := dm.updateCACertificates(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle command not found gracefully for RedHat", func() {
+			// Mock GetOSType to return RedHat
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeRedHat, nil)
+
+			// Mock command existence check failure
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-trust").Return("", "", errors.New("command not found"))
+
+			// No CA certificate update command should be executed
+			err := dm.updateCACertificates(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle CA certificate update command failure gracefully for Ubuntu", func() {
+			// Mock GetOSType to return Ubuntu
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+
+			// Mock command existence check
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-certificates").Return("", "", nil)
+
+			// Mock CA certificate update command failure
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-certificates || true").Return("", "", errors.New("update failed"))
+
+			// Should not return error (non-fatal)
+			err := dm.updateCACertificates(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle CA certificate update command failure gracefully for RedHat", func() {
+			// Mock GetOSType to return RedHat
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeRedHat, nil)
+
+			// Mock command existence check
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-trust").Return("", "", nil)
+
+			// Mock CA certificate update command failure
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-trust extract || true").Return("", "", errors.New("update failed"))
+
+			// Should not return error (non-fatal)
+			err := dm.updateCACertificates(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle CA certificate update command failure gracefully for SLES", func() {
+			// Mock GetOSType to return SLES
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeSLES, nil)
+
+			// Mock command existence check
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-certificates").Return("", "", nil)
+
+			// Mock CA certificate update command failure
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-certificates || true").Return("", "", errors.New("update failed"))
+
+			// Should not return error (non-fatal)
+			err := dm.updateCACertificates(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle CA certificate update command failure gracefully for OpenShift", func() {
+			// Mock GetOSType to return OpenShift
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeOpenShift, nil)
+
+			// Mock command existence check
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-trust").Return("", "", nil)
+
+			// Mock CA certificate update command failure
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-trust extract || true").Return("", "", errors.New("update failed"))
+
+			// Should not return error (non-fatal)
+			err := dm.updateCACertificates(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should use correct command for Ubuntu with arguments", func() {
+			// Mock GetOSType to return Ubuntu
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+
+			// Mock command existence check
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-certificates").Return("", "", nil)
+
+			// Mock CA certificate update command - verify the exact command
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-certificates || true").Return("", "", nil)
+
+			err := dm.updateCACertificates(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should use correct command for RedHat with arguments", func() {
+			// Mock GetOSType to return RedHat
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeRedHat, nil)
+
+			// Mock command existence check
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-trust").Return("", "", nil)
+
+			// Mock CA certificate update command - verify the exact command
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-trust extract || true").Return("", "", nil)
+
+			err := dm.updateCACertificates(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should extract base command correctly from command with arguments", func() {
+			// This test verifies that strings.Fields(command)[0] works correctly
+			// for extracting the base command from "update-ca-trust extract"
+
+			// Mock GetOSType to return RedHat
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeRedHat, nil)
+
+			// Mock command existence check - should check for "update-ca-trust" (base command)
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "command -v update-ca-trust").Return("", "", nil)
+
+			// Mock CA certificate update command - should use full command with arguments
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "update-ca-trust extract || true").Return("", "", nil)
+
+			err := dm.updateCACertificates(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle empty OS type gracefully", func() {
+			// Mock GetOSType to return empty string
+			hostMock.EXPECT().GetOSType(ctx).Return("", nil)
+
+			// No command execution should happen
+			err := dm.updateCACertificates(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle nil OS type gracefully", func() {
+			// Mock GetOSType to return empty string (nil would be handled by the interface)
+			hostMock.EXPECT().GetOSType(ctx).Return("", nil)
+
+			// No command execution should happen
+			err := dm.updateCACertificates(ctx)
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
