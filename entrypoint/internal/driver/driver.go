@@ -20,9 +20,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-logr/logr"
 
@@ -31,6 +33,12 @@ import (
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/cmd"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/host"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/wrappers"
+)
+
+const (
+	kernelTypeStandard = "standard"
+	kernelTypeRT       = "rt"
+	kernelType64k      = "64k"
 )
 
 // New creates a new instance of the driver manager
@@ -100,20 +108,99 @@ func (d *driverMgr) PreStart(ctx context.Context) error {
 				return fmt.Errorf("NVIDIA_NIC_DRIVERS_INVENTORY_PATH is not a dir")
 			}
 			log.V(1).Info("use driver inventory", "path", d.cfg.NvidiaNicDriversInventoryPath)
+		} else {
+			log.V(1).Info("driver inventory path is not set, container will always recompile driver on startup")
+			return nil
 		}
-		log.V(1).Info("driver inventory path is not set, container will always recompile driver on startup")
-		return nil
 	case constants.DriverContainerModePrecompiled:
 		log.Info("Executing precompiled driver container")
 		return nil
 	default:
 		return fmt.Errorf("unknown containerMode")
 	}
+	return nil
 }
 
 // Build is the default implementation of the driver.Interface.
 func (d *driverMgr) Build(ctx context.Context) error {
-	// TODO: Implement
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Only build for sources container mode
+	if d.containerMode != constants.DriverContainerModeSources {
+		log.V(1).Info("Skipping build for non-sources container mode", "mode", d.containerMode)
+		return nil
+	}
+
+	// Get kernel version
+	kernelVersion, err := d.host.GetKernelVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get kernel version: %w", err)
+	}
+
+	// Get OS type
+	osType, err := d.host.GetOSType(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get OS type: %w", err)
+	}
+
+	// Check driver inventory and validate checksums
+	shouldBuild, inventoryPath, err := d.checkDriverInventory(ctx, kernelVersion)
+	if err != nil {
+		return fmt.Errorf("failed to check driver inventory: %w", err)
+	}
+
+	if !shouldBuild {
+		log.Info("Skipping driver build, reusing previously built packages", "kernel", kernelVersion)
+	} else {
+		// Create inventory directory
+		if err := d.createInventoryDirectory(ctx, inventoryPath); err != nil {
+			return fmt.Errorf("failed to create inventory directory: %w", err)
+		}
+
+		// Install OS-specific prerequisites
+		log.V(1).Info("About to install prerequisites", "os", osType, "kernel", kernelVersion)
+		if err := d.installPrerequisitesForOS(ctx, osType, kernelVersion); err != nil {
+			return fmt.Errorf("failed to install prerequisites: %w", err)
+		}
+
+		// Build driver from source
+		if err := d.buildDriverFromSource(ctx, d.cfg.NvidiaNicDriverPath, kernelVersion, osType); err != nil {
+			return fmt.Errorf("failed to build driver from source: %w", err)
+		}
+
+		// Copy build artifacts to inventory
+		if err := d.copyBuildArtifacts(ctx, d.cfg.NvidiaNicDriverPath, inventoryPath, osType); err != nil {
+			return fmt.Errorf("failed to copy build artifacts: %w", err)
+		}
+
+		// Calculate and store checksum
+		if d.cfg.NvidiaNicDriversInventoryPath != "" {
+			if err := d.storeBuildChecksum(ctx, inventoryPath, kernelVersion); err != nil {
+				return fmt.Errorf("failed to store build checksum: %w", err)
+			}
+		}
+
+		// Fix source link if needed
+		if err := d.fixSourceLink(ctx, kernelVersion); err != nil {
+			log.V(1).Info("Failed to fix source link", "error", err)
+			// Non-fatal error, continue
+		}
+
+		log.Info("Driver build completed successfully", "kernel", kernelVersion, "inventory", inventoryPath)
+	}
+
+	// Install the driver packages (always install, whether from cache or fresh build)
+	if err := d.installDriver(ctx, inventoryPath, kernelVersion, osType); err != nil {
+		return fmt.Errorf("failed to install driver: %w", err)
+	}
+
+	// Sync Ubuntu network configuration tools if running on Ubuntu
+	if osType == constants.OSTypeUbuntu {
+		if err := d.ubuntuSyncNetworkConfigurationTools(ctx); err != nil {
+			return fmt.Errorf("failed to sync Ubuntu network configuration tools: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -387,5 +474,754 @@ func (d *driverMgr) removeOfedModulesBlacklist(ctx context.Context) error {
 	}
 
 	log.Info("Successfully removed OFED modules blacklist file", "file", d.cfg.OfedBlacklistModulesFile)
+	return nil
+}
+
+// checkDriverInventory checks if driver inventory exists and validates checksums
+func (d *driverMgr) checkDriverInventory(ctx context.Context, kernelVersion string) (bool, string, error) {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// If no inventory path is set, always build
+	if d.cfg.NvidiaNicDriversInventoryPath == "" {
+		inventoryPath := fmt.Sprintf("/tmp/nvidia_nic_driver_%s", time.Now().Format("02-01-2006_15-04-05"))
+		return true, inventoryPath, nil
+	}
+
+	// Check if inventory directory exists
+	inventoryPath := filepath.Join(d.cfg.NvidiaNicDriversInventoryPath, kernelVersion, d.cfg.NvidiaNicDriverVer)
+	checksumPath := filepath.Join(d.cfg.NvidiaNicDriversInventoryPath, kernelVersion, d.cfg.NvidiaNicDriverVer+".checksum")
+
+	// Check if inventory directory exists
+	if _, err := d.os.Stat(inventoryPath); os.IsNotExist(err) {
+		log.V(1).Info("Driver inventory directory does not exist, will build", "path", inventoryPath)
+		return true, inventoryPath, nil
+	} else if err != nil {
+		return false, "", fmt.Errorf("failed to check inventory directory: %w", err)
+	}
+
+	// Check if checksum file exists
+	if _, err := d.os.Stat(checksumPath); os.IsNotExist(err) {
+		log.V(1).Info("No checksum file found, will rebuild", "path", checksumPath)
+		return true, inventoryPath, nil
+	} else if err != nil {
+		return false, "", fmt.Errorf("failed to check checksum file: %w", err)
+	}
+
+	// Read stored checksum
+	storedChecksum, err := d.os.ReadFile(checksumPath)
+	if err != nil {
+		log.V(1).Info("Failed to read stored checksum, will rebuild", "error", err)
+		return true, inventoryPath, nil
+	}
+
+	// Calculate current checksum
+	currentChecksum, err := d.calculateDriverInventoryChecksum(ctx, inventoryPath)
+	if err != nil {
+		log.V(1).Info("Failed to calculate current checksum, will rebuild", "error", err)
+		return true, inventoryPath, nil
+	}
+
+	// Compare checksums
+	if strings.TrimSpace(string(storedChecksum)) == currentChecksum {
+		log.V(1).Info("Checksums match, skipping build", "checksum", currentChecksum)
+		return false, inventoryPath, nil
+	}
+
+	log.V(1).Info("Checksums do not match, will rebuild", "stored", strings.TrimSpace(string(storedChecksum)), "current", currentChecksum)
+	return true, inventoryPath, nil
+}
+
+// createInventoryDirectory creates the inventory directory
+func (d *driverMgr) createInventoryDirectory(ctx context.Context, inventoryPath string) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	log.V(1).Info("Creating inventory directory", "path", inventoryPath)
+	_, _, err := d.cmd.RunCommand(ctx, "mkdir", "-p", inventoryPath)
+	if err != nil {
+		return fmt.Errorf("failed to create inventory directory %s: %w", inventoryPath, err)
+	}
+
+	return nil
+}
+
+// installPrerequisitesForOS installs OS-specific prerequisites
+func (d *driverMgr) installPrerequisitesForOS(ctx context.Context, osType, kernelVersion string) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	log.V(1).Info("Installing prerequisites", "os", osType, "kernel", kernelVersion)
+
+	switch osType {
+	case constants.OSTypeUbuntu:
+		return d.installUbuntuPrerequisites(ctx, kernelVersion)
+	case constants.OSTypeSLES:
+		return d.installSLESPrerequisites(ctx, kernelVersion)
+	case constants.OSTypeRedHat, constants.OSTypeOpenShift:
+		return d.installRedHatPrerequisites(ctx, kernelVersion)
+	default:
+		return fmt.Errorf("unsupported OS type: %s", osType)
+	}
+}
+
+// installUbuntuPrerequisites installs Ubuntu-specific prerequisites
+func (d *driverMgr) installUbuntuPrerequisites(ctx context.Context, kernelVersion string) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	log.V(1).Info("Installing Ubuntu prerequisites", "kernel", kernelVersion)
+
+	// Check if this is an RT (realtime) kernel
+	if strings.Contains(kernelVersion, "realtime") {
+		log.V(1).Info("RT kernel identified, copying APT configuration from host")
+
+		// Copy APT configuration from host for RT kernels
+		_, _, err := d.cmd.RunCommand(ctx, "cp", "-r", "/host/etc/apt/*", "/etc/apt/")
+		if err != nil {
+			return fmt.Errorf("failed to copy APT configuration from host: %w", err)
+		}
+	}
+
+	// Update package list
+	_, _, err := d.cmd.RunCommand(ctx, "apt-get", "update")
+	if err != nil {
+		return fmt.Errorf("failed to update apt packages: %w", err)
+	}
+
+	// Install pkg-config and kernel headers
+	_, _, err = d.cmd.RunCommand(ctx, "apt-get", "-yq", "install", "pkg-config", "linux-headers-"+kernelVersion)
+	if err != nil {
+		return fmt.Errorf("failed to install Ubuntu prerequisites: %w", err)
+	}
+
+	return nil
+}
+
+// installSLESPrerequisites installs SLES-specific prerequisites
+func (d *driverMgr) installSLESPrerequisites(ctx context.Context, kernelVersion string) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	log.V(1).Info("Installing SLES prerequisites", "kernel", kernelVersion)
+
+	// Clean kernel version for SLES
+	cleanedKernelVer := strings.TrimSuffix(kernelVersion, "-default")
+
+	// Install kernel development package
+	_, _, err := d.cmd.RunCommand(ctx, "zypper", "--non-interactive", "install", "--no-recommends", "kernel-default-devel="+cleanedKernelVer)
+	if err != nil {
+		return fmt.Errorf("failed to install SLES prerequisites: %w", err)
+	}
+
+	return nil
+}
+
+// installRedHatPrerequisites installs RedHat-specific prerequisites
+func (d *driverMgr) installRedHatPrerequisites(ctx context.Context, kernelVersion string) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	log.V(1).Info("Installing RedHat prerequisites", "kernel", kernelVersion)
+
+	// Get RedHat version information
+	versionInfo, err := d.host.GetRedHatVersionInfo(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get RedHat version info: %w", err)
+	}
+
+	// Enable OpenShift repositories if running on OpenShift
+	if versionInfo.OpenShiftVersion != "" {
+		d.setupOpenShiftRepositories(ctx, versionInfo)
+	}
+
+	// Enable EUS repositories for supported versions
+	d.setupEUSRepositories(ctx, versionInfo)
+
+	// Install kernel packages based on kernel type
+	if err := d.installKernelPackages(ctx, kernelVersion, versionInfo); err != nil {
+		return fmt.Errorf("failed to install kernel packages: %w", err)
+	}
+
+	// Install additional dependencies
+	if err := d.installRedHatDependencies(ctx, versionInfo); err != nil {
+		return fmt.Errorf("failed to install RedHat dependencies: %w", err)
+	}
+
+	return nil
+}
+
+// buildDriverFromSource builds the driver from source using install.pl
+func (d *driverMgr) buildDriverFromSource(ctx context.Context, driverPath, kernelVersion, osType string) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	log.V(1).Info("Building driver from source", "path", driverPath, "kernel", kernelVersion, "os", osType)
+
+	// Set build flags based on OS type
+	buildFlags := d.getBuildFlagsForOS(osType, kernelVersion)
+
+	// Get package suffix based on OS type
+	pkgSuffix := d.getPackageSuffix(osType)
+
+	// Get additional build flags based on environment variables
+	appendFlags := d.getAppendDriverBuildFlags(osType)
+
+	// Construct install.pl command
+	installScript := filepath.Join(driverPath, "install.pl")
+	args := []string{
+		installScript,
+		"--without-depcheck",
+		"--kernel", kernelVersion,
+		"--kernel-only",
+		"--build-only",
+		"--with-mlnx-tools",
+		"--without-knem" + pkgSuffix,
+		"--without-iser" + pkgSuffix,
+		"--without-isert" + pkgSuffix,
+		"--without-srp" + pkgSuffix,
+		"--without-kernel-mft" + pkgSuffix,
+		"--without-mlnx-rdma-rxe" + pkgSuffix,
+	}
+
+	// Add OS-specific flags
+	args = append(args, buildFlags...)
+
+	// Add additional flags based on environment variables
+	args = append(args, appendFlags...)
+
+	// Execute the build
+	_, _, err := d.cmd.RunCommand(ctx, args[0], args[1:]...)
+	if err != nil {
+		return fmt.Errorf("failed to build driver from source: %w", err)
+	}
+
+	log.Info("Driver build completed successfully")
+	return nil
+}
+
+// getBuildFlagsForOS returns OS-specific build flags
+func (d *driverMgr) getBuildFlagsForOS(osType, kernelVersion string) []string {
+	switch osType {
+	case constants.OSTypeUbuntu:
+		return []string{"--without-dkms"}
+	case constants.OSTypeSLES:
+		return []string{"--disable-kmp", "--kernel-sources", "/lib/modules/" + kernelVersion + "/build"}
+	case constants.OSTypeRedHat:
+		return []string{"--disable-kmp"}
+	default:
+		return []string{}
+	}
+}
+
+// copyBuildArtifacts copies build artifacts to inventory directory
+func (d *driverMgr) copyBuildArtifacts(ctx context.Context, driverPath, inventoryPath, osType string) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	log.V(1).Info("Copying build artifacts", "from", driverPath, "to", inventoryPath)
+
+	// Determine source and destination paths based on OS type
+	var sourcePath string
+	var packageType string
+
+	// Get architecture for path construction
+	arch := d.getArchitecture(ctx)
+	log.V(1).Info("Using architecture for path construction", "arch", arch)
+
+	switch osType {
+	case constants.OSTypeUbuntu:
+		sourcePath = filepath.Join(driverPath, "DEBS", "ubuntu*", arch, "*.deb")
+		packageType = "deb"
+	case constants.OSTypeSLES, constants.OSTypeRedHat, constants.OSTypeOpenShift:
+		sourcePath = filepath.Join(driverPath, "RPMS", "*", arch, "*.rpm")
+		packageType = "rpm"
+	default:
+		return fmt.Errorf("unsupported OS type for artifact copying: %s", osType)
+	}
+
+	log.V(1).Info("Constructed source path", "sourcePath", sourcePath, "packageType", packageType)
+
+	// Copy packages to inventory directory using shell to expand wildcards
+	cpCmd := fmt.Sprintf("cp %s %s/", sourcePath, inventoryPath)
+	log.V(1).Info("Executing copy command", "command", cpCmd)
+
+	// Debug: List source directory to see what files exist
+	lsCmd := fmt.Sprintf("ls -la %s", filepath.Dir(sourcePath))
+	log.V(1).Info("Listing source directory", "command", lsCmd)
+	_, _, lsErr := d.cmd.RunCommand(ctx, "sh", "-c", lsCmd)
+	if lsErr != nil {
+		log.V(1).Info("Failed to list source directory", "error", lsErr)
+	}
+
+	// Debug: Try to find files matching the pattern
+	findCmd := fmt.Sprintf("find %s -name '*.deb' 2>/dev/null || echo 'No .deb files found'", filepath.Join(driverPath, "DEBS"))
+	log.V(1).Info("Searching for .deb files", "command", findCmd)
+	_, findOutput, findErr := d.cmd.RunCommand(ctx, "sh", "-c", findCmd)
+	if findErr != nil {
+		log.V(1).Info("Failed to search for .deb files", "error", findErr)
+	} else {
+		log.V(1).Info("Found .deb files", "output", findOutput)
+	}
+
+	// Debug: Check if destination directory exists
+	destExistsCmd := fmt.Sprintf("ls -la %s", inventoryPath)
+	log.V(1).Info("Checking destination directory", "command", destExistsCmd)
+	_, _, destErr := d.cmd.RunCommand(ctx, "sh", "-c", destExistsCmd)
+	if destErr != nil {
+		log.V(1).Info("Destination directory check failed", "error", destErr)
+	}
+
+	_, _, err := d.cmd.RunCommand(ctx, "sh", "-c", cpCmd)
+	if err != nil {
+		return fmt.Errorf("failed to copy %s packages to inventory: %w", packageType, err)
+	}
+
+	log.V(1).Info("Build artifacts copied successfully", "type", packageType)
+	return nil
+}
+
+// calculateDriverInventoryChecksum calculates MD5 checksum of driver inventory
+func (d *driverMgr) calculateDriverInventoryChecksum(ctx context.Context, inventoryPath string) (string, error) {
+	log := logr.FromContextOrDiscard(ctx)
+
+	log.V(1).Info("Calculating driver inventory checksum", "path", inventoryPath)
+
+	// Use find and md5sum to calculate checksum through shell to handle pipe
+	checksumCmd := fmt.Sprintf("find %s -type f -exec md5sum {} + | md5sum", inventoryPath)
+	log.V(1).Info("Executing checksum calculation", "command", checksumCmd)
+	stdout, _, err := d.cmd.RunCommand(ctx, "sh", "-c", checksumCmd)
+	if err != nil {
+		return "", fmt.Errorf("failed to calculate checksum: %w", err)
+	}
+
+	log.V(1).Info("Checksum calculation output", "output", stdout)
+
+	// Extract checksum from output
+	parts := strings.Fields(stdout)
+	if len(parts) == 0 {
+		return "", fmt.Errorf("no checksum found in output")
+	}
+
+	return parts[0], nil
+}
+
+// storeBuildChecksum stores the build checksum
+func (d *driverMgr) storeBuildChecksum(ctx context.Context, inventoryPath, kernelVersion string) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	checksumPath := filepath.Join(d.cfg.NvidiaNicDriversInventoryPath, kernelVersion, d.cfg.NvidiaNicDriverVer+".checksum")
+
+	// Calculate current checksum
+	checksum, err := d.calculateDriverInventoryChecksum(ctx, inventoryPath)
+	if err != nil {
+		return fmt.Errorf("failed to calculate checksum: %w", err)
+	}
+
+	// Write checksum to file
+	err = d.os.WriteFile(checksumPath, []byte(checksum), 0o644)
+	if err != nil {
+		return fmt.Errorf("failed to write checksum file: %w", err)
+	}
+
+	log.V(1).Info("Stored build checksum", "path", checksumPath, "checksum", checksum)
+	return nil
+}
+
+// fixSourceLink fixes the /usr/src/ofa_kernel/default symlink
+func (d *driverMgr) fixSourceLink(ctx context.Context, kernelVersion string) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	log.V(1).Info("Fixing source link", "kernel", kernelVersion)
+
+	// Check if the symlink exists and points to the correct location
+	targetPath := "/usr/src/ofa_kernel/default"
+	expectedTarget := filepath.Join("/usr/src/ofa_kernel", d.getArchitecture(ctx), kernelVersion)
+
+	// Read current symlink target
+	linkTarget, err := d.os.Readlink(targetPath)
+	if err != nil {
+		log.V(1).Info("Source link does not exist or is not a symlink", "error", err)
+		return nil
+	}
+
+	// Check if it's an absolute path and points to the correct location
+	if strings.HasPrefix(linkTarget, "/") && linkTarget != expectedTarget {
+		// Update the symlink
+		_, _, err = d.cmd.RunCommand(ctx, "ln", "-snf", expectedTarget, targetPath)
+		if err != nil {
+			return fmt.Errorf("failed to update source link: %w", err)
+		}
+		log.V(1).Info("Updated source link", "from", linkTarget, "to", expectedTarget)
+	}
+
+	return nil
+}
+
+// getArchitecture returns the system architecture
+func (d *driverMgr) getArchitecture(ctx context.Context) string {
+	// Execute uname -m to get the machine architecture
+	// This matches the bash script: ARCH=$(uname -m)
+	output, _, err := d.cmd.RunCommand(ctx, "uname", "-m")
+	if err != nil {
+		// Fallback to x86_64 if uname fails
+		return "x86_64"
+	}
+
+	// Trim whitespace and return the architecture
+	return strings.TrimSpace(output)
+}
+
+// installDriver installs the driver packages from the inventory directory
+func (d *driverMgr) installDriver(ctx context.Context, inventoryPath, kernelVersion, osType string) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	log.V(1).Info("Installing driver packages", "path", inventoryPath, "kernel", kernelVersion, "os", osType)
+
+	// Prevent depmod from giving a WARNING about missing files during installation
+	kernelModulesDir := filepath.Join("/lib/modules", kernelVersion)
+	if _, err := d.os.Stat(kernelModulesDir); os.IsNotExist(err) {
+		log.V(1).Info("Creating kernel modules directory", "path", kernelModulesDir)
+		_, _, err := d.cmd.RunCommand(ctx, "mkdir", "-p", kernelModulesDir)
+		if err != nil {
+			return fmt.Errorf("failed to create kernel modules directory: %w", err)
+		}
+	}
+
+	// Create required files to prevent depmod warnings
+	modulesOrderPath := filepath.Join(kernelModulesDir, "modules.order")
+	modulesBuiltinPath := filepath.Join(kernelModulesDir, "modules.builtin")
+
+	log.V(1).Info("Creating modules.order and modules.builtin files")
+	_, _, err := d.cmd.RunCommand(ctx, "touch", modulesOrderPath)
+	if err != nil {
+		return fmt.Errorf("failed to create modules.order file: %w", err)
+	}
+
+	_, _, err = d.cmd.RunCommand(ctx, "touch", modulesBuiltinPath)
+	if err != nil {
+		return fmt.Errorf("failed to create modules.builtin file: %w", err)
+	}
+
+	// Install packages based on OS type
+	switch osType {
+	case constants.OSTypeUbuntu:
+		return d.installUbuntuDriver(ctx, inventoryPath, kernelVersion)
+	case constants.OSTypeSLES, constants.OSTypeRedHat, constants.OSTypeOpenShift:
+		return d.installRedHatDriver(ctx, inventoryPath, kernelVersion)
+	default:
+		return fmt.Errorf("unsupported OS type for driver installation: %s", osType)
+	}
+}
+
+// installUbuntuDriver installs driver packages on Ubuntu
+func (d *driverMgr) installUbuntuDriver(ctx context.Context, inventoryPath, kernelVersion string) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	log.V(1).Info("Installing Ubuntu driver packages", "path", inventoryPath)
+
+	// Try to install linux-modules-extra package if available
+	modulesExtraPkg := fmt.Sprintf("linux-modules-extra-%s", kernelVersion)
+	log.V(1).Info("Attempting to install modules extra package", "package", modulesExtraPkg)
+
+	// Update package list and try to install modules-extra package
+	_, _, err := d.cmd.RunCommand(ctx, "apt-get", "update")
+	if err != nil {
+		log.V(1).Info("Failed to update apt packages, continuing", "error", err)
+	}
+
+	// Check if the package exists and install it if available
+	cmdStr := fmt.Sprintf("LC_ALL=C apt-cache show %s | grep %s && apt-get install -y %s || true",
+		modulesExtraPkg, modulesExtraPkg, modulesExtraPkg)
+	_, _, err = d.cmd.RunCommand(ctx, "sh", "-c", cmdStr)
+	if err != nil {
+		log.V(1).Info("Failed to install modules extra package, continuing", "error", err)
+	}
+
+	// Install driver packages using shell to expand wildcards
+	installCmd := fmt.Sprintf("apt-get install -y %s/*.deb", inventoryPath)
+	_, _, err = d.cmd.RunCommand(ctx, "sh", "-c", installCmd)
+	if err != nil {
+		return fmt.Errorf("failed to install Ubuntu driver packages: %w", err)
+	}
+
+	// Run depmod to introduce installed kernel modules
+	_, _, err = d.cmd.RunCommand(ctx, "depmod", kernelVersion)
+	if err != nil {
+		return fmt.Errorf("failed to run depmod: %w", err)
+	}
+
+	log.V(1).Info("Ubuntu driver packages installed successfully")
+	return nil
+}
+
+// installRedHatDriver installs driver packages on RedHat-based systems
+func (d *driverMgr) installRedHatDriver(ctx context.Context, inventoryPath, kernelVersion string) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	log.V(1).Info("Installing RedHat driver packages", "path", inventoryPath)
+
+	// Install driver packages using rpm
+	_, _, err := d.cmd.RunCommand(ctx, "rpm", "-ivh", "--replacepkgs", "--nodeps", filepath.Join(inventoryPath, "*.rpm"))
+	if err != nil {
+		return fmt.Errorf("failed to install RedHat driver packages: %w", err)
+	}
+
+	// Run depmod to introduce installed kernel modules
+	_, _, err = d.cmd.RunCommand(ctx, "depmod", kernelVersion)
+	if err != nil {
+		return fmt.Errorf("failed to run depmod: %w", err)
+	}
+
+	log.V(1).Info("RedHat driver packages installed successfully")
+	return nil
+}
+
+// ubuntuSyncNetworkConfigurationTools handles Ubuntu-specific network configuration tool synchronization
+func (d *driverMgr) ubuntuSyncNetworkConfigurationTools(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	log.V(1).Info("Syncing Ubuntu network configuration tools")
+
+	// Check if /etc/network/interfaces exists
+	interfacesPath := "/etc/network/interfaces"
+	if _, err := d.os.Stat(interfacesPath); os.IsNotExist(err) {
+		log.V(1).Info("/etc/network/interfaces not found, renaming ifup file to prevent issues with mlnx_interface_mgr.sh")
+
+		// Check if /sbin/ifup exists and rename it to /sbin/ifup.bk
+		ifupPath := "/sbin/ifup"
+		if _, err := d.os.Stat(ifupPath); err == nil {
+			_, _, err := d.cmd.RunCommand(ctx, "mv", ifupPath, ifupPath+".bk")
+			if err != nil {
+				return fmt.Errorf("failed to rename ifup file: %w", err)
+			}
+			log.V(1).Info("Renamed ifup file to prevent mlnx_interface_mgr.sh from reading missing /etc/network/interfaces")
+		}
+	} else if err != nil {
+		return fmt.Errorf("failed to check /etc/network/interfaces: %w", err)
+	}
+
+	log.V(1).Info("Ubuntu network configuration tools sync completed")
+	return nil
+}
+
+// getPackageSuffix returns the package suffix based on OS type
+func (d *driverMgr) getPackageSuffix(osType string) string {
+	switch osType {
+	case constants.OSTypeUbuntu:
+		return "-modules"
+	case constants.OSTypeSLES, constants.OSTypeRedHat, constants.OSTypeOpenShift:
+		return ""
+	default:
+		return ""
+	}
+}
+
+// getAppendDriverBuildFlags returns additional build flags based on configuration
+func (d *driverMgr) getAppendDriverBuildFlags(osType string) []string {
+	// If ENABLE_NFSRDMA is false, add additional flags
+	if !d.cfg.EnableNfsRdma {
+		pkgSuffix := d.getPackageSuffix(osType)
+		return []string{
+			"--without-mlnx-nfsrdma" + pkgSuffix,
+			"--without-mlnx-nvme" + pkgSuffix,
+		}
+	}
+
+	return []string{}
+}
+
+// setupOpenShiftRepositories configures OpenShift-specific repositories
+func (d *driverMgr) setupOpenShiftRepositories(ctx context.Context, versionInfo *host.RedhatVersionInfo) {
+	log := logr.FromContextOrDiscard(ctx)
+	arch := d.getArchitecture(ctx)
+
+	log.V(1).Info("Setting up OpenShift repositories",
+		"version", versionInfo.OpenShiftVersion,
+		"major", versionInfo.MajorVersion,
+		"arch", arch)
+
+	// Enable RHOCP repository
+	repoName := fmt.Sprintf("rhocp-%s-for-rhel-%d-%s-rpms", versionInfo.OpenShiftVersion, versionInfo.MajorVersion, arch)
+	_, _, err := d.cmd.RunCommand(ctx, "dnf", "config-manager", "--set-enabled", repoName)
+	if err != nil {
+		log.V(1).Info("Failed to enable RHOCP repository, continuing", "repo", repoName, "error", err)
+	}
+
+	// Test if makecache works
+	_, _, err = d.cmd.RunCommand(ctx, "dnf", "makecache", "--releasever="+versionInfo.FullVersion)
+	if err != nil {
+		log.V(1).Info("Makecache failed, disabling RHOCP repository", "error", err)
+		_, _, _ = d.cmd.RunCommand(ctx, "dnf", "config-manager", "--set-disabled", repoName)
+	}
+}
+
+// setupEUSRepositories configures EUS (Extended Update Support) repositories for supported versions
+func (d *driverMgr) setupEUSRepositories(ctx context.Context, versionInfo *host.RedhatVersionInfo) {
+	log := logr.FromContextOrDiscard(ctx)
+	arch := d.getArchitecture(ctx)
+
+	// EUS is available for specific versions
+	eusVersions := []string{"8.4", "8.6", "8.8", "9.0", "9.2", "9.4"}
+
+	for _, version := range eusVersions {
+		if versionInfo.FullVersion == version {
+			log.V(1).Info("Enabling EUS repository", "version", version, "arch", arch)
+			repoName := fmt.Sprintf("rhel-%d-for-%s-baseos-eus-rpms", versionInfo.MajorVersion, arch)
+			_, _, err := d.cmd.RunCommand(ctx, "dnf", "config-manager", "--set-enabled", repoName)
+			if err != nil {
+				log.V(1).Info("Failed to enable EUS repository", "repo", repoName, "error", err)
+			}
+			break
+		}
+	}
+}
+
+// installKernelPackages installs kernel packages based on kernel type
+func (d *driverMgr) installKernelPackages(ctx context.Context, kernelVersion string, versionInfo *host.RedhatVersionInfo) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Determine kernel type and naming pattern
+	kernelType, kVer, rtHpSubstr, releaseverStr := d.analyzeKernelType(ctx, kernelVersion, versionInfo)
+
+	log.V(1).Info("Installing kernel packages", "type", kernelType, "version", kVer, "rtHpSubstr", rtHpSubstr)
+
+	// Handle RT and 64k kernels that need special repo setup
+	if kernelType == kernelTypeRT || kernelType == kernelType64k {
+		if err := d.setupSpecialKernelRepos(ctx); err != nil {
+			return fmt.Errorf("failed to setup special kernel repositories: %w", err)
+		}
+	}
+
+	// Install standard kernel packages for non-RT, non-64k kernels
+	if kernelType == kernelTypeStandard {
+		packages := []string{
+			"kernel-" + kernelVersion,
+			"kernel-headers-" + kernelVersion,
+			"kernel-core-" + kernelVersion,
+		}
+
+		for _, pkg := range packages {
+			args := []string{"dnf", "-q", "-y"}
+			if releaseverStr != "" {
+				args = append(args, releaseverStr)
+			}
+			args = append(args, "install", pkg)
+
+			_, _, err := d.cmd.RunCommand(ctx, args[0], args[1:]...)
+			if err != nil {
+				return fmt.Errorf("failed to install %s: %w", pkg, err)
+			}
+		}
+
+		// Install kernel-devel with --allowerasing flag
+		args := []string{"dnf", "-q", "-y"}
+		if releaseverStr != "" {
+			args = append(args, releaseverStr)
+		}
+		args = append(args, "install", "kernel-devel-"+kernelVersion, "--allowerasing")
+
+		_, _, err := d.cmd.RunCommand(ctx, args[0], args[1:]...)
+		if err != nil {
+			return fmt.Errorf("failed to install kernel-devel: %w", err)
+		}
+	}
+
+	// Install kernel development and modules packages
+	args := []string{"dnf", "-q", "-y"}
+	if releaseverStr != "" {
+		args = append(args, releaseverStr)
+	}
+	args = append(args, "install", "kernel-"+rtHpSubstr+"devel-"+kVer, "kernel-"+rtHpSubstr+"modules-"+kVer)
+
+	_, _, err := d.cmd.RunCommand(ctx, args[0], args[1:]...)
+	if err != nil {
+		return fmt.Errorf("failed to install kernel development packages: %w", err)
+	}
+
+	return nil
+}
+
+// analyzeKernelType analyzes the kernel version to determine type and naming pattern
+func (d *driverMgr) analyzeKernelType(
+	ctx context.Context,
+	kernelVersion string,
+	versionInfo *host.RedhatVersionInfo,
+) (string, string, string, string) {
+	rtHpSubstr := ""
+	kVer := kernelVersion
+	releaseverStr := "--releasever=" + versionInfo.FullVersion
+
+	// Check for RT kernel
+	if strings.Contains(kernelVersion, "rt") {
+		releaseverStr = ""
+		rtHpSubstr = "rt-"
+
+		// Handle different RT kernel naming patterns
+		if strings.HasSuffix(kernelVersion, "rt") {
+			// RH9.X RT kernel pattern: 5.14.0-362.13.1.el9_3.x86_64+rt
+			kVer = strings.TrimSuffix(kernelVersion, ".x86_64") + "." + d.getArchitecture(ctx)
+		} else {
+			// RH8.X RT kernel pattern: 4.18.0-513.11.1.rt7.313.el8_9.x86_64
+			kVer = kernelVersion
+		}
+		return kernelTypeRT, kVer, rtHpSubstr, releaseverStr
+	}
+
+	// Check for 64k page size kernel
+	if strings.Contains(kernelVersion, "64k") {
+		releaseverStr = ""
+		rtHpSubstr = "64k-"
+
+		if strings.HasSuffix(kernelVersion, "64k") {
+			kVer = strings.TrimSuffix(kernelVersion, ".x86_64") + "." + d.getArchitecture(ctx)
+		}
+		return kernelType64k, kVer, rtHpSubstr, releaseverStr
+	}
+
+	return kernelTypeStandard, kVer, rtHpSubstr, releaseverStr
+}
+
+// setupSpecialKernelRepos sets up repositories for RT and 64k kernels
+func (d *driverMgr) setupSpecialKernelRepos(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	log.V(1).Info("Setting up special kernel repositories")
+
+	// Copy redhat.repo from host
+	_, _, err := d.cmd.RunCommand(ctx, "cp", "/host/etc/yum.repos.d/redhat.repo", "/etc/yum.repos.d/")
+	if err != nil {
+		return fmt.Errorf("failed to copy redhat.repo: %w", err)
+	}
+
+	return nil
+}
+
+// installRedHatDependencies installs additional RedHat dependencies
+func (d *driverMgr) installRedHatDependencies(ctx context.Context, versionInfo *host.RedhatVersionInfo) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	log.V(1).Info("Installing RedHat dependencies")
+
+	// Install additional dependencies
+	packages := []string{
+		"elfutils-libelf-devel",
+		"kernel-rpm-macros",
+		"numactl-libs",
+		"lsof",
+		"rpm-build",
+		"patch",
+		"hostname",
+	}
+
+	args := []string{"dnf", "-q", "-y", "--releasever=" + versionInfo.FullVersion, "install"}
+	args = append(args, packages...)
+
+	_, _, err := d.cmd.RunCommand(ctx, args[0], args[1:]...)
+	if err != nil {
+		return fmt.Errorf("failed to install RedHat dependencies: %w", err)
+	}
+
+	// Test makecache and disable EUS if it fails
+	_, _, err = d.cmd.RunCommand(ctx, "dnf", "makecache", "--releasever="+versionInfo.FullVersion)
+	if err != nil {
+		log.V(1).Info("Makecache failed, disabling EUS repository", "error", err)
+		arch := d.getArchitecture(ctx)
+		repoName := fmt.Sprintf("rhel-%d-for-%s-baseos-eus-rpms", versionInfo.MajorVersion, arch)
+		_, _, _ = d.cmd.RunCommand(ctx, "dnf", "config-manager", "--set-disabled", repoName)
+	}
+
 	return nil
 }
