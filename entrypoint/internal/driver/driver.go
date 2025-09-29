@@ -475,15 +475,30 @@ func (d *driverMgr) setupGCCAlternatives(ctx context.Context, gccBinary, kernelG
 
 // extractGCCVersion extracts GCC version from /proc/version string
 func (d *driverMgr) extractGCCVersion(procVersion string) (string, error) {
-	// Regex to match gcc version pattern: gcc followed by optional non-digit characters and then version number
-	re := regexp.MustCompile(`(?i)gcc[^0-9]*([0-9]+\.[0-9]+\.[0-9]+)`)
-	matches := re.FindStringSubmatch(procVersion)
-
-	if len(matches) < 2 {
-		return "", fmt.Errorf("no GCC version found in /proc/version")
+	// Try multiple regex patterns to match different GCC version formats
+	patterns := []string{
+		// Pattern 1: gcc followed by version directly (e.g., "gcc 11.5.0")
+		`(?i)gcc[^0-9]*([0-9]+\.[0-9]+\.[0-9]+)`,
+		// Pattern 2: gcc followed by major version, then look for full version elsewhere (e.g., "gcc-13" followed by "13.2.0")
+		`(?i)gcc-?([0-9]+).*?([0-9]+\.[0-9]+\.[0-9]+)`,
+		// Pattern 3: Look for version pattern after gcc with more flexible matching
+		`(?i)gcc.*?([0-9]+\.[0-9]+\.[0-9]+)`,
 	}
 
-	return matches[1], nil
+	for i, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		matches := re.FindStringSubmatch(procVersion)
+
+		if len(matches) >= 2 {
+			// For pattern 2, we want the full version (matches[2]), not just the major version
+			if i == 1 && len(matches) >= 3 {
+				return matches[2], nil
+			}
+			return matches[1], nil
+		}
+	}
+
+	return "", fmt.Errorf("no GCC version found in /proc/version")
 }
 
 // extractMajorVersion extracts the major version number from a version string like "11.5.0"
