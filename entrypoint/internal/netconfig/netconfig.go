@@ -43,7 +43,10 @@ const (
 	adminStateDown       = "down"
 	eswitchModeLegacy    = "legacy"
 	eswitchModeSwitchdev = "switchdev"
-	defaultDriverPath    = "/sys/bus/pci/drivers/mlx5_core"
+	sysClassNetPath      = "/sys/class/net/"
+	sysBusPCIDevicesPath = "/sys/bus/pci/devices/"
+	sysBusPCIDriversPath = "/sys/bus/pci/drivers/"
+	defaultDriverPath    = sysBusPCIDriversPath + "mlx5_core"
 )
 
 // JSON structures for parsing ip command output
@@ -82,6 +85,9 @@ type Interface interface {
 	Save(ctx context.Context) error
 	// Restore the saved configuration for NVIDIA devices.
 	Restore(ctx context.Context) error
+	// DevicesUseNewNamingScheme returns true if interfaces with the new naming scheme
+	// are on the host or if no NVIDIA devices are found.
+	DevicesUseNewNamingScheme(ctx context.Context) (bool, error)
 }
 
 // VF represents a Virtual Function with all its attributes
@@ -289,7 +295,7 @@ func (n *netconfig) restoreDeviceConfig(ctx context.Context, devName string, dev
 // getCurrentDeviceName gets the current device name after driver reload
 func (n *netconfig) getCurrentDeviceName(pciAddr string) (string, error) {
 	// Get device name from PCI path: /sys/bus/pci/devices/{pci_addr}/net/
-	pciDevPath := fmt.Sprintf("/sys/bus/pci/devices/%s/net", pciAddr)
+	pciDevPath := fmt.Sprintf("%s%s/net", sysBusPCIDevicesPath, pciAddr)
 	entries, err := n.os.ReadDir(pciDevPath)
 	if err != nil {
 		return "", err
@@ -335,7 +341,7 @@ func (n *netconfig) setDeviceAdminState(devName, state string) error {
 // createVFs creates the specified number of VFs
 func (n *netconfig) createVFs(pciAddr string, numVFs int) error {
 	// Write to sriov_numvfs: echo {num_vfs} > /sys/bus/pci/devices/{pci_addr}/sriov_numvfs
-	sriovNumVfsPath := fmt.Sprintf("/sys/bus/pci/devices/%s/sriov_numvfs", pciAddr)
+	sriovNumVfsPath := fmt.Sprintf("%s%s/sriov_numvfs", sysBusPCIDevicesPath, pciAddr)
 	numVFsStr := fmt.Sprintf("%d", numVFs)
 
 	// Use the OS wrapper to write the file
@@ -467,7 +473,7 @@ func (n *netconfig) setEthernetMACs(ctx context.Context, devName string, vf VF) 
 // getCurrentVFName gets the current VF device name after driver reload
 func (n *netconfig) getCurrentVFName(vfPCIAddr string) (string, error) {
 	// Get VF name from PCI path: /sys/bus/pci/devices/{vf_pci_addr}/net/
-	vfPciDevPath := fmt.Sprintf("/sys/bus/pci/devices/%s/net", vfPCIAddr)
+	vfPciDevPath := fmt.Sprintf("%s%s/net", sysBusPCIDevicesPath, vfPCIAddr)
 	entries, err := n.os.ReadDir(vfPciDevPath)
 	if err != nil {
 		return "", err
@@ -509,7 +515,7 @@ func (n *netconfig) rebindVFsInSwitchdevMode(ctx context.Context, device *Mellan
 // getDriverPath gets the driver path for a VF PCI address
 func (n *netconfig) getDriverPath(vfPCIAddr string) string {
 	// Try to get the current driver from the VF's driver symlink
-	driverLink := fmt.Sprintf("/sys/bus/pci/devices/%s/driver", vfPCIAddr)
+	driverLink := fmt.Sprintf("%s%s/driver", sysBusPCIDevicesPath, vfPCIAddr)
 	driverPath, err := n.os.Readlink(driverLink)
 	if err != nil {
 		// If no driver is bound, use the default mlx5_core driver
@@ -524,7 +530,7 @@ func (n *netconfig) getDriverPath(vfPCIAddr string) string {
 	}
 
 	driverName := parts[len(parts)-1]
-	return fmt.Sprintf("/sys/bus/pci/drivers/%s", driverName)
+	return fmt.Sprintf("%s%s", sysBusPCIDriversPath, driverName)
 }
 
 // unbindVFFromDriver unbinds a VF from its driver
@@ -622,7 +628,7 @@ func (n *netconfig) discoverMellanoxDevices(ctx context.Context) ([]string, erro
 	log := logr.FromContextOrDiscard(ctx)
 
 	// Get all network interfaces from sysfs (matches bash script approach)
-	entries, err := n.os.ReadDir("/sys/class/net")
+	entries, err := n.os.ReadDir(sysClassNetPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read /sys/class/net: %w", err)
 	}
@@ -771,7 +777,7 @@ func (n *netconfig) collectSingleVFInfo(ctx context.Context, devName string, vfI
 	log := logr.FromContextOrDiscard(ctx)
 
 	// VF device path: /sys/class/net/{PF_NAME}/device/virtfn{N}/net/{VF_NAME}
-	vfDevBasePath := fmt.Sprintf("/sys/class/net/%s/device/virtfn%d/net/", devName, vfIndex)
+	vfDevBasePath := fmt.Sprintf("%s%s/device/virtfn%d/net/", sysClassNetPath, devName, vfIndex)
 
 	// Get VF name
 	vfName, err := n.getVFName(vfDevBasePath)
@@ -871,7 +877,7 @@ func (n *netconfig) getVFAttributesFromNetlink(vfName string) (string, string, i
 func (n *netconfig) getIBGUID(devName string) (string, error) {
 	// This matches bash: sysfs_guid=$(cat ${netdev_path}/device/infiniband/*/node_guid)
 	// Look for the first infiniband directory under the device
-	devicePath := fmt.Sprintf("/sys/class/net/%s/device/infiniband", devName)
+	devicePath := fmt.Sprintf("%s%s/device/infiniband", sysClassNetPath, devName)
 
 	// List infiniband directories
 	entries, err := n.os.ReadDir(devicePath)
@@ -931,7 +937,7 @@ func (n *netconfig) getEswitchMode(ctx context.Context, pciAddr string) (string,
 // isMellanoxDeviceByInterface checks if a network interface is a Mellanox device by vendor
 func (n *netconfig) isMellanoxDeviceByInterface(devName string) bool {
 	// Read vendor ID from sysfs
-	vendorPath := fmt.Sprintf("/sys/class/net/%s/device/vendor", devName)
+	vendorPath := fmt.Sprintf("%s%s/device/vendor", sysClassNetPath, devName)
 	vendorData, err := n.os.ReadFile(vendorPath)
 	if err != nil {
 		return false
@@ -944,7 +950,7 @@ func (n *netconfig) isMellanoxDeviceByInterface(devName string) bool {
 // isRepresentor checks if a device is a VF representor
 func (n *netconfig) isRepresentor(devName string) bool {
 	// Read phys_port_name to check if it's a representor
-	physPortNamePath := fmt.Sprintf("/sys/class/net/%s/phys_port_name", devName)
+	physPortNamePath := fmt.Sprintf("%s%s/phys_port_name", sysClassNetPath, devName)
 	physPortNameData, err := n.os.ReadFile(physPortNamePath)
 	if err != nil {
 		return false
@@ -955,10 +961,30 @@ func (n *netconfig) isRepresentor(devName string) bool {
 	return strings.HasPrefix(physPortName, "pf") && strings.Contains(physPortName, "vf")
 }
 
+// getNetNamePath gets the udev-based network name path
+func (n *netconfig) getNetNamePath(ctx context.Context, devName string) (string, error) {
+	// This matches: udevadm info --query=property /sys/class/net/{iface}
+	stdout, stderr, err := n.cmd.RunCommand(ctx, "udevadm", "info", "--query=property",
+		fmt.Sprintf("%s%s", sysClassNetPath, devName))
+	if err != nil {
+		return "", fmt.Errorf("failed to run udevadm command: %w, stderr: %s", err, stderr)
+	}
+
+	// Parse the output to find ID_NET_NAME_PATH
+	lines := strings.Split(stdout, "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "ID_NET_NAME_PATH=") {
+			return strings.TrimPrefix(line, "ID_NET_NAME_PATH="), nil
+		}
+	}
+
+	return "", nil // Not found, return empty string
+}
+
 // getAdminStateFromSysfs gets the admin state from sysfs flags
 func (n *netconfig) getAdminStateFromSysfs(devName string) string {
 	// Read flags from sysfs: /sys/class/net/{dev}/flags
-	flagsPath := fmt.Sprintf("/sys/class/net/%s/flags", devName)
+	flagsPath := fmt.Sprintf("%s%s/flags", sysClassNetPath, devName)
 	flagsData, err := n.os.ReadFile(flagsPath)
 	if err != nil {
 		return adminStateDown // Default to down if we can't read
@@ -999,7 +1025,7 @@ func (n *netconfig) getAdminStateFromSysfs(devName string) string {
 // getMTUFromSysfs gets the MTU from sysfs
 func (n *netconfig) getMTUFromSysfs(devName string) int {
 	// Read MTU from sysfs: /sys/class/net/{dev}/mtu
-	mtuPath := fmt.Sprintf("/sys/class/net/%s/mtu", devName)
+	mtuPath := fmt.Sprintf("%s%s/mtu", sysClassNetPath, devName)
 	mtuData, err := n.os.ReadFile(mtuPath)
 	if err != nil {
 		return 1500 // Default MTU if we can't read
@@ -1023,7 +1049,7 @@ func (n *netconfig) getMTUFromSysfs(devName string) int {
 // getPfNumVfsFromSysfs gets the number of VFs from sysfs
 func (n *netconfig) getPfNumVfsFromSysfs(devName string) int {
 	// Read sriov_numvfs from sysfs: /sys/class/net/{dev}/device/sriov_numvfs
-	sriovNumVfsPath := fmt.Sprintf("/sys/class/net/%s/device/sriov_numvfs", devName)
+	sriovNumVfsPath := fmt.Sprintf("%s%s/device/sriov_numvfs", sysClassNetPath, devName)
 	sriovNumVfsData, err := n.os.ReadFile(sriovNumVfsPath)
 	if err != nil {
 		return 0 // Default to 0 if we can't read (device not SRIOV capable)
@@ -1250,7 +1276,7 @@ func (n *netconfig) discoverSwitchdevRepresentors(ctx context.Context) error {
 
 // getPhysPortName gets the physical port name for a device
 func (n *netconfig) getPhysPortName(devName string) (string, error) {
-	physPortPath := fmt.Sprintf("/sys/class/net/%s/phys_port_name", devName)
+	physPortPath := fmt.Sprintf("%s%s/phys_port_name", sysClassNetPath, devName)
 	physPortName, err := n.os.ReadFile(physPortPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read phys_port_name: %w", err)
@@ -1260,7 +1286,7 @@ func (n *netconfig) getPhysPortName(devName string) (string, error) {
 
 // getPhysSwitchID gets the physical switch ID for a device
 func (n *netconfig) getPhysSwitchID(devName string) (string, error) {
-	physSwitchPath := fmt.Sprintf("/sys/class/net/%s/phys_switch_id", devName)
+	physSwitchPath := fmt.Sprintf("%s%s/phys_switch_id", sysClassNetPath, devName)
 	physSwitchID, err := n.os.ReadFile(physSwitchPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read phys_switch_id: %w", err)
@@ -1283,7 +1309,7 @@ func (n *netconfig) findDeviceRepresentors(ctx context.Context, devName, physSwi
 	representors := make([]Representor, 0, 10) // Pre-allocate with capacity
 
 	// Look for representors in the device's subsystem
-	subsystemPath := fmt.Sprintf("/sys/class/net/%s/subsystem", devName)
+	subsystemPath := fmt.Sprintf("%s%s/subsystem", sysClassNetPath, devName)
 	entries, err := n.os.ReadDir(subsystemPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read subsystem directory: %w", err)
@@ -1291,7 +1317,7 @@ func (n *netconfig) findDeviceRepresentors(ctx context.Context, devName, physSwi
 
 	for _, entry := range entries {
 		representorName := entry.Name()
-		representorPath := fmt.Sprintf("/sys/class/net/%s/subsystem/%s", devName, representorName)
+		representorPath := fmt.Sprintf("%s%s/subsystem/%s", sysClassNetPath, devName, representorName)
 
 		// Check if this is a representor by examining phys_port_name
 		physPortNamePath := fmt.Sprintf("%s/phys_port_name", representorPath)
@@ -1459,7 +1485,7 @@ func (n *netconfig) findCurrentRepresentor(ctx context.Context, physSwitchID, ph
 	log := logr.FromContextOrDiscard(ctx)
 
 	// Scan all network devices to find the representor
-	entries, err := n.os.ReadDir("/sys/class/net")
+	entries, err := n.os.ReadDir(sysClassNetPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read network devices: %w", err)
 	}
@@ -1553,4 +1579,54 @@ func (n *netconfig) setRepresentorAdminState(representorName, state string) erro
 	}
 
 	return nil
+}
+
+// DevicesUseNewNamingScheme returns true if interfaces with the new naming scheme are found.
+func (n *netconfig) DevicesUseNewNamingScheme(ctx context.Context) (bool, error) {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Regex pattern to match np[0-3] suffix (new naming scheme)
+	npPattern := regexp.MustCompile(`np[0-3]$`)
+
+	// Get all network interfaces from sysfs (reuse existing logic)
+	entries, err := n.os.ReadDir(sysClassNetPath)
+	if err != nil {
+		log.Error(err, "failed to list network devices")
+		return false, err
+	}
+
+	// Check each network device
+	for _, entry := range entries {
+		devName := entry.Name()
+
+		// Check if this is a NVIDIA device (reuse existing logic)
+		if !n.isMellanoxDeviceByInterface(devName) {
+			continue
+		}
+
+		log.V(1).Info("found NVIDIA device", "device", devName)
+
+		// Use existing getNetNamePath function instead of duplicating udevadm logic
+		netNamePath, err := n.getNetNamePath(ctx, devName)
+		if err != nil {
+			log.V(1).Info("failed to get NetNamePath for device", "device", devName, "error", err)
+			continue
+		}
+
+		if netNamePath == "" {
+			log.V(1).Info("no NetNamePath found for device", "device", devName)
+			continue
+		}
+
+		log.V(1).Info("sampling interface for NetNamePath", "device", devName, "net_name_path", netNamePath)
+
+		// Check if NetNamePath ends with np[0-3] pattern (new naming scheme)
+		if npPattern.MatchString(netNamePath) {
+			log.Info("device uses new naming scheme", "device", devName, "net_name_path", netNamePath)
+			return true, nil
+		}
+	}
+
+	log.Info("no devices found using new naming scheme")
+	return false, nil
 }

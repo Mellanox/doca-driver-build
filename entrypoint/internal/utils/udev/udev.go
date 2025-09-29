@@ -43,9 +43,6 @@ type Interface interface {
 	CreateRules(ctx context.Context) error
 	// RemoveRules remove rules that preserve the old naming schema for NVIDIA interfaces.
 	RemoveRules(ctx context.Context) error
-	// DevicesUseNewNamingScheme returns true if interfaces with the new naming scheme
-	// are on the host or if no NVIDIA devices are found.
-	DevicesUseNewNamingScheme(ctx context.Context) (bool, error)
 }
 
 type udev struct {
