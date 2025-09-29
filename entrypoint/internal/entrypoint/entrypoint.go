@@ -29,6 +29,8 @@ import (
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/constants"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/driver"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/netconfig"
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/netconfig/netlink"
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/netconfig/sriovnet"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/cmd"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/host"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/ready"
@@ -56,7 +58,7 @@ func Run(signalCh chan os.Signal, log logr.Logger, containerMode string, cfg con
 		host:          hostHelper,
 		cmd:           cmdHelper,
 		os:            osWrapper,
-		netconfig:     netconfig.New(),
+		netconfig:     netconfig.New(cmdHelper, osWrapper, hostHelper, sriovnet.New(), netlink.New()),
 		drivermgr:     driver.New(containerMode, cfg, cmdHelper, hostHelper, osWrapper),
 	}
 	return m.run(signalCh)
@@ -173,17 +175,20 @@ func (e *entrypoint) preStart(ctx context.Context) error {
 		return err
 	}
 
+	if err := e.netconfig.Save(ctx); err != nil {
+		return err
+	}
+
 	if err := e.createUDEVRulesIfRequired(ctx); err != nil {
 		return err
 	}
+
 	if e.containerMode == constants.DriverContainerModeSources {
 		if err := e.drivermgr.Build(ctx); err != nil {
 			return err
 		}
 	}
-	if err := e.netconfig.Save(ctx); err != nil {
-		return err
-	}
+
 	return ctx.Err()
 }
 
@@ -247,7 +252,7 @@ func (e *entrypoint) createUDEVRulesIfRequired(ctx context.Context) error {
 	if !e.config.CreateIfnamesUdev {
 		return nil
 	}
-	inboxUsesNewNamingScheme, err := e.udev.DevicesUseNewNamingScheme(ctx)
+	inboxUsesNewNamingScheme, err := e.netconfig.DevicesUseNewNamingScheme(ctx)
 	if err != nil {
 		return err
 	}
