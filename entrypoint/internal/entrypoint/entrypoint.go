@@ -29,6 +29,8 @@ import (
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/constants"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/driver"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/netconfig"
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/netconfig/netlink"
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/netconfig/sriovnet"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/cmd"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/host"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/ready"
@@ -56,7 +58,7 @@ func Run(signalCh chan os.Signal, log logr.Logger, containerMode string, cfg con
 		host:          hostHelper,
 		cmd:           cmdHelper,
 		os:            osWrapper,
-		netconfig:     netconfig.New(),
+		netconfig:     netconfig.New(cmdHelper, osWrapper, hostHelper, sriovnet.New(), netlink.New()),
 		drivermgr:     driver.New(containerMode, cfg, cmdHelper, hostHelper, osWrapper),
 	}
 	return m.run(signalCh)
