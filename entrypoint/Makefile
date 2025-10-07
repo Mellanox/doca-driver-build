@@ -1,6 +1,8 @@
 # Version information
 include Makefile.version
 
+include Makefile.license
+
 GOPROXY ?=
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
