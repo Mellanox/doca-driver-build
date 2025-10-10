@@ -64,10 +64,10 @@ RUN set -x && \
     echo $D_OS | grep "ubuntu20.04" || GCC_VER="-12" && \
 # Install prerequirements \
     DEBIAN_FRONTEND=noninteractive apt-get -yq install curl \
-    dkms make autoconf autotools-dev chrpath automake hostname debhelper gcc$GCC_VER quilt libc6-dev build-essential pkg-config && \
+    dkms make autoconf autotools-dev chrpath automake hostname debhelper gcc$GCC_VER quilt libc6-dev build-essential pkg-config ubuntu-advantage-tools && \
 # Cleanup \
-    apt-get clean autoclean && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean autoclean && apt install --reinstall -y ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && update-ca-certificates
 
 RUN echo $D_OS | grep "ubuntu20.04" || ln -fs gcc-12 /usr/bin/gcc  # 'build-essential' installs `gcc`, however (if above ubuntu 20.04) we need `gcc-12`, so we overwrite it with this link
 
