@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/go-logr/logr v1.4.3
-	github.com/gofrs/flock v0.12.1
+	github.com/gofrs/flock v0.13.0
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.27.0
 )
@@ -33,5 +33,5 @@ require (
 	github.com/go-logr/zapr v1.3.0
 	github.com/onsi/ginkgo/v2 v2.26.0
 	github.com/onsi/gomega v1.38.2
-	golang.org/x/sys v0.35.0 // indirect
+	golang.org/x/sys v0.37.0 // indirect
 )
