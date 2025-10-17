@@ -495,17 +495,22 @@ function remove_ofed_modules_blacklist(){
     rm -rf ${OFED_BLACKLIST_MODULES_FILE}; timestamp_print "Remove blacklisted mofed modules file from host"
 }
 
-function restart_driver() {
+function load_host_dependencies() {
     debug_print "Function: ${FUNCNAME[0]}"
 
-    # Ensure mlx5_core dependencies loaded
-    exec_cmd "modprobe -d /host tls"
-    exec_cmd "modprobe -d /host psample"
+    # We don't use depmod to load dependencies because we need to load dependencies only for loaded modules
+    for mod in $(lsmod | awk 'NR>1 {print $1}'); do
+        deps=$(modinfo -F depends "$mod" 2>/dev/null | tr ',' ' ')
+        for dep in $deps; do
+            debug_print "Loading dependency: $dep"
+            # ignore errors if module is not found
+            exec_cmd "modprobe -d /host $dep 2>/dev/null || true"
+        done
+    done
+}
 
-    # Check if mlx5_ib depends on macsec if so, load it.
-    if modinfo -Fdepends mlx5_ib | grep -qw macsec; then
-        exec_cmd "modprobe -d /host macsec"
-    fi
+function restart_driver() {
+    debug_print "Function: ${FUNCNAME[0]}"
 
     load_pci_hyperv_intf=false
 
@@ -518,6 +523,8 @@ function restart_driver() {
             load_pci_hyperv_intf=true
         fi
     fi
+
+    load_host_dependencies
 
     ${load_pci_hyperv_intf} && exec_cmd "modprobe -d /host pci-hyperv-intf"
 
