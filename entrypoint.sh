@@ -369,13 +369,12 @@ function build_driver_from_src() {
     sub_path_str="RPMS"
     os_str="redhat"
     package_type="rpm"
-    append_driver_build_flags="$append_driver_build_flags --disable-kmp"
+    append_driver_build_flags="$append_driver_build_flags --disable-kmp --without-dkms"
 
     if ${IS_OS_UBUNTU}; then
         sub_path_str="DEBS"
         os_str="ubuntu"
         package_type="deb"
-        append_driver_build_flags="$append_driver_build_flags --without-dkms"
     fi
 
     if ${IS_OS_SLES}; then

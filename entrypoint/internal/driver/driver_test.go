@@ -944,7 +944,7 @@ var _ = Describe("Driver", func() {
 				"--without-depcheck", "--kernel", "5.4.0-42-generic", "--kernel-only", "--build-only",
 				"--with-mlnx-tools", "--without-knem-modules", "--without-iser-modules",
 				"--without-isert-modules", "--without-srp-modules", "--without-kernel-mft-modules",
-				"--without-mlnx-rdma-rxe-modules", "--without-dkms", "--without-mlnx-nfsrdma-modules",
+				"--without-mlnx-rdma-rxe-modules", "--disable-kmp", "--without-dkms", "--without-mlnx-nfsrdma-modules",
 				"--without-mlnx-nvme-modules").Return("", "", nil)
 
 			// Mock copyBuildArtifacts - debug logging and copy
@@ -1001,7 +1001,7 @@ var _ = Describe("Driver", func() {
 				"--without-depcheck", "--kernel", "5.4.0-42-default", "--kernel-only", "--build-only",
 				"--with-mlnx-tools", "--without-knem", "--without-iser",
 				"--without-isert", "--without-srp", "--without-kernel-mft",
-				"--without-mlnx-rdma-rxe", "--disable-kmp", "--kernel-sources",
+				"--without-mlnx-rdma-rxe", "--disable-kmp", "--without-dkms", "--kernel-sources",
 				"/lib/modules/5.4.0-42-default/build", "--without-mlnx-nfsrdma",
 				"--without-mlnx-nvme").Return("", "", nil)
 
@@ -1066,7 +1066,7 @@ var _ = Describe("Driver", func() {
 				"--without-depcheck", "--kernel", "5.4.0-42", "--kernel-only", "--build-only",
 				"--with-mlnx-tools", "--without-knem", "--without-iser",
 				"--without-isert", "--without-srp", "--without-kernel-mft",
-				"--without-mlnx-rdma-rxe", "--disable-kmp", "--without-mlnx-nfsrdma",
+				"--without-mlnx-rdma-rxe", "--disable-kmp", "--without-dkms", "--without-mlnx-nfsrdma",
 				"--without-mlnx-nvme").Return("", "", nil)
 
 			// Mock copyBuildArtifacts - debug logging and copy
@@ -1218,7 +1218,7 @@ var _ = Describe("Driver", func() {
 				"--without-depcheck", "--kernel", "5.4.0-42-generic", "--kernel-only", "--build-only",
 				"--with-mlnx-tools", "--without-knem-modules", "--without-iser-modules",
 				"--without-isert-modules", "--without-srp-modules", "--without-kernel-mft-modules",
-				"--without-mlnx-rdma-rxe-modules", "--without-dkms", "--without-mlnx-nfsrdma-modules",
+				"--without-mlnx-rdma-rxe-modules", "--disable-kmp", "--without-dkms", "--without-mlnx-nfsrdma-modules",
 				"--without-mlnx-nvme-modules").Return("", "", expectedError)
 
 			err := dm.Build(ctx)
@@ -1251,7 +1251,7 @@ var _ = Describe("Driver", func() {
 				"--without-depcheck", "--kernel", "5.4.0-42-generic", "--kernel-only", "--build-only",
 				"--with-mlnx-tools", "--without-knem-modules", "--without-iser-modules",
 				"--without-isert-modules", "--without-srp-modules", "--without-kernel-mft-modules",
-				"--without-mlnx-rdma-rxe-modules", "--without-dkms", "--without-mlnx-nfsrdma-modules",
+				"--without-mlnx-rdma-rxe-modules", "--disable-kmp", "--without-dkms", "--without-mlnx-nfsrdma-modules",
 				"--without-mlnx-nvme-modules").Return("", "", nil)
 
 			// Mock copyBuildArtifacts failure - debug logging and copy failure
@@ -1300,7 +1300,7 @@ var _ = Describe("Driver", func() {
 				"--without-depcheck", "--kernel", "5.4.0-42-generic", "--kernel-only", "--build-only",
 				"--with-mlnx-tools", "--without-knem-modules", "--without-iser-modules",
 				"--without-isert-modules", "--without-srp-modules", "--without-kernel-mft-modules",
-				"--without-mlnx-rdma-rxe-modules", "--without-dkms", "--without-mlnx-nfsrdma-modules",
+				"--without-mlnx-rdma-rxe-modules", "--disable-kmp", "--without-dkms", "--without-mlnx-nfsrdma-modules",
 				"--without-mlnx-nvme-modules").Return("", "", nil)
 
 			// Mock copyBuildArtifacts - debug logging and copy
@@ -1337,7 +1337,7 @@ var _ = Describe("Driver", func() {
 				"--without-depcheck", "--kernel", "5.4.0-42-generic", "--kernel-only", "--build-only",
 				"--with-mlnx-tools", "--without-knem-modules", "--without-iser-modules",
 				"--without-isert-modules", "--without-srp-modules", "--without-kernel-mft-modules",
-				"--without-mlnx-rdma-rxe-modules", "--without-dkms", "--without-mlnx-nfsrdma-modules",
+				"--without-mlnx-rdma-rxe-modules", "--disable-kmp", "--without-dkms", "--without-mlnx-nfsrdma-modules",
 				"--without-mlnx-nvme-modules").Return("", "", nil)
 
 			// Mock copyBuildArtifacts - debug logging and copy
@@ -1415,7 +1415,7 @@ var _ = Describe("Driver", func() {
 				"--without-depcheck", "--kernel", "5.4.0-42-generic", "--kernel-only", "--build-only",
 				"--with-mlnx-tools", "--without-knem-modules", "--without-iser-modules",
 				"--without-isert-modules", "--without-srp-modules", "--without-kernel-mft-modules",
-				"--without-mlnx-rdma-rxe-modules", "--without-dkms", "--without-mlnx-nfsrdma-modules",
+				"--without-mlnx-rdma-rxe-modules", "--disable-kmp", "--without-dkms", "--without-mlnx-nfsrdma-modules",
 				"--without-mlnx-nvme-modules").Return("", "", nil)
 
 			// Mock copyBuildArtifacts - debug logging and copy

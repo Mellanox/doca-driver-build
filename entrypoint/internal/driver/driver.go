@@ -782,11 +782,11 @@ func (d *driverMgr) buildDriverFromSource(ctx context.Context, driverPath, kerne
 func (d *driverMgr) getBuildFlagsForOS(osType, kernelVersion string) []string {
 	switch osType {
 	case constants.OSTypeUbuntu:
-		return []string{"--without-dkms"}
+		return []string{"--disable-kmp", "--without-dkms"}
 	case constants.OSTypeSLES:
-		return []string{"--disable-kmp", "--kernel-sources", "/lib/modules/" + kernelVersion + "/build"}
+		return []string{"--disable-kmp", "--without-dkms", "--kernel-sources", "/lib/modules/" + kernelVersion + "/build"}
 	case constants.OSTypeRedHat:
-		return []string{"--disable-kmp"}
+		return []string{"--disable-kmp", "--without-dkms"}
 	default:
 		return []string{}
 	}
