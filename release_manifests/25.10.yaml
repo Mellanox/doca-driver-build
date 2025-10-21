@@ -21,6 +21,9 @@ precompiled:
   - 6.8.0-1040-azure
   - 6.8.0-1040-nvidia
 dynamically_compiled:
+- os: ubuntu24.04-stig
+  archs:
+  - amd64
 - os: ubuntu24.04
   archs:
   - amd64
