@@ -341,6 +341,7 @@ function dtk_ocp_setup_driver_build() {
     debug_print "Function: ${FUNCNAME[0]}"
 
     timestamp_print "Copy required files to shared dir with OCP DTK"
+    exec_cmd "mkdir -p ${DTK_OCP_NIC_SHARED_DIR}/"
     exec_cmd "cp -r ${NVIDIA_NIC_DRIVER_PATH} ${DTK_OCP_NIC_SHARED_DIR}/"
 
     exec_cmd "sed -i '/append_driver_build_flags=/c\append_driver_build_flags=\"${append_driver_build_flags}\"' ${DTK_OCP_BUILD_SCRIPT}"
@@ -357,6 +358,7 @@ function dtk_ocp_setup_driver_build() {
 function dtk_ocp_finalize_driver_build() {
     debug_print "Function: ${FUNCNAME[0]}"
 
+    exec_cmd "mkdir -p ${DTK_OCP_NIC_SHARED_DIR}/"
     rpms_path="${DTK_OCP_NIC_SHARED_DIR}/MLNX_OFED_SRC-${NVIDIA_NIC_DRIVER_VER}/RPMS/redhat-release-*/${ARCH}/"
 
     debug_print "Storing driver rpms from ${rpms_path} to ${driver_inventory_path}"
@@ -1355,6 +1357,7 @@ IS_OS_SLES=true; [[ "$(grep -i sles /etc/os-release -c)" == "0" ]] && IS_OS_SLES
 RHEL_MAJOR_VERSION=0
 OPENSHIFT_VERSION=""
 
+DTK_OCP_NIC_SHARED_DIR=${DTK_OCP_NIC_SHARED_DIR}/${FULL_KVER}
 DTK_OCP_BUILD_SCRIPT="/root/dtk_nic_driver_build.sh"
 DTK_OCP_START_COMPILE_FLAG=${DTK_OCP_NIC_SHARED_DIR}/dtk_start_compile
 DTK_OCP_DONE_COMPILE_FLAG_PREFIX=${DTK_OCP_NIC_SHARED_DIR}/dtk_done_compile_
