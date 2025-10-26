@@ -1,4 +1,4 @@
-driver_version: 25.10-1.0.3.0-0
+driver_version: 25.10-1.0.8.0-0
 doca_version: 3.2.0
 precompiled:
 - os: ubuntu24.04
