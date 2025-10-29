@@ -17,7 +17,6 @@ require (
 	github.com/google/pprof v0.0.0-20250403155104-27863c87afa6 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
-	go.uber.org/automaxprocs v1.6.0 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/mod v0.27.0 // indirect
@@ -31,7 +30,7 @@ require (
 require (
 	github.com/caarlos0/env/v11 v11.3.1
 	github.com/go-logr/zapr v1.3.0
-	github.com/onsi/ginkgo/v2 v2.27.1
+	github.com/onsi/ginkgo/v2 v2.27.2
 	github.com/onsi/gomega v1.38.2
 	golang.org/x/sys v0.37.0 // indirect
 )
