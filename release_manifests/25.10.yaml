@@ -1,4 +1,4 @@
-driver_version: 25.10-1.1.2.0-0
+driver_version: 25.10-1.1.4.0-0
 doca_version: 3.2.0
 precompiled:
 - os: ubuntu24.04
@@ -7,15 +7,15 @@ precompiled:
   - arm64
   kernels:
   - 6.14.0-1011-nvidia
-  - 6.14.0-1015-aws
-  - 6.14.0-1015-oracle
-  - 6.8.0-86-generic
+  - 6.14.0-1016-aws
+  - 6.14.0-1016-oracle
+  - 6.8.0-87-generic
 - os: ubuntu22.04
   archs:
   - amd64
   - arm64
   kernels:
-  - 5.15.0-160-generic
+  - 5.15.0-161-generic
   - 6.8.0-1038-oracle
   - 6.8.0-1040-aws
   - 6.8.0-1041-azure
