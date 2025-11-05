@@ -10,6 +10,7 @@ precompiled:
   - 6.14.0-1016-aws
   - 6.14.0-1016-oracle
   - 6.8.0-87-generic
+  - azure
 - os: ubuntu22.04
   archs:
   - amd64
