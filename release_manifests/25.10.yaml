@@ -1,4 +1,4 @@
-driver_version: 25.10-1.1.5.0-0
+driver_version: 25.10-1.2.0.0-0
 doca_version: 3.2.0
 precompiled:
 - os: ubuntu24.04
@@ -20,7 +20,7 @@ precompiled:
   - 6.8.0-1038-oracle
   - 6.8.0-1040-aws
   - 6.8.0-1041-azure
-  - 6.8.0-1041-nvidia
+  - 6.8.0-1042-nvidia
 dynamically_compiled:
 - os: ubuntu24.04-stig
   archs:
