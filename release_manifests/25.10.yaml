@@ -7,10 +7,10 @@ precompiled:
   - arm64
   kernels:
   - 6.14.0-1011-nvidia
+  - 6.14.0-1014-azure
   - 6.14.0-1016-aws
   - 6.14.0-1016-oracle
   - 6.8.0-87-generic
-  - azure
 - os: ubuntu22.04
   archs:
   - amd64
