@@ -52,6 +52,9 @@
 
 : ${UBUNTU_PRO_TOKEN:=""}
 
+# TODO: this environment variable should be removed once we implement better wait implementation for NIC device
+: ${BIND_DELAY_SEC:=4}
+
 function timestamp_print () {
     date_time_stamp=$(date +'%d-%b-%y_%H:%M:%S')
     msg="[${date_time_stamp}] $@"
@@ -1368,7 +1371,6 @@ DRIVER_PATH=/sys/bus/pci/drivers/mlx5_core
 MLX_DRIVERS_MOUNT=/run/mellanox/drivers
 MLX_UDEV_RULES_FILE=/host/etc/udev/rules.d/77-mlnx-net-names.rules
 SHARED_KERNEL_HEADERS_DIR=/usr/src/
-BIND_DELAY_SEC=3
 
 DRIVER_READY_FILE=/run/mellanox/drivers/.driver-ready
 new_driver_loaded=false
