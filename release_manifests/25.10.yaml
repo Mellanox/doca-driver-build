@@ -20,6 +20,7 @@ precompiled:
   - 6.8.0-1039-oracle
   - 6.8.0-1041-aws
   - 6.8.0-1041-azure
+  - 6.8.0-1042-aws
   - 6.8.0-1042-nvidia
 dynamically_compiled:
 - os: ubuntu24.04-stig
