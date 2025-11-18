@@ -4,7 +4,10 @@
 : ${ENTRYPOINT_DEBUG:=false}
 : ${DTK_OCP_NIC_SHARED_DIR:=/mnt/shared-nvidia-nic-driver-toolkit}
 
-DTK_OCP_NIC_SHARED_DIR=$DTK_OCP_NIC_SHARED_DIR/$(uname -r)
+# Sanitize kernel version to match Kubernetes NFD label format used by network-operator for volume paths
+# NFD replaces all non-alphanumeric characters (except -._) with underscore, then trims leading/trailing -._
+DTK_KVER=$(uname -r | sed 's/[^-A-Za-z0-9_.]/_/g' | sed 's/^[-_.]*//;s/[-_.]*$//')
+DTK_OCP_NIC_SHARED_DIR=$DTK_OCP_NIC_SHARED_DIR/$DTK_KVER
 DTK_OCP_START_COMPILE_FLAG=""
 DTK_OCP_DONE_COMPILE_FLAG=""
 DTK_OCP_COMPILED_DRIVER_VER=""
