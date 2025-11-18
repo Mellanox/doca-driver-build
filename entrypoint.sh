@@ -846,6 +846,9 @@ function restore_sriov_config() {
 
         exec_cmd "echo ${pf_numvfs} >> ${pf_pci_dev_path}/sriov_numvfs"
 
+        # Sleep to wait until NIC device is initialized and udev rules are applied
+        sleep ${BIND_DELAY_SEC}
+
         for vf_record in $(seq 0 1 $((vf_record_idx-1))); do
             declare -a mlx_vf_info=(${mlx_vfs_arr[$vf_record]})
 
