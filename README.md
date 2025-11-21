@@ -161,7 +161,7 @@ podman pull --authfile=/path/to/pull-secret.txt docker://quay.io/openshift-relea
 >Modification of D_OFED_SRC_DOWNLOAD_PATH must be tighdly coupled with corresponding update to entrypoint.sh script
 
 [^1]: Latest NIC drivers published at [NIC drivers download center](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/), for example:  
-  `https://linux.mellanox.com/public/repo/doca/2.9.1/SOURCES/MLNX_OFED/MLNX_OFED_SRC-debian-24.10-1.1.4.0.tgz`
+  `https://linux.mellanox.com/public/repo/doca/3.2.0/SOURCES/mlnx_ofed/MLNX_OFED_SRC-debian-25.10-1.2.8.0.tgz`
 
 [^2]: To build RHEL based container from official repository, you need to log in to `registry.redhat.io`, run the following command:  
 `podman login registry.redhat.io --username=${RH_USERNAME} --password=${RH_PASSWORD}`  
@@ -171,5 +171,5 @@ podman pull --authfile=/path/to/pull-secret.txt docker://quay.io/openshift-relea
 
 [^4]: Download your OpenShift pull secret from [here](https://console.redhat.com/openshift/install/pull-secret)
 
-[^5]: For a given DOCA package version (e.g `2.9.1`) you can find the corresponding MLNX_OFED version at the link:
-    `https://linux.mellanox.com/public/repo/doca/2.9.1/SOURCES/MLNX_OFED/` which is `24.10-1.1.4.0`
+[^5]: For a given DOCA package version (e.g `3.2.0`) you can find the corresponding MLNX_OFED version at the link:
+    `https://linux.mellanox.com/public/repo/doca/3.2.0/SOURCES/mlnx_ofed/` which is `25.10-1.2.8.0`

@@ -49,7 +49,7 @@ ARG D_CONTAINER_VER
 ARG D_OFED_SRC_DOWNLOAD_PATH
 
 # Stage args
-ARG D_OFED_BASE_URL="https://linux.mellanox.com/public/repo/doca/${D_DOCA_VERSION}/SOURCES/MLNX_OFED"
+ARG D_OFED_BASE_URL="https://linux.mellanox.com/public/repo/doca/${D_DOCA_VERSION}/SOURCES/mlnx_ofed"
 ARG D_OFED_SRC_TYPE=""
 
 ARG D_OFED_SRC_ARCHIVE="MLNX_OFED_SRC-${D_OFED_SRC_TYPE}${D_OFED_VERSION}.tgz"
