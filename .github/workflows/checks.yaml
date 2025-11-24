@@ -13,7 +13,7 @@ jobs:
         with:
           go-version: '1.24.x'
       - name: checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
       - name: lint
         working-directory: ./entrypoint
         run: make lint
@@ -28,7 +28,7 @@ jobs:
         with:
           go-version: '1.24.x'
       - name: checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
       - name: check go modules
         working-directory: ./entrypoint
         run: make check-go-modules
@@ -43,7 +43,7 @@ jobs:
         with:
           go-version: '1.24.x'
       - name: checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
       - name: test
         working-directory: ./entrypoint
         run: make unit-test
