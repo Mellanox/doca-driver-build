@@ -2265,6 +2265,122 @@ var _ = Describe("Driver", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
+
+	Context("extractGCCInfo", func() {
+		Context("extractGCCVersion", func() {
+			It("should extract GCC version from Ubuntu WSL2 format", func() {
+				procVersion := "Linux version 6.6.87.1-microsoft-standard-WSL2 (root@af282157c79e) (gcc (GCC) 11.2.0, GNU ld (GNU Binutils) 2.37) #1 SMP PREEMPT_DYNAMIC Mon Apr 21 17:08:54 UTC 2025"
+				version, err := dm.extractGCCVersion(procVersion)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(version).To(Equal("11.2.0"))
+			})
+
+			It("should extract GCC version from SLES format", func() {
+				procVersion := "Linux version 6.4.0-150600.21-default (geeko@buildhost) (gcc (SUSE Linux) 7.5.0, GNU ld (GNU Binutils; SUSE Linux Enterprise 15) 2.41.0.20230908-150100.7.46) #1 SMP PREEMPT_DYNAMIC Thu May 16 11:09:22 UTC 2024 (36c1e09)"
+				version, err := dm.extractGCCVersion(procVersion)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(version).To(Equal("7.5.0"))
+			})
+
+			It("should extract GCC version from RHEL format", func() {
+				procVersion := "Linux version 5.14.0-570.12.1.el9_6.x86_64 (mockbuild@x86-64-03.build.eng.rdu2.redhat.com) (gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-5), GNU ld version 2.35.2-63.el9) #1 SMP PREEMPT_DYNAMIC Fri Apr 4 10:41:31 EDT 2025"
+				version, err := dm.extractGCCVersion(procVersion)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(version).To(Equal("11.5.0"))
+			})
+
+			It("should extract GCC version from Ubuntu format with x86_64-linux-gnu-gcc", func() {
+				procVersion := "Linux version 6.8.0-31-generic (buildd@lcy02-amd64-080) (x86_64-linux-gnu-gcc-13 (Ubuntu 13.2.0-23ubuntu4) 13.2.0, GNU ld (GNU Binutils for Ubuntu) 2.42) #31-Ubuntu SMP PREEMPT_DYNAMIC Sat Apr 20 00:40:06 UTC 2024"
+				version, err := dm.extractGCCVersion(procVersion)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(version).To(Equal("13.2.0"))
+			})
+
+			It("should handle GCC version with different patterns", func() {
+				testCases := []struct {
+					name     string
+					input    string
+					expected string
+				}{
+					{
+						name:     "Direct GCC version",
+						input:    "Linux version 5.4.0 (gcc 9.3.0)",
+						expected: "9.3.0",
+					},
+					{
+						name:     "GCC with dash",
+						input:    "Linux version 5.4.0 (gcc-9 9.3.0)",
+						expected: "9.3.0",
+					},
+					{
+						name:     "GCC with parentheses",
+						input:    "Linux version 5.4.0 (gcc (GCC) 8.4.0)",
+						expected: "8.4.0",
+					},
+				}
+
+				for _, tc := range testCases {
+					By(tc.name)
+					version, err := dm.extractGCCVersion(tc.input)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(version).To(Equal(tc.expected))
+				}
+			})
+
+			It("should return error when no GCC version found", func() {
+				procVersion := "Linux version 5.4.0 (no gcc here)"
+				_, err := dm.extractGCCVersion(procVersion)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("no GCC version found in /proc/version"))
+			})
+
+			It("should handle empty input", func() {
+				_, err := dm.extractGCCVersion("")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("no GCC version found in /proc/version"))
+			})
+		})
+
+		Context("extractMajorVersion", func() {
+			It("should extract major version from full version string", func() {
+				testCases := []struct {
+					version  string
+					expected int
+				}{
+					{"11.2.0", 11},
+					{"7.5.0", 7},
+					{"13.2.0", 13},
+					{"9.3.0", 9},
+					{"8.4.0", 8},
+				}
+
+				for _, tc := range testCases {
+					major, err := dm.extractMajorVersion(tc.version)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(major).To(Equal(tc.expected))
+				}
+			})
+
+			It("should handle single digit major version", func() {
+				major, err := dm.extractMajorVersion("5.4.0")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(major).To(Equal(5))
+			})
+
+			It("should return error for invalid version format", func() {
+				_, err := dm.extractMajorVersion("invalid")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("failed to parse major version from invalid"))
+			})
+
+			It("should return error for empty version", func() {
+				_, err := dm.extractMajorVersion("")
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("failed to parse major version from"))
+			})
+		})
+
+	})
 })
 
 var _ = Describe("Driver OFED Blacklist", func() {
