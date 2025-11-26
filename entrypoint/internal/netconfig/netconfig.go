@@ -16,11 +16,61 @@
 
 package netconfig
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/go-logr/logr"
+
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/netconfig/netlink"
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/netconfig/sriovnet"
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/cmd"
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/host"
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/wrappers"
+)
+
+// Constants for device types and states
+const (
+	devTypeIB            = "ib"
+	devTypeEth           = "eth"
+	adminStateUp         = "up"
+	adminStateDown       = "down"
+	eswitchModeLegacy    = "legacy"
+	eswitchModeSwitchdev = "switchdev"
+	defaultDriverPath    = "/sys/bus/pci/drivers/mlx5_core"
+)
+
+// JSON structures for parsing ip command output
+type VFInfo struct {
+	Address  string `json:"address"`
+	PortGUID string `json:"port guid"`
+}
+
+type LinkInfo struct {
+	VFinfoList []VFInfo `json:"vfinfo_list"`
+}
 
 // New initialize default implementation of the netconfig.Interface.
-func New() Interface {
-	return &netconfig{}
+func New(
+	cmdHelper cmd.Interface,
+	osWrapper wrappers.OSWrapper,
+	hostHelper host.Interface,
+	sriovnetLib sriovnet.Lib,
+	netlinkLib netlink.Lib,
+) Interface {
+	return &netconfig{
+		cmd:             cmdHelper,
+		os:              osWrapper,
+		host:            hostHelper,
+		sriovnetLib:     sriovnetLib,
+		netlinkLib:      netlinkLib,
+		mellanoxDevices: make(map[string]*MellanoxDevice),
+	}
 }
 
 // Interface is the interface exposed by the netconfig package.
@@ -33,14 +83,1072 @@ type Interface interface {
 	Restore(ctx context.Context) error
 }
 
-type netconfig struct{}
+// VF represents a Virtual Function with all its attributes
+type VF struct {
+	// VF identification
+	VFIndex   int    // VF index (0-based)
+	VFPCIAddr string // VF PCI address (e.g., "0000:08:00.2")
+	VFName    string // VF netdev name (e.g., "eth6")
 
-// Save is the default implementation of the netconfig.Interface.
+	// VF configuration
+	AdminState string // VF admin state: "up" or "down"
+	MACAddress string // VF hardware MAC address
+	AdminMAC   string // VF administrative MAC address
+	MTU        int    // VF MTU value
+	GUID       string // VF GUID (for IB) or "-" for Ethernet
+}
+
+// MellanoxDevice represents a Mellanox network device with all its attributes
+type MellanoxDevice struct {
+	// Basic device information
+	PCIAddr     string // PCI address (e.g., "0000:08:00.0")
+	DevType     string // Device type: "eth" or "ib"
+	AdminState  string // Admin state: "up" or "down"
+	MTU         int    // MTU value
+	GUID        string // Device GUID (for IB) or "-" for Ethernet
+	EswitchMode string // Eswitch mode: "legacy" or "switchdev"
+
+	// SRIOV information
+	PfNumVfs int  // Number of VFs configured (from sriov_numvfs)
+	VFs      []VF // Array of VF information
+}
+
+type netconfig struct {
+	cmd         cmd.Interface
+	os          wrappers.OSWrapper
+	host        host.Interface
+	sriovnetLib sriovnet.Lib
+	netlinkLib  netlink.Lib
+
+	// In-memory storage - Mellanox device information
+	mellanoxDevices map[string]*MellanoxDevice
+}
+
+// Save discovers and stores the current SRIOV configuration
 func (n *netconfig) Save(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+	log.Info("Saving SRIOV configuration")
+
+	// Check if mlx5_core driver is loaded
+	mlx5CoreLoaded, err := n.isMlx5CoreLoaded(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to check if mlx5_core is loaded: %w", err)
+	}
+
+	if !mlx5CoreLoaded {
+		log.Info("mlx5_core driver not loaded, skipped store netdev conf info")
+		return nil
+	}
+
+	// Clear existing configuration
+	n.mellanoxDevices = make(map[string]*MellanoxDevice)
+
+	// Discover Mellanox devices
+	devices, err := n.discoverMellanoxDevices(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to discover Mellanox devices: %w", err)
+	}
+
+	if len(devices) == 0 {
+		log.Info("No Mellanox devices found, skipping SRIOV configuration")
+		return nil
+	}
+
+	log.Info("SRIOV configuration saved successfully", "devices", len(n.mellanoxDevices))
 	return nil
 }
 
-// Restore is the default implementation of the netconfig.Interface.
+// Restore restores the saved SRIOV configuration
 func (n *netconfig) Restore(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+	log.Info("Restoring SRIOV configuration")
+
+	if len(n.mellanoxDevices) == 0 {
+		log.Info("No SRIOV configuration to restore")
+		return nil
+	}
+
+	// Restore each device
+	for devName, device := range n.mellanoxDevices {
+		log.Info("Restoring SRIOV config for device", "device", devName, "vfs", device.PfNumVfs)
+
+		// Skip devices with no VFs configured
+		if device.PfNumVfs == 0 {
+			log.V(1).Info("Device has no VFs configured, skipping", "device", devName)
+			continue
+		}
+
+		// Restore PF and VF configuration
+		if err := n.restoreDeviceConfig(ctx, devName, device); err != nil {
+			log.Error(err, "Failed to restore device config", "device", devName)
+			continue
+		}
+
+		log.Info("Successfully restored SRIOV config for device", "device", devName, "vfs", device.PfNumVfs)
+	}
+
+	log.Info("SRIOV configuration restored successfully")
 	return nil
+}
+
+// restoreDeviceConfig restores the configuration for a single device and its VFs
+func (n *netconfig) restoreDeviceConfig(ctx context.Context, devName string, device *MellanoxDevice) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Get the current device name (might have changed after driver reload)
+	currentDevName, err := n.getCurrentDeviceName(device.PCIAddr)
+	if err != nil {
+		return fmt.Errorf("failed to get current device name: %w", err)
+	}
+
+	log.Info("Restoring device config", "original_name", devName, "current_name", currentDevName, "pci", device.PCIAddr)
+
+	// Handle switchdev mode (set to legacy first if needed)
+	// To support the old kernel versions, we need to follow the recommended way of creating switchdev VFs
+	// 1) Set the NIC in legacy mode
+	// 2) Create the required amount of VFs
+	// 3) Unbind all of the VFs
+	// 4) Set the NIC in switchdev mode
+	if device.EswitchMode == eswitchModeSwitchdev {
+		if err := n.setEswitchMode(ctx, device.PCIAddr, eswitchModeLegacy); err != nil {
+			log.Error(err, "Failed to set eswitch mode to legacy", "device", currentDevName)
+			return err
+		}
+	}
+
+	// Restore PF admin state
+	if err := n.setDeviceAdminState(currentDevName, device.AdminState); err != nil {
+		log.Error(err, "Failed to set PF admin state", "device", currentDevName, "state", device.AdminState)
+		return err
+	}
+
+	// Create VFs
+	if err := n.createVFs(device.PCIAddr, device.PfNumVfs); err != nil {
+		log.Error(err, "Failed to create VFs", "device", currentDevName, "vfs", device.PfNumVfs)
+		return err
+	}
+
+	// Restore VF configurations
+	if err := n.restoreVFConfigurations(ctx, currentDevName, device); err != nil {
+		log.Error(err, "Failed to restore VF configurations", "device", currentDevName)
+		return err
+	}
+
+	// Set switchdev mode if needed
+	if device.EswitchMode == eswitchModeSwitchdev {
+		if err := n.setEswitchMode(ctx, device.PCIAddr, eswitchModeSwitchdev); err != nil {
+			log.Error(err, "Failed to set eswitch mode to switchdev", "device", currentDevName)
+			return err
+		}
+
+		// Rebind VFs in switchdev mode
+		if err := n.rebindVFsInSwitchdevMode(ctx, device); err != nil {
+			log.Error(err, "Failed to rebind VFs in switchdev mode", "device", currentDevName)
+			return err
+		}
+	}
+
+	// Restore PF MTU
+	if err := n.setDeviceMTU(currentDevName, device.MTU); err != nil {
+		log.Error(err, "Failed to set PF MTU", "device", currentDevName, "mtu", device.MTU)
+		return err
+	}
+
+	return nil
+}
+
+// getCurrentDeviceName gets the current device name after driver reload
+func (n *netconfig) getCurrentDeviceName(pciAddr string) (string, error) {
+	// Get device name from PCI path: /sys/bus/pci/devices/{pci_addr}/net/
+	pciDevPath := fmt.Sprintf("/sys/bus/pci/devices/%s/net", pciAddr)
+	entries, err := n.os.ReadDir(pciDevPath)
+	if err != nil {
+		return "", err
+	}
+
+	if len(entries) == 0 {
+		return "", fmt.Errorf("no netdev found for PCI address %s", pciAddr)
+	}
+
+	return entries[0].Name(), nil
+}
+
+// setEswitchMode sets the eswitch mode for a device
+func (n *netconfig) setEswitchMode(ctx context.Context, pciAddr, mode string) error {
+	// Use devlink command: devlink dev eswitch set pci/{pci_addr} mode {mode}
+	_, stderr, err := n.cmd.RunCommand(ctx, "devlink", "dev", "eswitch", "set", fmt.Sprintf("pci/%s", pciAddr), "mode", mode)
+	if err != nil {
+		return fmt.Errorf("failed to set eswitch mode to %s: %w, stderr: %s", mode, err, stderr)
+	}
+	return nil
+}
+
+// setDeviceAdminState sets the admin state of a device
+func (n *netconfig) setDeviceAdminState(devName, state string) error {
+	// Use netlink instead of ip command for better error handling and performance
+	link, err := n.netlinkLib.LinkByName(devName)
+	if err != nil {
+		return fmt.Errorf("failed to get link %s: %w", devName, err)
+	}
+
+	if state == adminStateUp {
+		err = n.netlinkLib.LinkSetUp(link)
+	} else {
+		err = n.netlinkLib.LinkSetDown(link)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to set device admin state to %s: %w", state, err)
+	}
+	return nil
+}
+
+// createVFs creates the specified number of VFs
+func (n *netconfig) createVFs(pciAddr string, numVFs int) error {
+	// Write to sriov_numvfs: echo {num_vfs} > /sys/bus/pci/devices/{pci_addr}/sriov_numvfs
+	sriovNumVfsPath := fmt.Sprintf("/sys/bus/pci/devices/%s/sriov_numvfs", pciAddr)
+	numVFsStr := fmt.Sprintf("%d", numVFs)
+
+	// Use the OS wrapper to write the file
+	if err := n.os.WriteFile(sriovNumVfsPath, []byte(numVFsStr), 0o644); err != nil {
+		return fmt.Errorf("failed to create %d VFs: %w", numVFs, err)
+	}
+
+	return nil
+}
+
+// restoreVFConfigurations restores the configuration for all VFs
+func (n *netconfig) restoreVFConfigurations(ctx context.Context, devName string, device *MellanoxDevice) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	for _, vf := range device.VFs {
+		log.V(1).Info("Restoring VF config", "device", devName, "vf_index", vf.VFIndex, "vf_pci", vf.VFPCIAddr)
+
+		if err := n.restoreSingleVFConfig(ctx, devName, vf, device.DevType); err != nil {
+			log.Error(err, "Failed to restore VF config", "device", devName, "vf_index", vf.VFIndex)
+			continue // Continue with other VFs
+		}
+	}
+
+	return nil
+}
+
+// restoreSingleVFConfig restores the configuration for a single VF
+func (n *netconfig) restoreSingleVFConfig(ctx context.Context, devName string, vf VF, devType string) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Restore VF-specific configuration based on device type
+	if devType == devTypeIB {
+		// For IB devices, set GUIDs
+		if vf.GUID != "-" && vf.GUID != "" {
+			if err := n.setIBGUIDs(ctx, devName, vf.VFIndex, vf.GUID); err != nil {
+				log.Error(err, "Failed to set IB GUIDs", "device", devName, "vf_index", vf.VFIndex, "guid", vf.GUID)
+				return err
+			}
+		}
+	} else {
+		// For Ethernet devices, set MAC addresses
+		if err := n.setEthernetMACs(ctx, devName, vf); err != nil {
+			log.Error(err, "Failed to set Ethernet MACs", "device", devName, "vf_index", vf.VFIndex)
+			return err
+		}
+	}
+
+	// Unbind VF from driver (except in switchdev mode - handled separately)
+	// This matches the bash script logic
+	if err := n.unbindVFFromDriver(vf.VFPCIAddr); err != nil {
+		log.Error(err, "Failed to unbind VF from driver", "device", devName, "vf_index", vf.VFIndex, "vf_pci", vf.VFPCIAddr)
+		return err
+	}
+
+	// Rebind VF to driver (except in switchdev mode - handled separately)
+	if err := n.bindVFToDriver(vf.VFPCIAddr); err != nil {
+		log.Error(err, "Failed to rebind VF to driver", "device", devName, "vf_index", vf.VFIndex, "vf_pci", vf.VFPCIAddr)
+		return err
+	}
+
+	// Wait for bind delay (matches bash script)
+	time.Sleep(1 * time.Second) // BIND_DELAY_SEC equivalent
+
+	// Restore VF MTU and admin state after rebind
+	if err := n.restoreVFState(vf); err != nil {
+		log.Error(err, "Failed to restore VF state after rebind", "device", devName, "vf_index", vf.VFIndex, "vf_pci", vf.VFPCIAddr)
+		return err
+	}
+
+	return nil
+}
+
+// setIBGUIDs sets the GUIDs for an IB VF
+func (n *netconfig) setIBGUIDs(ctx context.Context, devName string, vfIndex int, guid string) error {
+	// Set port GUID: ip link set {dev_name} vf {vf_index} port_guid {guid}
+	_, stderr, err := n.cmd.RunCommand(ctx, "ip", "link", "set", devName, "vf", fmt.Sprintf("%d", vfIndex), "port_guid", guid)
+	if err != nil {
+		return fmt.Errorf("failed to set port GUID: %w, stderr: %s", err, stderr)
+	}
+
+	// Set node GUID: ip link set {dev_name} vf {vf_index} node_guid {guid}
+	_, stderr, err = n.cmd.RunCommand(ctx, "ip", "link", "set", devName, "vf", fmt.Sprintf("%d", vfIndex), "node_guid", guid)
+	if err != nil {
+		return fmt.Errorf("failed to set node GUID: %w, stderr: %s", err, stderr)
+	}
+
+	return nil
+}
+
+// setEthernetMACs sets the MAC addresses for an Ethernet VF
+func (n *netconfig) setEthernetMACs(ctx context.Context, devName string, vf VF) error {
+	// Get current VF device name
+	currentVFName, err := n.getCurrentVFName(vf.VFPCIAddr)
+	if err != nil {
+		return fmt.Errorf("failed to get current VF name: %w", err)
+	}
+
+	// Set VF hardware MAC using netlink for better error handling
+	link, err := n.netlinkLib.LinkByName(currentVFName)
+	if err != nil {
+		return fmt.Errorf("failed to get VF link %s: %w", currentVFName, err)
+	}
+
+	// Parse MAC address
+	hwAddr, err := net.ParseMAC(vf.MACAddress)
+	if err != nil {
+		return fmt.Errorf("failed to parse VF MAC address %s: %w", vf.MACAddress, err)
+	}
+
+	if err := n.netlinkLib.LinkSetHardwareAddr(link, hwAddr); err != nil {
+		return fmt.Errorf("failed to set VF hardware MAC: %w", err)
+	}
+
+	// Set VF admin MAC: ip link set dev {pf_name} vf {vf_index} mac {admin_mac}
+	// Note: This still requires ip command as netlink doesn't have direct VF admin MAC support
+	_, stderr, err := n.cmd.RunCommand(ctx, "ip", "link", "set", "dev", devName, "vf", fmt.Sprintf("%d", vf.VFIndex), "mac", vf.AdminMAC)
+	if err != nil {
+		return fmt.Errorf("failed to set VF admin MAC: %w, stderr: %s", err, stderr)
+	}
+
+	return nil
+}
+
+// getCurrentVFName gets the current VF device name after driver reload
+func (n *netconfig) getCurrentVFName(vfPCIAddr string) (string, error) {
+	// Get VF name from PCI path: /sys/bus/pci/devices/{vf_pci_addr}/net/
+	vfPciDevPath := fmt.Sprintf("/sys/bus/pci/devices/%s/net", vfPCIAddr)
+	entries, err := n.os.ReadDir(vfPciDevPath)
+	if err != nil {
+		return "", err
+	}
+
+	if len(entries) == 0 {
+		return "", fmt.Errorf("no netdev found for VF PCI address %s", vfPCIAddr)
+	}
+
+	return entries[0].Name(), nil
+}
+
+// rebindVFsInSwitchdevMode rebinds VFs in switchdev mode
+func (n *netconfig) rebindVFsInSwitchdevMode(ctx context.Context, device *MellanoxDevice) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	for _, vf := range device.VFs {
+		log.V(1).Info("Rebinding VF in switchdev mode", "vf_pci", vf.VFPCIAddr)
+
+		// Bind VF to driver
+		if err := n.bindVFToDriver(vf.VFPCIAddr); err != nil {
+			log.Error(err, "Failed to bind VF to driver", "vf_pci", vf.VFPCIAddr)
+			continue
+		}
+
+		// Wait for bind delay (matches bash script)
+		time.Sleep(1 * time.Second) // BIND_DELAY_SEC equivalent
+
+		// Restore VF MTU and admin state
+		if err := n.restoreVFState(vf); err != nil {
+			log.Error(err, "Failed to restore VF state", "vf_pci", vf.VFPCIAddr)
+			continue
+		}
+	}
+
+	return nil
+}
+
+// getDriverPath gets the driver path for a VF PCI address
+func (n *netconfig) getDriverPath(vfPCIAddr string) string {
+	// Try to get the current driver from the VF's driver symlink
+	driverLink := fmt.Sprintf("/sys/bus/pci/devices/%s/driver", vfPCIAddr)
+	driverPath, err := n.os.Readlink(driverLink)
+	if err != nil {
+		// If no driver is bound, use the default mlx5_core driver
+		return defaultDriverPath
+	}
+
+	// Extract the driver name from the symlink path
+	// driverPath is like "../../../../bus/pci/drivers/mlx5_core"
+	parts := strings.Split(driverPath, "/")
+	if len(parts) == 0 {
+		return defaultDriverPath // Fallback to default
+	}
+
+	driverName := parts[len(parts)-1]
+	return fmt.Sprintf("/sys/bus/pci/drivers/%s", driverName)
+}
+
+// unbindVFFromDriver unbinds a VF from its driver
+func (n *netconfig) unbindVFFromDriver(vfPCIAddr string) error {
+	// Get the driver path for this VF
+	driverPath := n.getDriverPath(vfPCIAddr)
+
+	// Write VF PCI address to driver unbind file
+	unbindFile := fmt.Sprintf("%s/unbind", driverPath)
+
+	if err := n.os.WriteFile(unbindFile, []byte(vfPCIAddr), 0o644); err != nil {
+		return fmt.Errorf("failed to unbind VF from driver: %w", err)
+	}
+
+	return nil
+}
+
+// bindVFToDriver binds a VF to its driver
+func (n *netconfig) bindVFToDriver(vfPCIAddr string) error {
+	// Get the driver path for this VF
+	driverPath := n.getDriverPath(vfPCIAddr)
+
+	// Write VF PCI address to driver bind file
+	bindFile := fmt.Sprintf("%s/bind", driverPath)
+
+	if err := n.os.WriteFile(bindFile, []byte(vfPCIAddr), 0o644); err != nil {
+		return fmt.Errorf("failed to bind VF to driver: %w", err)
+	}
+
+	return nil
+}
+
+// restoreVFState restores the MTU and admin state of a VF
+func (n *netconfig) restoreVFState(vf VF) error {
+	// Get current VF name
+	currentVFName, err := n.getCurrentVFName(vf.VFPCIAddr)
+	if err != nil {
+		return fmt.Errorf("failed to get current VF name: %w", err)
+	}
+
+	// Get VF link once and use it for both operations
+	link, err := n.netlinkLib.LinkByName(currentVFName)
+	if err != nil {
+		return fmt.Errorf("failed to get VF link %s: %w", currentVFName, err)
+	}
+
+	// Set VF MTU using netlink
+	if err := n.netlinkLib.LinkSetMTU(link, vf.MTU); err != nil {
+		return fmt.Errorf("failed to set VF MTU to %d: %w", vf.MTU, err)
+	}
+
+	// Set VF admin state using netlink
+	if vf.AdminState == adminStateUp {
+		err = n.netlinkLib.LinkSetUp(link)
+	} else {
+		err = n.netlinkLib.LinkSetDown(link)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to set VF admin state to %s: %w", vf.AdminState, err)
+	}
+
+	return nil
+}
+
+// setDeviceMTU sets the MTU of a device
+func (n *netconfig) setDeviceMTU(devName string, mtu int) error {
+	// Use netlink instead of sysfs for better error handling and performance
+	link, err := n.netlinkLib.LinkByName(devName)
+	if err != nil {
+		return fmt.Errorf("failed to get link %s: %w", devName, err)
+	}
+
+	if err := n.netlinkLib.LinkSetMTU(link, mtu); err != nil {
+		return fmt.Errorf("failed to set device MTU to %d: %w", mtu, err)
+	}
+
+	return nil
+}
+
+// isMlx5CoreLoaded checks if the mlx5_core driver is loaded
+func (n *netconfig) isMlx5CoreLoaded(ctx context.Context) (bool, error) {
+	loadedModules, err := n.host.LsMod(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to list loaded modules: %w", err)
+	}
+
+	// Check if mlx5_core is in the loaded modules map
+	_, found := loadedModules["mlx5_core"]
+	return found, nil
+}
+
+// discoverMellanoxDevices discovers all Mellanox network devices and collects detailed information
+func (n *netconfig) discoverMellanoxDevices(ctx context.Context) ([]string, error) {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Get all network interfaces from sysfs (matches bash script approach)
+	entries, err := n.os.ReadDir("/sys/class/net")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read /sys/class/net: %w", err)
+	}
+
+	devices := make([]string, 0, len(entries))
+
+	// Filter for Mellanox devices and collect detailed info
+	for _, entry := range entries {
+		devName := entry.Name()
+
+		// Check vendor first (more efficient than PCI lookup)
+		if !n.isMellanoxDeviceByInterface(devName) {
+			continue
+		}
+
+		// Get PCI address using sriovnet library
+		pciAddr, err := n.sriovnetLib.GetPciFromNetDevice(devName)
+		if err != nil {
+			log.V(1).Info("Could not get PCI address for device", "device", devName, "error", err)
+			continue
+		}
+
+		log.V(1).Info("Found Mellanox device", "device", devName, "pci", pciAddr)
+
+		// Get netlink link for additional attributes (admin state, MTU)
+		link, err := n.netlinkLib.LinkByName(devName)
+		if err != nil {
+			log.V(1).Info("Could not get netlink link", "device", devName, "error", err)
+			// Continue without netlink info - we can still collect basic info
+			link = nil
+		}
+		// Get eswitch mode
+		// This matches bash: eswitch_mode=$(devlink dev eswitch show pci/$pci_addr 2>/dev/null |
+		// awk '{for (i=1; i<=NF; i++) if ($i == "mode") {print $(i+1); exit}}')
+		eswitchMode, err := n.getEswitchMode(ctx, pciAddr)
+		if err != nil {
+			log.V(1).Info("Could not get eswitch mode", "device", devName, "pci", pciAddr, "error", err)
+			eswitchMode = eswitchModeLegacy // Default to legacy mode
+		}
+
+		if eswitchMode == eswitchModeSwitchdev {
+			// Skip VF representors
+			if n.isRepresentor(devName) {
+				log.V(1).Info("Skipping VF representor", "device", devName)
+				continue
+			}
+		}
+
+		// Collect detailed device information
+		device := n.collectDeviceInfo(ctx, devName, pciAddr, link)
+
+		device.EswitchMode = eswitchMode
+
+		// Collect VF information if VFs are configured
+		n.collectVFInfo(ctx, devName, device)
+
+		// Store the device information
+		n.mellanoxDevices[devName] = device
+		devices = append(devices, devName)
+
+		log.V(1).Info("Collected device info", "device", devName, "device", device, "vfs", len(device.VFs))
+	}
+
+	return devices, nil
+}
+
+// collectDeviceInfo collects detailed information about a Mellanox device
+func (n *netconfig) collectDeviceInfo(ctx context.Context, devName, pciAddr string, link netlink.Link) *MellanoxDevice {
+	log := logr.FromContextOrDiscard(ctx)
+
+	device := &MellanoxDevice{
+		PCIAddr: pciAddr,
+		VFs:     make([]VF, 0), // Initialize empty VFs array
+	}
+
+	// Get admin state and MTU from netlink (preferred method)
+	if link != nil {
+		// Get admin state from netlink flags
+		// This matches bash: dev_adminstate_flags=$(( $(cat "$netdev_path"/flags) & 1 ))
+		// dev_adminstate=$([[ $dev_adminstate_flags -eq 1 ]] && echo "up" || echo "down")
+		flags := link.Attrs().Flags
+		if flags&net.FlagUp != 0 {
+			device.AdminState = adminStateUp
+		} else {
+			device.AdminState = adminStateDown
+		}
+
+		// Get MTU from netlink attributes
+		device.MTU = link.Attrs().MTU
+	} else {
+		// Fallback: read from sysfs directly (should be rare with netlink)
+		log.V(1).Info("Netlink unavailable, falling back to sysfs", "device", devName)
+		device.AdminState = n.getAdminStateFromSysfs(devName)
+		device.MTU = n.getMTUFromSysfs(devName)
+	}
+
+	// Determine device type and get GUID
+	// This matches bash: if [[ "$dev_name" =~ ^ib.* ]]; then dev_type="ib"; else dev_type="eth"; fi
+	if strings.HasPrefix(devName, "ib") {
+		device.DevType = devTypeIB
+		// Get GUID for IB devices
+		guid, err := n.getIBGUID(devName)
+		if err != nil {
+			log.V(1).Info("Could not get IB GUID", "device", devName, "error", err)
+			device.GUID = "-"
+		} else {
+			device.GUID = n.restructureGUID(guid)
+		}
+	} else {
+		device.DevType = devTypeEth
+		device.GUID = "-"
+	}
+
+	// Get number of VFs from sysfs (matches bash script approach)
+	device.PfNumVfs = n.getPfNumVfsFromSysfs(devName)
+
+	return device
+}
+
+// collectVFInfo collects detailed information about VFs for a given PF
+func (n *netconfig) collectVFInfo(ctx context.Context, devName string, device *MellanoxDevice) {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Skip if no VFs configured
+	if device.PfNumVfs == 0 {
+		return
+	}
+
+	log.V(1).Info("Collecting VF information", "device", devName, "vfs", device.PfNumVfs)
+
+	// Collect VF information for each VF index
+	for vfIndex := range device.PfNumVfs {
+		vf, err := n.collectSingleVFInfo(ctx, devName, vfIndex, device.DevType)
+		if err != nil {
+			log.V(1).Info("Could not collect VF info", "device", devName, "vf_index", vfIndex, "error", err)
+			continue // Continue with other VFs
+		}
+
+		device.VFs = append(device.VFs, *vf)
+		log.V(1).Info("Collected VF info", "device", devName, "vf", vf)
+	}
+}
+
+// collectSingleVFInfo collects information for a single VF
+func (n *netconfig) collectSingleVFInfo(ctx context.Context, devName string, vfIndex int, devType string) (*VF, error) {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// VF device path: /sys/class/net/{PF_NAME}/device/virtfn{N}/net/{VF_NAME}
+	vfDevBasePath := fmt.Sprintf("/sys/class/net/%s/device/virtfn%d/net/", devName, vfIndex)
+
+	// Get VF name
+	vfName, err := n.getVFName(vfDevBasePath)
+	if err != nil {
+		return nil, fmt.Errorf("could not get VF name: %w", err)
+	}
+
+	vfNetdevPath := vfDevBasePath + vfName
+
+	// Get VF PCI address
+	vfPCIAddr, err := n.getVFPCIAddr(vfNetdevPath)
+	if err != nil {
+		return nil, fmt.Errorf("could not get VF PCI address: %w", err)
+	}
+
+	// Get VF admin state, MAC address, and MTU using netlink (preferred method)
+	vfAdminState, vfMAC, vfMTU, err := n.getVFAttributesFromNetlink(vfName)
+	if err != nil {
+		// Fallback to sysfs methods if netlink fails
+		log.V(1).Info("Netlink failed for VF, falling back to sysfs", "vf", vfName, "error", err)
+
+		vfAdminState, err = n.getVFAdminState(vfNetdevPath)
+		if err != nil {
+			return nil, fmt.Errorf("could not get VF admin state: %w", err)
+		}
+
+		vfMAC, err = n.getVFMACAddress(vfNetdevPath)
+		if err != nil {
+			return nil, fmt.Errorf("could not get VF MAC address: %w", err)
+		}
+
+		vfMTU, err = n.getVFMTU(vfNetdevPath)
+		if err != nil {
+			return nil, fmt.Errorf("could not get VF MTU: %w", err)
+		}
+	}
+
+	// Get VF admin MAC and GUID using ip command (matches bash script approach)
+	vfAdminMAC, vfGUID, err := n.getVFAdminMACAndGUID(ctx, devName, vfIndex, devType)
+	if err != nil {
+		log.V(1).Info("Could not get VF admin MAC/GUID", "device", devName, "vf_index", vfIndex, "error", err)
+		// Use fallback values
+		vfAdminMAC = vfMAC // Fallback to hardware MAC
+		vfGUID = "-"       // Default for Ethernet
+		if devType == devTypeIB {
+			vfGUID = "" // Default for IB when extraction fails
+		}
+	}
+
+	vf := &VF{
+		VFIndex:    vfIndex,
+		VFPCIAddr:  vfPCIAddr,
+		VFName:     vfName,
+		AdminState: vfAdminState,
+		MACAddress: vfMAC,
+		AdminMAC:   vfAdminMAC,
+		MTU:        vfMTU,
+		GUID:       vfGUID,
+	}
+
+	return vf, nil
+}
+
+// getVFAttributesFromNetlink gets VF admin state, MAC address, and MTU using netlink
+func (n *netconfig) getVFAttributesFromNetlink(vfName string) (string, string, int, error) {
+	link, err := n.netlinkLib.LinkByName(vfName)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("failed to get VF link: %w", err)
+	}
+
+	attrs := link.Attrs()
+
+	// Get admin state from netlink flags
+	var adminState string
+	if attrs.Flags&net.FlagUp != 0 {
+		adminState = adminStateUp
+	} else {
+		adminState = adminStateDown
+	}
+
+	// Get MAC address from netlink attributes
+	macAddr := attrs.HardwareAddr.String()
+	if macAddr == "" {
+		return "", "", 0, fmt.Errorf("no hardware address found")
+	}
+
+	// Get MTU from netlink attributes
+	mtu := attrs.MTU
+	if mtu == 0 {
+		mtu = 1500 // Default MTU
+	}
+
+	return adminState, macAddr, mtu, nil
+}
+
+// getIBGUID gets the GUID for an InfiniBand device
+func (n *netconfig) getIBGUID(devName string) (string, error) {
+	// This matches bash: sysfs_guid=$(cat ${netdev_path}/device/infiniband/*/node_guid)
+	// Look for the first infiniband directory under the device
+	devicePath := fmt.Sprintf("/sys/class/net/%s/device/infiniband", devName)
+
+	// List infiniband directories
+	entries, err := n.os.ReadDir(devicePath)
+	if err != nil {
+		return "", err
+	}
+
+	if len(entries) == 0 {
+		return "", fmt.Errorf("no infiniband directory found")
+	}
+
+	// Read the first node_guid file
+	guidPath := fmt.Sprintf("%s/%s/node_guid", devicePath, entries[0].Name())
+	guidData, err := n.os.ReadFile(guidPath)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(string(guidData)), nil
+}
+
+// restructureGUID restructures the GUID format
+func (n *netconfig) restructureGUID(guid string) string {
+	// This matches the improved implementation
+	// sysfs_guid is like "0c42a1030016054c"
+	// restructure as "0c42:a103:0016:054c"
+	raw := strings.TrimSpace(guid)
+	if len(raw) != 16 {
+		return guid // Return original if not expected format
+	}
+	return fmt.Sprintf("%s:%s:%s:%s", raw[0:4], raw[4:8], raw[8:12], raw[12:16])
+}
+
+// getEswitchMode gets the eswitch mode for a PCI device
+func (n *netconfig) getEswitchMode(ctx context.Context, pciAddr string) (string, error) {
+	// This matches bash: eswitch_mode=$(devlink dev eswitch show pci/$pci_addr 2>/dev/null |
+	// awk '{for (i=1; i<=NF; i++) if ($i == "mode") {print $(i+1); exit}}')
+	stdout, stderr, err := n.cmd.RunCommand(ctx, "devlink", "dev", "eswitch", "show", fmt.Sprintf("pci/%s", pciAddr))
+	if err != nil {
+		return "", fmt.Errorf("failed to run devlink command: %w, stderr: %s", err, stderr)
+	}
+
+	// Parse the output to find the mode
+	lines := strings.Split(stdout, "\n")
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		for i, field := range fields {
+			if field == "mode" && i+1 < len(fields) {
+				return fields[i+1], nil
+			}
+		}
+	}
+
+	return "legacy", nil // Default to legacy if not found
+}
+
+// isMellanoxDeviceByInterface checks if a network interface is a Mellanox device by vendor
+func (n *netconfig) isMellanoxDeviceByInterface(devName string) bool {
+	// Read vendor ID from sysfs
+	vendorPath := fmt.Sprintf("/sys/class/net/%s/device/vendor", devName)
+	vendorData, err := n.os.ReadFile(vendorPath)
+	if err != nil {
+		return false
+	}
+
+	// Mellanox vendor ID is 0x15b3
+	return strings.TrimSpace(string(vendorData)) == "0x15b3"
+}
+
+// isRepresentor checks if a device is a VF representor
+func (n *netconfig) isRepresentor(devName string) bool {
+	// Read phys_port_name to check if it's a representor
+	physPortNamePath := fmt.Sprintf("/sys/class/net/%s/phys_port_name", devName)
+	physPortNameData, err := n.os.ReadFile(physPortNamePath)
+	if err != nil {
+		return false
+	}
+
+	physPortName := strings.TrimSpace(string(physPortNameData))
+	// Check if it's a representor: starts with "pf" and contains "vf"
+	return strings.HasPrefix(physPortName, "pf") && strings.Contains(physPortName, "vf")
+}
+
+// getAdminStateFromSysfs gets the admin state from sysfs flags
+func (n *netconfig) getAdminStateFromSysfs(devName string) string {
+	// Read flags from sysfs: /sys/class/net/{dev}/flags
+	flagsPath := fmt.Sprintf("/sys/class/net/%s/flags", devName)
+	flagsData, err := n.os.ReadFile(flagsPath)
+	if err != nil {
+		return adminStateDown // Default to down if we can't read
+	}
+
+	// Parse flags and check if bit 0 (IFF_UP) is set
+	// This matches bash: dev_adminstate_flags=$(( $(cat "$netdev_path"/flags) & 1 ))
+	flagsStr := strings.TrimSpace(string(flagsData))
+	if flagsStr == "" {
+		return adminStateDown
+	}
+
+	// Parse the flags value (handle both decimal and hexadecimal formats)
+	var flags int
+	if strings.HasPrefix(flagsStr, "0x") {
+		// Parse hexadecimal format
+		flags64, err := strconv.ParseInt(flagsStr, 0, 64)
+		if err != nil {
+			return adminStateDown
+		}
+		flags = int(flags64)
+	} else {
+		// Parse decimal format
+		flags, err = strconv.Atoi(flagsStr)
+		if err != nil {
+			return adminStateDown
+		}
+	}
+
+	// Check if bit 0 is set (IFF_UP flag)
+	if flags&1 != 0 {
+		return adminStateUp
+	}
+
+	return adminStateDown
+}
+
+// getMTUFromSysfs gets the MTU from sysfs
+func (n *netconfig) getMTUFromSysfs(devName string) int {
+	// Read MTU from sysfs: /sys/class/net/{dev}/mtu
+	mtuPath := fmt.Sprintf("/sys/class/net/%s/mtu", devName)
+	mtuData, err := n.os.ReadFile(mtuPath)
+	if err != nil {
+		return 1500 // Default MTU if we can't read
+	}
+
+	// Parse MTU value
+	mtuStr := strings.TrimSpace(string(mtuData))
+	if mtuStr == "" {
+		return 1500
+	}
+
+	// Convert to int
+	mtu, err := strconv.Atoi(mtuStr)
+	if err != nil {
+		return 1500 // Default MTU if parsing fails
+	}
+
+	return mtu
+}
+
+// getPfNumVfsFromSysfs gets the number of VFs from sysfs
+func (n *netconfig) getPfNumVfsFromSysfs(devName string) int {
+	// Read sriov_numvfs from sysfs: /sys/class/net/{dev}/device/sriov_numvfs
+	sriovNumVfsPath := fmt.Sprintf("/sys/class/net/%s/device/sriov_numvfs", devName)
+	sriovNumVfsData, err := n.os.ReadFile(sriovNumVfsPath)
+	if err != nil {
+		return 0 // Default to 0 if we can't read (device not SRIOV capable)
+	}
+
+	// Parse sriov_numvfs value
+	sriovNumVfsStr := strings.TrimSpace(string(sriovNumVfsData))
+	if sriovNumVfsStr == "" {
+		return 0
+	}
+
+	// Convert to int
+	sriovNumVfs, err := strconv.Atoi(sriovNumVfsStr)
+	if err != nil {
+		return 0 // Default to 0 if parsing fails
+	}
+
+	return sriovNumVfs
+}
+
+// getVFName gets the VF netdev name from the VF device base path
+func (n *netconfig) getVFName(vfDevBasePath string) (string, error) {
+	// List the net directory to get VF name (matches bash: vf_name=$(ls "$vf_dev_base_path"))
+	entries, err := n.os.ReadDir(vfDevBasePath)
+	if err != nil {
+		return "", err
+	}
+
+	if len(entries) == 0 {
+		return "", fmt.Errorf("no VF netdev found in %s", vfDevBasePath)
+	}
+
+	return entries[0].Name(), nil
+}
+
+// getVFPCIAddr gets the VF PCI address from the VF netdev path
+func (n *netconfig) getVFPCIAddr(vfNetdevPath string) (string, error) {
+	// Read the device symlink and get basename (matches bash: vf_pci_addr=$(basename $(readlink "$vf_netdev_path"/device)))
+	deviceLink := vfNetdevPath + "/device"
+	linkTarget, err := n.os.Readlink(deviceLink)
+	if err != nil {
+		return "", err
+	}
+
+	// Get basename of the link target
+	parts := strings.Split(linkTarget, "/")
+	if len(parts) == 0 {
+		return "", fmt.Errorf("invalid device link target: %s", linkTarget)
+	}
+
+	return parts[len(parts)-1], nil
+}
+
+// getVFAdminState gets the VF admin state from the VF netdev path
+func (n *netconfig) getVFAdminState(vfNetdevPath string) (string, error) {
+	// Read flags from sysfs (matches bash: vf_adminstate_flags=$(( $(cat "$vf_netdev_path"/flags) & 1 )))
+	flagsPath := vfNetdevPath + "/flags"
+	flagsData, err := n.os.ReadFile(flagsPath)
+	if err != nil {
+		return "", err
+	}
+
+	flagsStr := strings.TrimSpace(string(flagsData))
+	if flagsStr == "" {
+		return adminStateDown, nil
+	}
+
+	// Handle both decimal and hexadecimal formats
+	var flags int
+	if strings.HasPrefix(flagsStr, "0x") {
+		// Parse hexadecimal format
+		flags64, err := strconv.ParseInt(flagsStr, 0, 64)
+		if err != nil {
+			return adminStateDown, err
+		}
+		flags = int(flags64)
+	} else {
+		// Parse decimal format
+		flags, err = strconv.Atoi(flagsStr)
+		if err != nil {
+			return adminStateDown, err
+		}
+	}
+
+	// Check if bit 0 is set (IFF_UP flag)
+	if flags&1 != 0 {
+		return adminStateUp, nil
+	}
+
+	return adminStateDown, nil
+}
+
+// getVFMACAddress gets the VF MAC address from the VF netdev path
+func (n *netconfig) getVFMACAddress(vfNetdevPath string) (string, error) {
+	// Read MAC address from sysfs (matches bash: vf_mac=$(cat "$vf_netdev_path"/address))
+	addressPath := vfNetdevPath + "/address"
+	macData, err := n.os.ReadFile(addressPath)
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(string(macData)), nil
+}
+
+// getVFMTU gets the VF MTU from the VF netdev path
+func (n *netconfig) getVFMTU(vfNetdevPath string) (int, error) {
+	// Read MTU from sysfs (matches bash: vf_mtu_val=$(cat "$vf_netdev_path"/mtu))
+	mtuPath := vfNetdevPath + "/mtu"
+	mtuData, err := n.os.ReadFile(mtuPath)
+	if err != nil {
+		return 0, err
+	}
+
+	mtuStr := strings.TrimSpace(string(mtuData))
+	if mtuStr == "" {
+		return 1500, nil // Default MTU
+	}
+
+	mtu, err := strconv.Atoi(mtuStr)
+	if err != nil {
+		return 1500, err // Default MTU if parsing fails
+	}
+
+	return mtu, nil
+}
+
+// getVFAdminMACAndGUID gets VF admin MAC and GUID using ip command (matches bash script approach)
+func (n *netconfig) getVFAdminMACAndGUID(ctx context.Context, devName string, vfIndex int, devType string) (string, string, error) {
+	// Use ip command to get VF info (matches bash: vf_ip_link_json=$(ip -j link show $mlnx_dev_name | jq -r .[0].vfinfo_list[$vf_index]))
+	stdout, stderr, err := n.cmd.RunCommand(ctx, "ip", "-j", "link", "show", devName)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to run ip command: %w, stderr: %s", err, stderr)
+	}
+
+	// Parse JSON output to get VF info
+	var linkInfos []LinkInfo
+	if err := json.Unmarshal([]byte(stdout), &linkInfos); err != nil {
+		return "", "", fmt.Errorf("failed to parse JSON output: %w", err)
+	}
+
+	if len(linkInfos) == 0 {
+		return "", "", fmt.Errorf("no link info found for device %s", devName)
+	}
+
+	linkInfo := linkInfos[0]
+	if len(linkInfo.VFinfoList) <= vfIndex {
+		return "", "", fmt.Errorf("VF index %d not found in vfinfo_list for device %s", vfIndex, devName)
+	}
+
+	vfInfo := linkInfo.VFinfoList[vfIndex]
+
+	// Extract admin MAC (matches bash: vf_admin_mac=$(echo ${vf_ip_link_json} | jq -r .address))
+	adminMAC := vfInfo.Address
+
+	// Extract GUID for IB devices (matches bash: vf_guid=$(echo ${vf_ip_link_json} | jq -r '."port guid"'))
+	guid := "-" // Default for Ethernet
+	if devType == devTypeIB {
+		guid = vfInfo.PortGUID
+	}
+
+	return adminMAC, guid, nil
 }
