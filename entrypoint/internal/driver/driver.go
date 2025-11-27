@@ -91,6 +91,12 @@ func (d *driverMgr) PreStart(ctx context.Context) error {
 		// Non-fatal error, continue
 	}
 
+	// Enable FIPS mode if UBUNTU_PRO_TOKEN is set
+	if err := d.enableFIPSIfRequired(ctx); err != nil {
+		log.Error(err, "Failed to enable FIPS mode")
+		return err
+	}
+
 	switch d.containerMode {
 	case constants.DriverContainerModeSources:
 		log.Info("Executing driver sources container")
@@ -1644,5 +1650,69 @@ func (d *driverMgr) updateCACertificates(ctx context.Context) error {
 	}
 
 	log.V(1).Info("CA certificate update completed", "os", osType)
+	return nil
+}
+
+// enableFIPSIfRequired enables Ubuntu Pro FIPS mode if UBUNTU_PRO_TOKEN is set.
+// This function:
+// 1. Checks for the UBUNTU_PRO_TOKEN environment variable
+// 2. Checks if the OS is Ubuntu
+// 3. If set, temporarily disables FIPS mode enforcement
+// 4. Attaches Ubuntu Pro subscription
+// 5. Enables FIPS updates
+// 6. Installs Ubuntu FIPS userspace packages
+func (d *driverMgr) enableFIPSIfRequired(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	if d.cfg.UbuntuProToken == "" {
+		return nil
+	}
+
+	// Get OS type - FIPS is only supported on Ubuntu
+	osType, err := d.host.GetOSType(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get OS type: %w", err)
+	}
+
+	if osType != constants.OSTypeUbuntu {
+		log.Info("UBUNTU_PRO_TOKEN is set but skipping FIPS setup, not running on Ubuntu", "os", osType)
+		return nil
+	}
+
+	log.Info("UBUNTU_PRO_TOKEN is set, enabling FIPS mode")
+
+	// Temporarily set OPENSSL_FORCE_FIPS_MODE=0
+	if err := os.Setenv("OPENSSL_FORCE_FIPS_MODE", "0"); err != nil {
+		log.Error(err, "failed to set OPENSSL_FORCE_FIPS_MODE")
+		return err
+	}
+	defer func() {
+		if err := os.Unsetenv("OPENSSL_FORCE_FIPS_MODE"); err != nil {
+			log.Error(err, "failed to unset OPENSSL_FORCE_FIPS_MODE")
+		}
+	}()
+
+	// Update CA certificates
+	if _, _, err := d.cmd.RunCommand(ctx, "update-ca-certificates"); err != nil {
+		return fmt.Errorf("failed to update CA certificates: %w", err)
+	}
+
+	// Attach Ubuntu Pro subscription
+	if _, _, err := d.cmd.RunCommand(ctx, "pro", "attach", "--no-auto-enable", d.cfg.UbuntuProToken); err != nil {
+		return fmt.Errorf("failed to attach Ubuntu Pro subscription: %w", err)
+	}
+
+	// Enable FIPS updates
+	if _, _, err := d.cmd.RunCommand(ctx, "pro", "enable", "--access-only", "--assume-yes", "fips-updates"); err != nil {
+		return fmt.Errorf("failed to enable FIPS updates: %w", err)
+	}
+
+	// Install Ubuntu FIPS userspace packages
+	log.Info("Installing the OpenSSL FIPS modules")
+	if _, _, err := d.cmd.RunCommand(ctx, "apt-get", "-yqq", "install", "--no-install-recommends", "ubuntu-fips-userspace"); err != nil {
+		return fmt.Errorf("failed to install ubuntu-fips-userspace: %w", err)
+	}
+
+	log.Info("FIPS mode enabled successfully")
 	return nil
 }
