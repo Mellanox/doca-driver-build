@@ -175,17 +175,20 @@ func (e *entrypoint) preStart(ctx context.Context) error {
 		return err
 	}
 
+	if err := e.netconfig.Save(ctx); err != nil {
+		return err
+	}
+
 	if err := e.createUDEVRulesIfRequired(ctx); err != nil {
 		return err
 	}
+
 	if e.containerMode == constants.DriverContainerModeSources {
 		if err := e.drivermgr.Build(ctx); err != nil {
 			return err
 		}
 	}
-	if err := e.netconfig.Save(ctx); err != nil {
-		return err
-	}
+
 	return ctx.Err()
 }
 
@@ -249,7 +252,7 @@ func (e *entrypoint) createUDEVRulesIfRequired(ctx context.Context) error {
 	if !e.config.CreateIfnamesUdev {
 		return nil
 	}
-	inboxUsesNewNamingScheme, err := e.udev.DevicesUseNewNamingScheme(ctx)
+	inboxUsesNewNamingScheme, err := e.netconfig.DevicesUseNewNamingScheme(ctx)
 	if err != nil {
 		return err
 	}

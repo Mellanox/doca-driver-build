@@ -103,7 +103,7 @@ var _ = Describe("Netconfig", func() {
 			hostMock.On("LsMod", mock.Anything).Return(map[string]host.LoadedModule{
 				"mlx5_core": {Name: "mlx5_core", RefCount: 1, UsedBy: []string{}},
 			}, nil).Once()
-			osMock.On("ReadDir", "/sys/class/net").Return([]os.DirEntry{}, nil).Once()
+			osMock.On("ReadDir", "/sys/class/net/").Return([]os.DirEntry{}, nil).Once()
 
 			err := nc.Save(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -117,7 +117,7 @@ var _ = Describe("Netconfig", func() {
 
 			// Mock device discovery
 			entries := []os.DirEntry{&mockDirEntry{name: "eth0"}}
-			osMock.On("ReadDir", "/sys/class/net").Return(entries, nil).Once()
+			osMock.On("ReadDir", "/sys/class/net/").Return(entries, nil).Once()
 
 			// Mock device vendor check
 			osMock.On("ReadFile", "/sys/class/net/eth0/device/vendor").Return([]byte("0x15b3"), nil).Once()
@@ -157,7 +157,7 @@ var _ = Describe("Netconfig", func() {
 
 			// Mock device discovery
 			entries := []os.DirEntry{&mockDirEntry{name: "eth0"}}
-			osMock.On("ReadDir", "/sys/class/net").Return(entries, nil).Once()
+			osMock.On("ReadDir", "/sys/class/net/").Return(entries, nil).Once()
 
 			// Mock device vendor check
 			osMock.On("ReadFile", "/sys/class/net/eth0/device/vendor").Return([]byte("0x15b3"), nil).Once()
@@ -173,7 +173,7 @@ var _ = Describe("Netconfig", func() {
 			hostMock.On("LsMod", mock.Anything).Return(map[string]host.LoadedModule{
 				"mlx5_core": {Name: "mlx5_core", RefCount: 1, UsedBy: []string{}},
 			}, nil).Once()
-			osMock.On("ReadDir", "/sys/class/net").Return(nil, fmt.Errorf("readdir failed")).Once()
+			osMock.On("ReadDir", "/sys/class/net/").Return(nil, fmt.Errorf("readdir failed")).Once()
 
 			err := nc.Save(ctx)
 			Expect(err).To(HaveOccurred())
@@ -566,6 +566,176 @@ var _ = Describe("Netconfig", func() {
 				err := nc.restoreVFConfigurations(ctx, "eth2", device, eswitchModeLegacy)
 				Expect(err).NotTo(HaveOccurred())
 			})
+		})
+	})
+
+	Context("DevicesUseNewNamingScheme", func() {
+		var (
+			nc           *netconfig
+			cmdMock      *cmdMockPkg.Interface
+			osMock       *osMockPkg.OSWrapper
+			hostMock     *hostMockPkg.Interface
+			sriovnetMock *sriovnetMockPkg.Lib
+			netlinkMock  *netlinkMockPkg.Lib
+			ctx          context.Context
+		)
+
+		BeforeEach(func() {
+			cmdMock = cmdMockPkg.NewInterface(GinkgoT())
+			osMock = osMockPkg.NewOSWrapper(GinkgoT())
+			hostMock = hostMockPkg.NewInterface(GinkgoT())
+			sriovnetMock = sriovnetMockPkg.NewLib(GinkgoT())
+			netlinkMock = netlinkMockPkg.NewLib(GinkgoT())
+			nc = New(cmdMock, osMock, hostMock, sriovnetMock, netlinkMock).(*netconfig)
+			ctx = context.Background()
+		})
+		It("should return true when device uses new naming scheme (np suffix)", func() {
+			// Mock device discovery - return one NVIDIA device
+			entries := []os.DirEntry{&mockDirEntry{name: "eth0"}}
+			osMock.On("ReadDir", "/sys/class/net/").Return(entries, nil).Once()
+
+			// Mock device vendor check - NVIDIA device
+			osMock.On("ReadFile", "/sys/class/net/eth0/device/vendor").Return([]byte("0x15b3"), nil).Once()
+
+			// Mock udevadm command - return NetNamePath with np suffix (new naming scheme)
+			cmdMock.On("RunCommand", mock.Anything, "udevadm", "info", "--query=property", "/sys/class/net/eth0").Return("ID_NET_NAME_PATH=pci-0000:08:00.0np0", "", nil).Once()
+
+			result, err := nc.DevicesUseNewNamingScheme(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeTrue())
+		})
+
+		It("should return false when device uses old naming scheme (no np suffix)", func() {
+			// Mock device discovery - return one NVIDIA device
+			entries := []os.DirEntry{&mockDirEntry{name: "eth0"}}
+			osMock.On("ReadDir", "/sys/class/net/").Return(entries, nil).Once()
+
+			// Mock device vendor check - NVIDIA device
+			osMock.On("ReadFile", "/sys/class/net/eth0/device/vendor").Return([]byte("0x15b3"), nil).Once()
+
+			// Mock udevadm command - return NetNamePath without np suffix (old naming scheme)
+			cmdMock.On("RunCommand", mock.Anything, "udevadm", "info", "--query=property", "/sys/class/net/eth0").Return("ID_NET_NAME_PATH=pci-0000:08:00.0", "", nil).Once()
+
+			result, err := nc.DevicesUseNewNamingScheme(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeFalse())
+		})
+
+		It("should return false when no NVIDIA devices are found", func() {
+			// Mock device discovery - return one non-NVIDIA device
+			entries := []os.DirEntry{&mockDirEntry{name: "eth0"}}
+			osMock.On("ReadDir", "/sys/class/net/").Return(entries, nil).Once()
+
+			// Mock device vendor check - non-NVIDIA device
+			osMock.On("ReadFile", "/sys/class/net/eth0/device/vendor").Return([]byte("0x8086"), nil).Once()
+
+			result, err := nc.DevicesUseNewNamingScheme(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeFalse())
+		})
+
+		It("should return false when no devices are found", func() {
+			// Mock device discovery - return empty list
+			entries := []os.DirEntry{}
+			osMock.On("ReadDir", "/sys/class/net/").Return(entries, nil).Once()
+
+			result, err := nc.DevicesUseNewNamingScheme(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeFalse())
+		})
+
+		It("should handle multiple devices and return true if any uses new naming scheme", func() {
+			// Mock device discovery - return multiple devices
+			entries := []os.DirEntry{
+				&mockDirEntry{name: "eth0"},
+				&mockDirEntry{name: "eth1"},
+			}
+			osMock.On("ReadDir", "/sys/class/net/").Return(entries, nil).Once()
+
+			// Mock device vendor checks - both NVIDIA devices
+			osMock.On("ReadFile", "/sys/class/net/eth0/device/vendor").Return([]byte("0x15b3"), nil).Once()
+			osMock.On("ReadFile", "/sys/class/net/eth1/device/vendor").Return([]byte("0x15b3"), nil).Once()
+
+			// Mock udevadm commands - first device uses old scheme, second uses new scheme
+			cmdMock.On("RunCommand", mock.Anything, "udevadm", "info", "--query=property", "/sys/class/net/eth0").Return("ID_NET_NAME_PATH=pci-0000:08:00.0", "", nil).Once()
+			cmdMock.On("RunCommand", mock.Anything, "udevadm", "info", "--query=property", "/sys/class/net/eth1").Return("ID_NET_NAME_PATH=pci-0000:08:00.1np1", "", nil).Once()
+
+			result, err := nc.DevicesUseNewNamingScheme(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeTrue())
+		})
+
+		It("should handle udevadm command failure gracefully", func() {
+			// Mock device discovery - return one NVIDIA device
+			entries := []os.DirEntry{&mockDirEntry{name: "eth0"}}
+			osMock.On("ReadDir", "/sys/class/net/").Return(entries, nil).Once()
+
+			// Mock device vendor check - NVIDIA device
+			osMock.On("ReadFile", "/sys/class/net/eth0/device/vendor").Return([]byte("0x15b3"), nil).Once()
+
+			// Mock udevadm command failure
+			cmdMock.On("RunCommand", mock.Anything, "udevadm", "info", "--query=property", "/sys/class/net/eth0").Return("", "command failed", fmt.Errorf("udevadm failed")).Once()
+
+			result, err := nc.DevicesUseNewNamingScheme(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeFalse())
+		})
+
+		It("should handle missing ID_NET_NAME_PATH in udevadm output", func() {
+			// Mock device discovery - return one NVIDIA device
+			entries := []os.DirEntry{&mockDirEntry{name: "eth0"}}
+			osMock.On("ReadDir", "/sys/class/net/").Return(entries, nil).Once()
+
+			// Mock device vendor check - NVIDIA device
+			osMock.On("ReadFile", "/sys/class/net/eth0/device/vendor").Return([]byte("0x15b3"), nil).Once()
+
+			// Mock udevadm command - return output without ID_NET_NAME_PATH
+			cmdMock.On("RunCommand", mock.Anything, "udevadm", "info", "--query=property", "/sys/class/net/eth0").Return("OTHER_PROPERTY=value", "", nil).Once()
+
+			result, err := nc.DevicesUseNewNamingScheme(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeFalse())
+		})
+
+		It("should handle ReadDir failure", func() {
+			// Mock ReadDir failure
+			osMock.On("ReadDir", "/sys/class/net/").Return(nil, fmt.Errorf("readdir failed")).Once()
+
+			result, err := nc.DevicesUseNewNamingScheme(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("readdir failed"))
+			Expect(result).To(BeFalse())
+		})
+
+		It("should handle different np patterns (np0, np1, np2, np3)", func() {
+			testCases := []struct {
+				netNamePath string
+				expected    bool
+			}{
+				{"pci-0000:08:00.0np0", true},
+				{"pci-0000:08:00.0np1", true},
+				{"pci-0000:08:00.0np2", true},
+				{"pci-0000:08:00.0np3", true},
+				{"pci-0000:08:00.0", false},
+				{"pci-0000:08:00.0np4", false}, // np4 should not match
+				{"pci-0000:08:00.0np", false},  // incomplete np
+			}
+
+			for _, tc := range testCases {
+				// Mock device discovery
+				entries := []os.DirEntry{&mockDirEntry{name: "eth0"}}
+				osMock.On("ReadDir", "/sys/class/net/").Return(entries, nil).Once()
+
+				// Mock device vendor check
+				osMock.On("ReadFile", "/sys/class/net/eth0/device/vendor").Return([]byte("0x15b3"), nil).Once()
+
+				// Mock udevadm command with specific NetNamePath
+				cmdMock.On("RunCommand", mock.Anything, "udevadm", "info", "--query=property", "/sys/class/net/eth0").Return(fmt.Sprintf("ID_NET_NAME_PATH=%s", tc.netNamePath), "", nil).Once()
+
+				result, err := nc.DevicesUseNewNamingScheme(ctx)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(Equal(tc.expected), "NetNamePath: %s should return %v", tc.netNamePath, tc.expected)
+			}
 		})
 	})
 })
