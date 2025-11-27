@@ -2381,6 +2381,162 @@ var _ = Describe("Driver", func() {
 		})
 
 	})
+
+	Context("enableFIPSIfRequired", func() {
+		BeforeEach(func() {
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+		})
+
+		It("should skip FIPS setup when UBUNTU_PRO_TOKEN is not set", func() {
+			// Set empty token in config
+			dm.cfg.UbuntuProToken = ""
+
+			// No mocks should be called
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should skip FIPS setup when not running on Ubuntu", func() {
+			// Set Ubuntu Pro token in config
+			dm.cfg.UbuntuProToken = "test-token-12345"
+
+			// Mock GetOSType to return RedHat
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeRedHat, nil)
+
+			// No FIPS commands should be executed
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should skip FIPS setup when running on SLES", func() {
+			// Set Ubuntu Pro token in config
+			dm.cfg.UbuntuProToken = "test-token-12345"
+
+			// Mock GetOSType to return SLES
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeSLES, nil)
+
+			// No FIPS commands should be executed
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should enable FIPS successfully on Ubuntu", func() {
+			// Set Ubuntu Pro token in config
+			dm.cfg.UbuntuProToken = "test-token-12345"
+
+			// Mock GetOSType to return Ubuntu
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+
+			// Mock update-ca-certificates command
+			cmdMock.EXPECT().RunCommand(ctx, "update-ca-certificates").Return("", "", nil)
+
+			// Mock pro attach command
+			cmdMock.EXPECT().RunCommand(ctx, "pro", "attach", "--no-auto-enable", "test-token-12345").Return("", "", nil)
+
+			// Mock pro enable command
+			cmdMock.EXPECT().RunCommand(ctx, "pro", "enable", "--access-only", "--assume-yes", "fips-updates").Return("", "", nil)
+
+			// Mock apt-get install command
+			cmdMock.EXPECT().RunCommand(ctx, "apt-get", "-yqq", "install", "--no-install-recommends", "ubuntu-fips-userspace").Return("", "", nil)
+
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should return error when GetOSType fails", func() {
+			// Set Ubuntu Pro token in config
+			dm.cfg.UbuntuProToken = "test-token-12345"
+
+			expectedError := errors.New("failed to get OS type")
+			hostMock.EXPECT().GetOSType(ctx).Return("", expectedError)
+
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to get OS type"))
+		})
+
+		It("should return error when update-ca-certificates fails", func() {
+			// Set Ubuntu Pro token in config
+			dm.cfg.UbuntuProToken = "test-token-12345"
+
+			// Mock GetOSType to return Ubuntu
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+
+			// Mock update-ca-certificates command failure
+			expectedError := errors.New("ca certificates update failed")
+			cmdMock.EXPECT().RunCommand(ctx, "update-ca-certificates").Return("", "", expectedError)
+
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to update CA certificates"))
+		})
+
+		It("should return error when pro attach fails", func() {
+			// Set Ubuntu Pro token in config
+			dm.cfg.UbuntuProToken = "test-token-12345"
+
+			// Mock GetOSType to return Ubuntu
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+
+			// Mock update-ca-certificates command
+			cmdMock.EXPECT().RunCommand(ctx, "update-ca-certificates").Return("", "", nil)
+
+			// Mock pro attach command failure
+			expectedError := errors.New("pro attach failed")
+			cmdMock.EXPECT().RunCommand(ctx, "pro", "attach", "--no-auto-enable", "test-token-12345").Return("", "", expectedError)
+
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to attach Ubuntu Pro subscription"))
+		})
+
+		It("should return error when pro enable fips-updates fails", func() {
+			// Set Ubuntu Pro token in config
+			dm.cfg.UbuntuProToken = "test-token-12345"
+
+			// Mock GetOSType to return Ubuntu
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+
+			// Mock update-ca-certificates command
+			cmdMock.EXPECT().RunCommand(ctx, "update-ca-certificates").Return("", "", nil)
+
+			// Mock pro attach command
+			cmdMock.EXPECT().RunCommand(ctx, "pro", "attach", "--no-auto-enable", "test-token-12345").Return("", "", nil)
+
+			// Mock pro enable command failure
+			expectedError := errors.New("pro enable failed")
+			cmdMock.EXPECT().RunCommand(ctx, "pro", "enable", "--access-only", "--assume-yes", "fips-updates").Return("", "", expectedError)
+
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to enable FIPS updates"))
+		})
+
+		It("should return error when apt-get install ubuntu-fips-userspace fails", func() {
+			// Set Ubuntu Pro token in config
+			dm.cfg.UbuntuProToken = "test-token-12345"
+
+			// Mock GetOSType to return Ubuntu
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+
+			// Mock update-ca-certificates command
+			cmdMock.EXPECT().RunCommand(ctx, "update-ca-certificates").Return("", "", nil)
+
+			// Mock pro attach command
+			cmdMock.EXPECT().RunCommand(ctx, "pro", "attach", "--no-auto-enable", "test-token-12345").Return("", "", nil)
+
+			// Mock pro enable command
+			cmdMock.EXPECT().RunCommand(ctx, "pro", "enable", "--access-only", "--assume-yes", "fips-updates").Return("", "", nil)
+
+			// Mock apt-get install command failure
+			expectedError := errors.New("apt-get install failed")
+			cmdMock.EXPECT().RunCommand(ctx, "apt-get", "-yqq", "install", "--no-install-recommends", "ubuntu-fips-userspace").Return("", "", expectedError)
+
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to install ubuntu-fips-userspace"))
+		})
+	})
 })
 
 var _ = Describe("Driver OFED Blacklist", func() {

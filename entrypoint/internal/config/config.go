@@ -24,10 +24,11 @@ import (
 // Config contains configuration for the entrypoint.
 type Config struct {
 	// public API
-	UnloadStorageModules          bool `env:"UNLOAD_STORAGE_MODULES"`
-	CreateIfnamesUdev             bool `env:"CREATE_IFNAMES_UDEV"`
-	EnableNfsRdma                 bool `env:"ENABLE_NFSRDMA"`
-	RestoreDriverOnPodTermination bool `env:"RESTORE_DRIVER_ON_POD_TERMINATION" envDefault:"false"`
+	UnloadStorageModules          bool   `env:"UNLOAD_STORAGE_MODULES"`
+	CreateIfnamesUdev             bool   `env:"CREATE_IFNAMES_UDEV"`
+	EnableNfsRdma                 bool   `env:"ENABLE_NFSRDMA"`
+	RestoreDriverOnPodTermination bool   `env:"RESTORE_DRIVER_ON_POD_TERMINATION" envDefault:"false"`
+	UbuntuProToken                string `env:"UBUNTU_PRO_TOKEN"`
 
 	// driver manager advanced settings
 	DriverReadyPath  string `env:"DRIVER_READY_PATH"   envDefault:"/run/mellanox/drivers/.driver-ready"`
