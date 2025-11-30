@@ -76,6 +76,8 @@ type driverMgr struct {
 	containerMode   string
 	newDriverLoaded bool
 
+	driverBuildIncomplete bool
+
 	cmd  cmd.Interface
 	host host.Interface
 	os   wrappers.OSWrapper
@@ -166,6 +168,9 @@ func (d *driverMgr) Build(ctx context.Context) error {
 	if !shouldBuild {
 		log.Info("Skipping driver build, reusing previously built packages", "kernel", kernelVersion)
 	} else {
+		// Mark build as incomplete at the start
+		d.driverBuildIncomplete = true
+
 		// Create inventory directory
 		if err := d.createInventoryDirectory(ctx, inventoryPath); err != nil {
 			return fmt.Errorf("failed to create inventory directory: %w", err)
@@ -199,6 +204,9 @@ func (d *driverMgr) Build(ctx context.Context) error {
 			log.V(1).Info("Failed to fix source link", "error", err)
 			// Non-fatal error, continue
 		}
+
+		// Mark build as complete after successful build
+		d.driverBuildIncomplete = false
 
 		log.Info("Driver build completed successfully", "kernel", kernelVersion, "inventory", inventoryPath)
 	}
@@ -275,6 +283,17 @@ func (d *driverMgr) Load(ctx context.Context) (bool, error) {
 		// Non-fatal error, continue
 	}
 
+	// Mount rootfs for shared kernel headers
+	if err := d.mountRootfs(ctx); err != nil {
+		return false, fmt.Errorf("failed to mount rootfs: %w", err)
+	}
+
+	// Clean up old driver inventory to free disk space
+	if err := d.cleanupDriverInventory(ctx); err != nil {
+		log.V(1).Info("Failed to cleanup driver inventory", "error", err)
+		// Non-fatal error, continue
+	}
+
 	log.Info("Driver loaded successfully")
 	return true, nil
 }
@@ -314,7 +333,219 @@ func (d *driverMgr) Unload(ctx context.Context) (bool, error) {
 
 // Clear is the default implementation of the driver.Interface.
 func (d *driverMgr) Clear(ctx context.Context) error {
-	// TODO: Implement
+	log := logr.FromContextOrDiscard(ctx)
+
+	if err := d.unmountRootfs(ctx); err != nil {
+		log.Error(err, "Failed to unmount rootfs")
+	}
+
+	// Remove driver packages temporary directory if not reused or build incomplete
+	isReusable := d.cfg.NvidiaNicDriversInventoryPath != ""
+	shouldCleanup := !isReusable || d.driverBuildIncomplete
+
+	if shouldCleanup {
+		// Get kernel version to compute inventory path
+		kernelVersion, err := d.host.GetKernelVersion(ctx)
+		if err != nil {
+			log.V(1).Info("Failed to get kernel version for cleanup", "error", err)
+			return nil // Non-fatal, skip cleanup
+		}
+
+		// Re-calculate the inventory path using checkDriverInventory
+		_, inventoryPath, err := d.checkDriverInventory(ctx, kernelVersion)
+		if err != nil {
+			log.V(1).Info("Failed to check inventory for cleanup", "error", err)
+			return nil // Non-fatal, skip cleanup
+		}
+
+		if inventoryPath != "" {
+			log.Info("Removing driver packages temporary directory", "path", inventoryPath)
+			if err := d.os.RemoveAll(inventoryPath); err != nil {
+				log.Error(err, "Failed to remove driver inventory")
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// mountRootfs mounts the shared kernel headers directory for the Mellanox OFED driver container
+func (d *driverMgr) mountRootfs(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+	log.Info("Mounting Mellanox OFED driver container shared kernel headers")
+
+	// Make /sys mount runbindable
+	_, stderr, err := d.cmd.RunCommand(ctx, "mount", "--make-runbindable", "/sys")
+	if err != nil {
+		return fmt.Errorf("failed to make /sys runbindable: %w, stderr: %s", err, stderr)
+	}
+
+	// Make /sys mount private
+	_, stderr, err = d.cmd.RunCommand(ctx, "mount", "--make-private", "/sys")
+	if err != nil {
+		return fmt.Errorf("failed to make /sys private: %w, stderr: %s", err, stderr)
+	}
+
+	// Check if mount already exists
+	stdout, _, err := d.cmd.RunCommand(ctx, "mount", "-l")
+	if err == nil {
+		// Check if mellanox mount exists (excluding tmpfs)
+		lines := strings.Split(stdout, "\n")
+		for _, line := range lines {
+			if strings.Contains(line, "mellanox") && !strings.Contains(line, "tmpfs") {
+				log.V(1).Info("Mount already exists", "mount", d.cfg.MlxDriversMount)
+				return nil
+			}
+		}
+	}
+
+	// Create mount directory
+	mountPath := filepath.Join(d.cfg.MlxDriversMount, d.cfg.SharedKernelHeadersDir)
+	if err := d.os.MkdirAll(mountPath, 0o755); err != nil {
+		return fmt.Errorf("failed to create mount directory %s: %w", mountPath, err)
+	}
+
+	// Mount with rbind
+	_, stderr, err = d.cmd.RunCommand(ctx, "mount", "--rbind", d.cfg.SharedKernelHeadersDir, mountPath)
+	if err != nil {
+		return fmt.Errorf("failed to rbind mount %s to %s: %w, stderr: %s",
+			d.cfg.SharedKernelHeadersDir, mountPath, err, stderr)
+	}
+
+	log.V(1).Info("Successfully mounted shared kernel headers", "mountPath", mountPath)
+	return nil
+}
+
+// unmountRootfs unmounts the shared kernel headers directory
+func (d *driverMgr) unmountRootfs(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+	log.V(1).Info("Unmounting rootfs")
+
+	// Check if mount exists using findmnt
+	stdout, _, err := d.cmd.RunCommand(ctx, "findmnt", "-r", "-o", "TARGET")
+	if err != nil {
+		// If findmnt fails, just log and return (best effort cleanup)
+		log.V(1).Info("findmnt command failed, skipping unmount", "error", err)
+		return nil
+	}
+
+	// Count occurrences of MlxDriversMount in the output
+	mountCount := 0
+	lines := strings.Split(stdout, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, d.cfg.MlxDriversMount) {
+			mountCount++
+		}
+	}
+
+	// If mount exists (count > 1 as per bash script logic)
+	if mountCount > 1 {
+		log.V(1).Info("Unmounting", "mount", d.cfg.MlxDriversMount)
+
+		// Unmount with lazy unmount and recursive
+		_, stderr, err := d.cmd.RunCommand(ctx, "umount", "-l", "-R", d.cfg.MlxDriversMount)
+		if err != nil {
+			return fmt.Errorf("failed to unmount %s: %w, stderr: %s", d.cfg.MlxDriversMount, err, stderr)
+		}
+
+		// Remove the directory
+		removePath := filepath.Join(d.cfg.MlxDriversMount, d.cfg.SharedKernelHeadersDir)
+		if err := d.os.RemoveAll(removePath); err != nil {
+			return fmt.Errorf("failed to remove directory %s: %w", removePath, err)
+		}
+	}
+
+	return nil
+}
+
+// cleanupDriverInventory removes old kernel versions and driver versions from the inventory
+// to free up disk space. It keeps only the current kernel version and current driver version.
+func (d *driverMgr) cleanupDriverInventory(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Skip if inventory path is not configured
+	if d.cfg.NvidiaNicDriversInventoryPath == "" {
+		log.V(1).Info("Driver inventory path not configured, skipping cleanup")
+		return nil
+	}
+
+	// Get current kernel version
+	kernelVersion, err := d.host.GetKernelVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get kernel version: %w", err)
+	}
+
+	log.V(1).Info("Cleaning up driver inventory", "inventoryPath", d.cfg.NvidiaNicDriversInventoryPath, "currentKernel", kernelVersion)
+
+	// List all kernel version directories
+	kernelDirEntries, err := d.os.ReadDir(d.cfg.NvidiaNicDriversInventoryPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.V(1).Info("Driver inventory path does not exist, nothing to clean up")
+			return nil
+		}
+		return fmt.Errorf("failed to list inventory directory: %w", err)
+	}
+
+	for _, kernelDirEntry := range kernelDirEntries {
+		if !kernelDirEntry.IsDir() {
+			continue
+		}
+
+		kernelVerDir := kernelDirEntry.Name()
+
+		// If this is not the current kernel version, delete the entire directory
+		if kernelVerDir != kernelVersion {
+			kernelVerPath := filepath.Join(d.cfg.NvidiaNicDriversInventoryPath, kernelVerDir)
+			log.V(1).Info("Removing old kernel version directory", "path", kernelVerPath)
+			if err := d.os.RemoveAll(kernelVerPath); err != nil {
+				log.V(1).Info("Failed to remove old kernel version directory", "path", kernelVerPath, "error", err)
+				// Non-fatal, continue with other directories
+			}
+			continue
+		}
+
+		// For the current kernel version, clean up old driver versions
+		kernelVerPath := filepath.Join(d.cfg.NvidiaNicDriversInventoryPath, kernelVerDir)
+		driverVerEntries, err := d.os.ReadDir(kernelVerPath)
+		if err != nil {
+			log.V(1).Info("Failed to list driver version directory", "path", kernelVerPath, "error", err)
+			continue
+		}
+
+		foundItems := 0
+		removedItems := 0
+
+		for _, driverVerEntry := range driverVerEntries {
+			foundItems++
+			driverVerItem := driverVerEntry.Name()
+
+			// Keep the current driver version and its checksum file
+			if driverVerItem == d.cfg.NvidiaNicDriverVer || driverVerItem == d.cfg.NvidiaNicDriverVer+".checksum" {
+				continue
+			}
+
+			// Remove old driver version
+			driverVerItemPath := filepath.Join(kernelVerPath, driverVerItem)
+			log.V(1).Info("Removing old driver version", "path", driverVerItemPath)
+			if err := d.os.RemoveAll(driverVerItemPath); err != nil {
+				log.V(1).Info("Failed to remove old driver version", "path", driverVerItemPath, "error", err)
+				// Non-fatal, continue
+			} else {
+				removedItems++
+			}
+		}
+
+		// If all items were removed, delete the kernel version directory
+		if foundItems == removedItems {
+			log.V(1).Info("All items removed, deleting kernel version directory", "path", kernelVerPath)
+			if err := d.os.RemoveAll(kernelVerPath); err != nil {
+				log.V(1).Info("Failed to remove kernel version directory", "path", kernelVerPath, "error", err)
+			}
+		}
+	}
+
+	log.V(1).Info("Driver inventory cleanup completed")
 	return nil
 }
 

@@ -31,9 +31,11 @@ type Config struct {
 	UbuntuProToken                string `env:"UBUNTU_PRO_TOKEN"`
 
 	// driver manager advanced settings
-	DriverReadyPath  string `env:"DRIVER_READY_PATH"   envDefault:"/run/mellanox/drivers/.driver-ready"`
-	MlxUdevRulesFile string `env:"MLX_UDEV_RULES_FILE" envDefault:"/host/etc/udev/rules.d/77-mlnx-net-names.rules"`
-	LockFilePath     string `env:"LOCK_FILE_PATH"      envDefault:"/run/mellanox/drivers/.lock"`
+	DriverReadyPath        string `env:"DRIVER_READY_PATH"         envDefault:"/run/mellanox/drivers/.driver-ready"`
+	MlxUdevRulesFile       string `env:"MLX_UDEV_RULES_FILE"       envDefault:"/host/etc/udev/rules.d/77-mlnx-net-names.rules"`
+	LockFilePath           string `env:"LOCK_FILE_PATH"            envDefault:"/run/mellanox/drivers/.lock"`
+	MlxDriversMount        string `env:"MLX_DRIVERS_MOUNT"         envDefault:"/run/mellanox/drivers"`
+	SharedKernelHeadersDir string `env:"SHARED_KERNEL_HEADERS_DIR" envDefault:"/usr/src/"`
 
 	NvidiaNicDriverVer    string `env:"NVIDIA_NIC_DRIVER_VER,required,notEmpty"`
 	NvidiaNicDriverPath   string `env:"NVIDIA_NIC_DRIVER_PATH"`
