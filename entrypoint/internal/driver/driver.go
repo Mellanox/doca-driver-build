@@ -275,6 +275,11 @@ func (d *driverMgr) Load(ctx context.Context) (bool, error) {
 		// Non-fatal error, continue
 	}
 
+	// Mount rootfs for shared kernel headers
+	if err := d.mountRootfs(ctx); err != nil {
+		return false, fmt.Errorf("failed to mount rootfs: %w", err)
+	}
+
 	log.Info("Driver loaded successfully")
 	return true, nil
 }
@@ -314,7 +319,101 @@ func (d *driverMgr) Unload(ctx context.Context) (bool, error) {
 
 // Clear is the default implementation of the driver.Interface.
 func (d *driverMgr) Clear(ctx context.Context) error {
-	// TODO: Implement
+	log := logr.FromContextOrDiscard(ctx)
+
+	if err := d.unmountRootfs(ctx); err != nil {
+		log.Error(err, "Failed to unmount rootfs")
+	}
+
+	return nil
+}
+
+// mountRootfs mounts the shared kernel headers directory for the Mellanox OFED driver container
+func (d *driverMgr) mountRootfs(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+	log.Info("Mounting Mellanox OFED driver container shared kernel headers")
+
+	// Make /sys mount runbindable
+	_, stderr, err := d.cmd.RunCommand(ctx, "mount", "--make-runbindable", "/sys")
+	if err != nil {
+		return fmt.Errorf("failed to make /sys runbindable: %w, stderr: %s", err, stderr)
+	}
+
+	// Make /sys mount private
+	_, stderr, err = d.cmd.RunCommand(ctx, "mount", "--make-private", "/sys")
+	if err != nil {
+		return fmt.Errorf("failed to make /sys private: %w, stderr: %s", err, stderr)
+	}
+
+	// Check if mount already exists
+	stdout, _, err := d.cmd.RunCommand(ctx, "mount", "-l")
+	if err == nil {
+		// Check if mellanox mount exists (excluding tmpfs)
+		lines := strings.Split(stdout, "\n")
+		for _, line := range lines {
+			if strings.Contains(line, "mellanox") && !strings.Contains(line, "tmpfs") {
+				log.V(1).Info("Mount already exists", "mount", d.cfg.MlxDriversMount)
+				return nil
+			}
+		}
+	}
+
+	// Create mount directory
+	mountPath := d.cfg.MlxDriversMount + d.cfg.SharedKernelHeadersDir
+	if err := d.os.MkdirAll(mountPath, 0o755); err != nil {
+		return fmt.Errorf("failed to create mount directory %s: %w", mountPath, err)
+	}
+
+	// Mount with rbind
+	_, stderr, err = d.cmd.RunCommand(ctx, "mount", "--rbind", d.cfg.SharedKernelHeadersDir, mountPath)
+	if err != nil {
+		return fmt.Errorf("failed to rbind mount %s to %s: %w, stderr: %s",
+			d.cfg.SharedKernelHeadersDir, mountPath, err, stderr)
+	}
+
+	log.V(1).Info("Successfully mounted shared kernel headers", "mountPath", mountPath)
+	return nil
+}
+
+// unmountRootfs unmounts the shared kernel headers directory
+func (d *driverMgr) unmountRootfs(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+	log.V(1).Info("Unmounting rootfs")
+
+	// Check if mount exists using findmnt
+	stdout, _, err := d.cmd.RunCommand(ctx, "findmnt", "-r", "-o", "TARGET")
+	if err != nil {
+		// If findmnt fails, just log and return (best effort cleanup)
+		log.V(1).Info("findmnt command failed, skipping unmount", "error", err)
+		return nil
+	}
+
+	// Count occurrences of MlxDriversMount in the output
+	mountCount := 0
+	lines := strings.Split(stdout, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, d.cfg.MlxDriversMount) {
+			mountCount++
+		}
+	}
+
+	// If mount exists (count > 1 as per bash script logic)
+	if mountCount > 1 {
+		log.V(1).Info("Unmounting", "mount", d.cfg.MlxDriversMount)
+
+		// Unmount with lazy unmount and recursive
+		_, stderr, err := d.cmd.RunCommand(ctx, "umount", "-l", "-R", d.cfg.MlxDriversMount)
+		if err != nil {
+			return fmt.Errorf("failed to unmount %s: %w, stderr: %s", d.cfg.MlxDriversMount, err, stderr)
+		}
+
+		// Remove the directory
+		removePath := d.cfg.MlxDriversMount + d.cfg.SharedKernelHeadersDir
+		if err := d.os.RemoveAll(removePath); err != nil {
+			return fmt.Errorf("failed to remove directory %s: %w", removePath, err)
+		}
+	}
+
 	return nil
 }
 
