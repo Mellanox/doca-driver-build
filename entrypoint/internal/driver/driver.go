@@ -280,6 +280,12 @@ func (d *driverMgr) Load(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("failed to mount rootfs: %w", err)
 	}
 
+	// Clean up old driver inventory to free disk space
+	if err := d.cleanupDriverInventory(ctx); err != nil {
+		log.V(1).Info("Failed to cleanup driver inventory", "error", err)
+		// Non-fatal error, continue
+	}
+
 	log.Info("Driver loaded successfully")
 	return true, nil
 }
@@ -414,6 +420,97 @@ func (d *driverMgr) unmountRootfs(ctx context.Context) error {
 		}
 	}
 
+	return nil
+}
+
+// cleanupDriverInventory removes old kernel versions and driver versions from the inventory
+// to free up disk space. It keeps only the current kernel version and current driver version.
+func (d *driverMgr) cleanupDriverInventory(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Skip if inventory path is not configured
+	if d.cfg.NvidiaNicDriversInventoryPath == "" {
+		log.V(1).Info("Driver inventory path not configured, skipping cleanup")
+		return nil
+	}
+
+	// Get current kernel version
+	kernelVersion, err := d.host.GetKernelVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get kernel version: %w", err)
+	}
+
+	log.V(1).Info("Cleaning up driver inventory", "inventoryPath", d.cfg.NvidiaNicDriversInventoryPath, "currentKernel", kernelVersion)
+
+	// List all kernel version directories
+	kernelDirEntries, err := d.os.ReadDir(d.cfg.NvidiaNicDriversInventoryPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.V(1).Info("Driver inventory path does not exist, nothing to clean up")
+			return nil
+		}
+		return fmt.Errorf("failed to list inventory directory: %w", err)
+	}
+
+	for _, kernelDirEntry := range kernelDirEntries {
+		if !kernelDirEntry.IsDir() {
+			continue
+		}
+
+		kernelVerDir := kernelDirEntry.Name()
+
+		// If this is not the current kernel version, delete the entire directory
+		if kernelVerDir != kernelVersion {
+			kernelVerPath := filepath.Join(d.cfg.NvidiaNicDriversInventoryPath, kernelVerDir)
+			log.V(1).Info("Removing old kernel version directory", "path", kernelVerPath)
+			if err := d.os.RemoveAll(kernelVerPath); err != nil {
+				log.V(1).Info("Failed to remove old kernel version directory", "path", kernelVerPath, "error", err)
+				// Non-fatal, continue with other directories
+			}
+			continue
+		}
+
+		// For the current kernel version, clean up old driver versions
+		kernelVerPath := filepath.Join(d.cfg.NvidiaNicDriversInventoryPath, kernelVerDir)
+		driverVerEntries, err := d.os.ReadDir(kernelVerPath)
+		if err != nil {
+			log.V(1).Info("Failed to list driver version directory", "path", kernelVerPath, "error", err)
+			continue
+		}
+
+		foundItems := 0
+		removedItems := 0
+
+		for _, driverVerEntry := range driverVerEntries {
+			foundItems++
+			driverVerItem := driverVerEntry.Name()
+
+			// Keep the current driver version and its checksum file
+			if driverVerItem == d.cfg.NvidiaNicDriverVer || driverVerItem == d.cfg.NvidiaNicDriverVer+".checksum" {
+				continue
+			}
+
+			// Remove old driver version
+			driverVerItemPath := filepath.Join(kernelVerPath, driverVerItem)
+			log.V(1).Info("Removing old driver version", "path", driverVerItemPath)
+			if err := d.os.RemoveAll(driverVerItemPath); err != nil {
+				log.V(1).Info("Failed to remove old driver version", "path", driverVerItemPath, "error", err)
+				// Non-fatal, continue
+			} else {
+				removedItems++
+			}
+		}
+
+		// If all items were removed, delete the kernel version directory
+		if foundItems == removedItems {
+			log.V(1).Info("All items removed, deleting kernel version directory", "path", kernelVerPath)
+			if err := d.os.RemoveAll(kernelVerPath); err != nil {
+				log.V(1).Info("Failed to remove kernel version directory", "path", kernelVerPath, "error", err)
+			}
+		}
+	}
+
+	log.V(1).Info("Driver inventory cleanup completed")
 	return nil
 }
 
