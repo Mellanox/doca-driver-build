@@ -2870,7 +2870,179 @@ var _ = Describe("Driver", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
+
+	Context("cleanupDriverInventory", func() {
+		BeforeEach(func() {
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+		})
+
+		It("should skip cleanup when inventory path is not set", func() {
+			dm.cfg.NvidiaNicDriversInventoryPath = ""
+			err := dm.cleanupDriverInventory(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should return error when GetKernelVersion fails", func() {
+			dm.cfg.NvidiaNicDriversInventoryPath = "/inventory"
+			expectedError := errors.New("failed to get kernel version")
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("", expectedError)
+
+			err := dm.cleanupDriverInventory(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to get kernel version"))
+		})
+
+		It("should return nil when inventory directory does not exist", func() {
+			dm.cfg.NvidiaNicDriversInventoryPath = "/inventory"
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.4.0-generic", nil)
+			osMock.EXPECT().ReadDir("/inventory").Return(nil, os.ErrNotExist)
+
+			err := dm.cleanupDriverInventory(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle ReadDir failure", func() {
+			dm.cfg.NvidiaNicDriversInventoryPath = "/inventory"
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.4.0-generic", nil)
+			expectedError := errors.New("readdir failed")
+			osMock.EXPECT().ReadDir("/inventory").Return(nil, expectedError)
+
+			err := dm.cleanupDriverInventory(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to list inventory directory"))
+		})
+
+		It("should cleanup old kernel versions and driver versions", func() {
+			dm.cfg.NvidiaNicDriversInventoryPath = "/inventory"
+			dm.cfg.NvidiaNicDriverVer = "1.0.0"
+			kernelVer := "5.4.0-generic"
+
+			hostMock.EXPECT().GetKernelVersion(ctx).Return(kernelVer, nil)
+
+			// Mock inventory directory listing
+			// Contains:
+			// - 4.15.0-generic (Old kernel, should be removed)
+			// - 5.4.0-generic (Current kernel, should be processed)
+			// - some-file (Not a dir, should be ignored)
+			rootEntries := []os.DirEntry{
+				mockDirEntry{name: "4.15.0-generic", isDir: true},
+				mockDirEntry{name: "5.4.0-generic", isDir: true},
+				mockDirEntry{name: "some-file", isDir: false},
+			}
+			osMock.EXPECT().ReadDir("/inventory").Return(rootEntries, nil)
+
+			// Expect removal of old kernel directory
+			osMock.EXPECT().RemoveAll("/inventory/4.15.0-generic").Return(nil)
+
+			// Mock current kernel directory listing
+			// Contains:
+			// - 0.9.0 (Old driver, should be removed)
+			// - 1.0.0 (Current driver, should be kept)
+			// - 1.0.0.checksum (Current checksum, should be kept)
+			kernelDirEntries := []os.DirEntry{
+				mockDirEntry{name: "0.9.0", isDir: true}, // readDir returns files/dirs, assuming drivers are dirs or files? Code says RemoveAll so it handles both.
+				mockDirEntry{name: "1.0.0", isDir: true},
+				mockDirEntry{name: "1.0.0.checksum", isDir: false},
+			}
+			osMock.EXPECT().ReadDir("/inventory/5.4.0-generic").Return(kernelDirEntries, nil)
+
+			// Expect removal of old driver version
+			osMock.EXPECT().RemoveAll("/inventory/5.4.0-generic/0.9.0").Return(nil)
+
+			// Do NOT expect removal of current kernel directory because items remain (1.0.0, 1.0.0.checksum)
+
+			err := dm.cleanupDriverInventory(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should remove current kernel directory if all items are removed", func() {
+			dm.cfg.NvidiaNicDriversInventoryPath = "/inventory"
+			dm.cfg.NvidiaNicDriverVer = "1.0.0"
+			kernelVer := "5.4.0-generic"
+
+			hostMock.EXPECT().GetKernelVersion(ctx).Return(kernelVer, nil)
+
+			// Mock inventory directory listing
+			rootEntries := []os.DirEntry{
+				mockDirEntry{name: "5.4.0-generic", isDir: true},
+			}
+			osMock.EXPECT().ReadDir("/inventory").Return(rootEntries, nil)
+
+			// Mock current kernel directory listing containing only old versions
+			kernelDirEntries := []os.DirEntry{
+				mockDirEntry{name: "0.9.0", isDir: true},
+			}
+			osMock.EXPECT().ReadDir("/inventory/5.4.0-generic").Return(kernelDirEntries, nil)
+
+			// Expect removal of old driver version
+			osMock.EXPECT().RemoveAll("/inventory/5.4.0-generic/0.9.0").Return(nil)
+
+			// Expect removal of kernel directory since all items were removed
+			osMock.EXPECT().RemoveAll("/inventory/5.4.0-generic").Return(nil)
+
+			err := dm.cleanupDriverInventory(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle ReadDir failure for kernel directory gracefully", func() {
+			dm.cfg.NvidiaNicDriversInventoryPath = "/inventory"
+			kernelVer := "5.4.0-generic"
+
+			hostMock.EXPECT().GetKernelVersion(ctx).Return(kernelVer, nil)
+
+			rootEntries := []os.DirEntry{
+				mockDirEntry{name: "5.4.0-generic", isDir: true},
+			}
+			osMock.EXPECT().ReadDir("/inventory").Return(rootEntries, nil)
+
+			// Mock failure reading the kernel directory
+			osMock.EXPECT().ReadDir("/inventory/5.4.0-generic").Return(nil, errors.New("readdir failed"))
+
+			// Should continue without error
+			err := dm.cleanupDriverInventory(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle RemoveAll failure gracefully", func() {
+			dm.cfg.NvidiaNicDriversInventoryPath = "/inventory"
+			dm.cfg.NvidiaNicDriverVer = "1.0.0"
+			kernelVer := "5.4.0-generic"
+
+			hostMock.EXPECT().GetKernelVersion(ctx).Return(kernelVer, nil)
+
+			rootEntries := []os.DirEntry{
+				mockDirEntry{name: "4.15.0-generic", isDir: true}, // Old kernel
+				mockDirEntry{name: "5.4.0-generic", isDir: true},
+			}
+			osMock.EXPECT().ReadDir("/inventory").Return(rootEntries, nil)
+
+			// Expect removal of old kernel directory to fail
+			osMock.EXPECT().RemoveAll("/inventory/4.15.0-generic").Return(errors.New("remove failed"))
+
+			// Should continue to process other directories
+			kernelDirEntries := []os.DirEntry{
+				mockDirEntry{name: "0.9.0", isDir: true},
+			}
+			osMock.EXPECT().ReadDir("/inventory/5.4.0-generic").Return(kernelDirEntries, nil)
+			osMock.EXPECT().RemoveAll("/inventory/5.4.0-generic/0.9.0").Return(nil)
+			osMock.EXPECT().RemoveAll("/inventory/5.4.0-generic").Return(nil)
+
+			err := dm.cleanupDriverInventory(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
 })
+
+// Helper struct for mocking os.DirEntry
+type mockDirEntry struct {
+	name  string
+	isDir bool
+}
+
+func (m mockDirEntry) Name() string               { return m.name }
+func (m mockDirEntry) IsDir() bool                { return m.isDir }
+func (m mockDirEntry) Type() os.FileMode          { return 0 }
+func (m mockDirEntry) Info() (os.FileInfo, error) { return nil, nil }
 
 var _ = Describe("Driver OFED Blacklist", func() {
 	Context("generateOfedModulesBlacklist", func() {
