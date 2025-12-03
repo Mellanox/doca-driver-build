@@ -65,6 +65,7 @@ var _ = Describe("Entrypoint", func() {
 				config: config.Config{
 					LockFilePath:                  "/tmp/.lock",
 					RestoreDriverOnPodTermination: true,
+					CreateIfnamesUdev:             true,
 				},
 				containerMode: constants.DriverContainerModeSources,
 				drivermgr:     driverMock,
@@ -82,13 +83,15 @@ var _ = Describe("Entrypoint", func() {
 			osMock.On("MkdirAll", "/tmp", mock.Anything).Return(nil).Once()
 			hostMock.On("LsMod", mock.Anything).Return(nil, nil).Once()
 			udevMock.On("RemoveRules", mock.Anything).Return(nil).Times(2)
+			udevMock.On("CreateRules", mock.Anything).Return(nil).Once() // For udev rules creation
 
 			readinessMock.On("Clear", mock.Anything).Return(nil).Times(2)
 			readinessMock.On("Set", mock.Anything).Return(nil).Run(
 				func(args mock.Arguments) { signalCH <- syscall.SIGTERM }).Once()
 
-			netconfigMock.On("Save", mock.Anything).Return(nil).Times(2)
+			netconfigMock.On("Save", mock.Anything).Return(nil).Once() // Only in preStart
 			netconfigMock.On("Restore", mock.Anything).Return(nil).Times(2)
+			netconfigMock.On("DevicesUseNewNamingScheme", mock.Anything).Return(false, nil).Once() // For udev rules creation
 
 			driverMock.On("PreStart", mock.Anything).Return(nil).Once()
 			driverMock.On("Build", mock.Anything).Return(nil).Once()
@@ -112,11 +115,13 @@ var _ = Describe("Entrypoint", func() {
 			osMock.On("MkdirAll", "/tmp", mock.Anything).Return(nil).Once()
 			hostMock.On("LsMod", mock.Anything).Return(nil, nil).Once()
 			udevMock.On("RemoveRules", mock.Anything).Return(nil).Times(2)
+			udevMock.On("CreateRules", mock.Anything).Return(nil).Once() // For udev rules creation
 
 			readinessMock.On("Clear", mock.Anything).Return(nil).Times(2)
 
-			netconfigMock.On("Save", mock.Anything).Return(nil).Times(2)
+			netconfigMock.On("Save", mock.Anything).Return(nil).Once() // Only in preStart
 			netconfigMock.On("Restore", mock.Anything).Return(nil).Times(1)
+			netconfigMock.On("DevicesUseNewNamingScheme", mock.Anything).Return(false, nil).Once() // For udev rules creation
 
 			driverMock.On("PreStart", mock.Anything).Return(nil).Once()
 			driverMock.On("Build", mock.Anything).Return(nil).Once()
@@ -131,13 +136,15 @@ var _ = Describe("Entrypoint", func() {
 			osMock.On("MkdirAll", "/tmp", mock.Anything).Return(nil).Once()
 			hostMock.On("LsMod", mock.Anything).Return(nil, nil).Once()
 			udevMock.On("RemoveRules", mock.Anything).Return(nil).Times(2)
+			udevMock.On("CreateRules", mock.Anything).Return(nil).Once() // For udev rules creation
 
 			readinessMock.On("Clear", mock.Anything).Return(nil).Times(2)
 			readinessMock.On("Set", mock.Anything).Return(nil).Run(
 				func(args mock.Arguments) { signalCH <- syscall.SIGTERM }).Once()
 
-			netconfigMock.On("Save", mock.Anything).Return(nil).Times(2)
+			netconfigMock.On("Save", mock.Anything).Return(nil).Once() // Only in preStart
 			netconfigMock.On("Restore", mock.Anything).Return(nil).Times(1)
+			netconfigMock.On("DevicesUseNewNamingScheme", mock.Anything).Return(false, nil).Once() // For udev rules creation
 
 			driverMock.On("PreStart", mock.Anything).Return(nil).Once()
 			driverMock.On("Build", mock.Anything).Return(nil).Once()

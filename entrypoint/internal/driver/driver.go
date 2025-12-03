@@ -76,6 +76,8 @@ type driverMgr struct {
 	containerMode   string
 	newDriverLoaded bool
 
+	driverBuildIncomplete bool
+
 	cmd  cmd.Interface
 	host host.Interface
 	os   wrappers.OSWrapper
@@ -166,6 +168,9 @@ func (d *driverMgr) Build(ctx context.Context) error {
 	if !shouldBuild {
 		log.Info("Skipping driver build, reusing previously built packages", "kernel", kernelVersion)
 	} else {
+		// Mark build as incomplete at the start
+		d.driverBuildIncomplete = true
+
 		// Create inventory directory
 		if err := d.createInventoryDirectory(ctx, inventoryPath); err != nil {
 			return fmt.Errorf("failed to create inventory directory: %w", err)
@@ -199,6 +204,9 @@ func (d *driverMgr) Build(ctx context.Context) error {
 			log.V(1).Info("Failed to fix source link", "error", err)
 			// Non-fatal error, continue
 		}
+
+		// Mark build as complete after successful build
+		d.driverBuildIncomplete = false
 
 		log.Info("Driver build completed successfully", "kernel", kernelVersion, "inventory", inventoryPath)
 	}
@@ -331,6 +339,33 @@ func (d *driverMgr) Clear(ctx context.Context) error {
 		log.Error(err, "Failed to unmount rootfs")
 	}
 
+	// Remove driver packages temporary directory if not reused or build incomplete
+	isReusable := d.cfg.NvidiaNicDriversInventoryPath != ""
+	shouldCleanup := !isReusable || d.driverBuildIncomplete
+
+	if shouldCleanup {
+		// Get kernel version to compute inventory path
+		kernelVersion, err := d.host.GetKernelVersion(ctx)
+		if err != nil {
+			log.V(1).Info("Failed to get kernel version for cleanup", "error", err)
+			return nil // Non-fatal, skip cleanup
+		}
+
+		// Re-calculate the inventory path using checkDriverInventory
+		_, inventoryPath, err := d.checkDriverInventory(ctx, kernelVersion)
+		if err != nil {
+			log.V(1).Info("Failed to check inventory for cleanup", "error", err)
+			return nil // Non-fatal, skip cleanup
+		}
+
+		if inventoryPath != "" {
+			log.Info("Removing driver packages temporary directory", "path", inventoryPath)
+			if err := d.os.RemoveAll(inventoryPath); err != nil {
+				log.Error(err, "Failed to remove driver inventory")
+				return err
+			}
+		}
+	}
 	return nil
 }
 
