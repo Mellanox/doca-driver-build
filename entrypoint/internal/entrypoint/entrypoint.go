@@ -217,9 +217,6 @@ func (e *entrypoint) stop(ctx context.Context) error {
 	}
 	if e.config.RestoreDriverOnPodTermination {
 		e.log.Info("restore inbox driver")
-		if err := e.netconfig.Save(ctx); err != nil {
-			return err
-		}
 		reloaded, err := e.drivermgr.Unload(ctx)
 		if err != nil {
 			return err
@@ -243,7 +240,12 @@ func (e *entrypoint) commonCleanup(ctx context.Context) error {
 	if err := e.readiness.Clear(ctx); err != nil {
 		return err
 	}
-	return e.udev.RemoveRules(ctx)
+	if e.config.CreateIfnamesUdev {
+		if err := e.udev.RemoveRules(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // createUDEVRulesIfRequired generates udev rules to preserve the previous naming scheme for NVIDIA devices,

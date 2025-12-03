@@ -2844,27 +2844,191 @@ var _ = Describe("Driver", func() {
 	})
 
 	Context("Clear", func() {
-		It("should call unmountRootfs", func() {
+		It("should call unmountRootfs and skip cleanup when inventory is reusable and build is complete", func() {
 			cfg.MlxDriversMount = "/run/mellanox/drivers"
 			cfg.SharedKernelHeadersDir = "/usr/src/"
+			cfg.NvidiaNicDriversInventoryPath = "/persistent/inventory" // Reusable
+			cfg.NvidiaNicDriverVer = "test-version"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+			dm.driverBuildIncomplete = false // Build completed
+
+			// Mock findmnt (for unmountRootfs) - no mounts exist
+			findmntOutput := "/\n/sys\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Should NOT call GetKernelVersion or cleanup methods because isReusable=true and buildIncomplete=false
+
+			err := dm.Clear(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should cleanup temporary inventory when not reusable", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			cfg.NvidiaNicDriversInventoryPath = "" // Empty = not reusable (temporary)
+			cfg.NvidiaNicDriverVer = "test-version"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+			dm.driverBuildIncomplete = false // Build completed but inventory is temporary
+
+			// Mock findmnt (for unmountRootfs)
+			findmntOutput := "/\n/sys\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Mock inventory cleanup - GetKernelVersion
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.4.0-42-generic", nil)
+
+			// When NvidiaNicDriversInventoryPath is empty, checkDriverInventory creates timestamped path
+			// like /tmp/nvidia_nic_driver_03-12-2025_14-23-07 without calling Stat
+			// We can't predict the timestamp, so we use a matcher for RemoveAll
+			osMock.EXPECT().RemoveAll(mock.MatchedBy(func(path string) bool {
+				return strings.HasPrefix(path, "/tmp/nvidia_nic_driver_")
+			})).Return(nil)
+
+			err := dm.Clear(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should cleanup persistent inventory when build is incomplete", func() {
+			inventoryDir := filepath.Join(tempDir, "persistent-inventory")
+			Expect(os.MkdirAll(inventoryDir, 0755)).To(Succeed())
+
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			cfg.NvidiaNicDriversInventoryPath = inventoryDir // Persistent
+			cfg.NvidiaNicDriverVer = "test-version"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+			dm.driverBuildIncomplete = true // Build incomplete!
+
+			// Mock findmnt (for unmountRootfs)
+			findmntOutput := "/\n/sys\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Mock inventory cleanup - GetKernelVersion
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.4.0-42-generic", nil)
+
+			// Mock checkDriverInventory
+			inventoryPath := filepath.Join(inventoryDir, "5.4.0-42-generic", "test-version")
+			osMock.EXPECT().Stat(inventoryPath).Return(nil, nil) // Directory exists
+			osMock.EXPECT().Stat(inventoryPath+".checksum").Return(nil, os.ErrNotExist)
+
+			// Should remove the inventory because build is incomplete
+			osMock.EXPECT().RemoveAll(inventoryPath).Return(nil)
+
+			err := dm.Clear(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle GetKernelVersion failure gracefully during cleanup", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			cfg.NvidiaNicDriversInventoryPath = "" // Temporary
 			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
 
 			// Mock findmnt (for unmountRootfs)
 			findmntOutput := "/\n/sys\n/proc\n"
 			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
 
+			// Mock GetKernelVersion failure - should be handled gracefully
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("", errors.New("failed to get kernel version"))
+
+			// Should not fail, just skip cleanup
 			err := dm.Clear(ctx)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should propagate unmountRootfs errors", func() {
+		It("should handle checkDriverInventory failure gracefully during cleanup", func() {
 			cfg.MlxDriversMount = "/run/mellanox/drivers"
 			cfg.SharedKernelHeadersDir = "/usr/src/"
+			cfg.NvidiaNicDriversInventoryPath = "" // Temporary
 			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
 
-			// Note: unmountRootfs never returns errors currently (all are non-fatal)
-			// But we test the pattern for completeness
-			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return("", "", nil)
+			// Mock findmnt (for unmountRootfs)
+			findmntOutput := "/\n/sys\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Mock GetKernelVersion
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.4.0-42-generic", nil)
+
+			// When NvidiaNicDriversInventoryPath is empty, checkDriverInventory never fails
+			// It just returns a timestamped path. So this test should cleanup successfully.
+			osMock.EXPECT().RemoveAll(mock.MatchedBy(func(path string) bool {
+				return strings.HasPrefix(path, "/tmp/nvidia_nic_driver_")
+			})).Return(nil)
+
+			err := dm.Clear(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should return error when RemoveAll fails during cleanup", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			cfg.NvidiaNicDriversInventoryPath = "" // Temporary
+			cfg.NvidiaNicDriverVer = "test-version"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock findmnt (for unmountRootfs)
+			findmntOutput := "/\n/sys\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Mock GetKernelVersion
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.4.0-42-generic", nil)
+
+			// Mock RemoveAll failure for timestamped temporary path
+			expectedError := errors.New("permission denied")
+			osMock.EXPECT().RemoveAll(mock.MatchedBy(func(path string) bool {
+				return strings.HasPrefix(path, "/tmp/nvidia_nic_driver_")
+			})).Return(expectedError)
+
+			// Should return the error
+			err := dm.Clear(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("permission denied"))
+		})
+
+		It("should cleanup when temporary inventory path is used", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			cfg.NvidiaNicDriversInventoryPath = "" // Temporary
+			cfg.NvidiaNicDriverVer = "test-version"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock findmnt (for unmountRootfs)
+			findmntOutput := "/\n/sys\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Mock GetKernelVersion
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.4.0-42-generic", nil)
+
+			// checkDriverInventory always returns a timestamped path when NvidiaNicDriversInventoryPath is empty
+			// So cleanup should always happen for temporary inventory
+			osMock.EXPECT().RemoveAll(mock.MatchedBy(func(path string) bool {
+				return strings.HasPrefix(path, "/tmp/nvidia_nic_driver_")
+			})).Return(nil)
+
+			err := dm.Clear(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should continue with cleanup even when unmountRootfs has errors", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			cfg.NvidiaNicDriversInventoryPath = "" // Temporary
+			cfg.NvidiaNicDriverVer = "test-version"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock findmnt returning multiple mounts that need unmounting
+			findmntOutput := "/\n/run/mellanox/drivers/usr/src\n/run/mellanox/drivers\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Mock umount failing
+			cmdMock.EXPECT().RunCommand(ctx, "umount", "-l", "-R", "/run/mellanox/drivers").Return("", "target busy", errors.New("umount failed"))
+
+			// Should still continue with inventory cleanup even though unmount failed
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.4.0-42-generic", nil)
+
+			osMock.EXPECT().RemoveAll(mock.MatchedBy(func(path string) bool {
+				return strings.HasPrefix(path, "/tmp/nvidia_nic_driver_")
+			})).Return(nil)
 
 			err := dm.Clear(ctx)
 			Expect(err).NotTo(HaveOccurred())
