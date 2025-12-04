@@ -421,6 +421,16 @@ func (n *netconfig) restoreSingleVFConfig(ctx context.Context, devName string, v
 
 // setIBGUIDs sets the GUIDs for an IB VF
 func (n *netconfig) setIBGUIDs(ctx context.Context, devName string, vfIndex int, guid string) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Check for invalid GUID (all zeros) - matches bash script line 880
+	// Do not set invalid GUID as it will cause issues
+	if guid == "00:00:00:00:00:00:00:00" {
+		log.V(1).Info("VF GUID not set (00:00:00:00:00:00:00:00), skipping",
+			"device", devName, "vf_index", vfIndex)
+		return nil
+	}
+
 	// Set port GUID: ip link set {dev_name} vf {vf_index} port_guid {guid}
 	_, stderr, err := n.cmd.RunCommand(ctx, "ip", "link", "set", devName, "vf", fmt.Sprintf("%d", vfIndex), "port_guid", guid)
 	if err != nil {
