@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/gofrs/flock"
@@ -84,6 +85,7 @@ type entrypoint struct {
 func (e *entrypoint) run(signalCh chan os.Signal) error {
 	unlock, err := e.lock()
 	if err != nil {
+		e.debugSleepOnExit(err)
 		return err
 	}
 	defer unlock()
@@ -97,6 +99,7 @@ func (e *entrypoint) run(signalCh chan os.Signal) error {
 	e.log.Info("NVIDIA driver container exec preStart")
 	if err := e.preStart(startCtx); err != nil {
 		e.log.Error(err, "exec preStart failed")
+		e.debugSleepOnExit(err)
 		return err
 	}
 	e.log.Info("NVIDIA driver container exec start")
@@ -118,6 +121,7 @@ func (e *entrypoint) run(signalCh chan os.Signal) error {
 	if startErr != nil || stopErr != nil {
 		err := fmt.Errorf("startErr: %v, stopErr %v", startErr, stopErr)
 		e.log.Error(err, "exec failed")
+		e.debugSleepOnExit(err)
 		return err
 	}
 	e.log.Info("NVIDIA driver container finished")
@@ -304,6 +308,21 @@ func (e *entrypoint) handleKernelModules(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// debugSleepOnExit implements the debug sleep functionality from bash exit_entryp function.
+// When ENTRYPOINT_DEBUG is enabled, it sleeps for DEBUG_SLEEP_SEC_ON_EXIT seconds before
+// returning from a failed operation to allow debugging.
+func (e *entrypoint) debugSleepOnExit(err error) {
+	if !e.config.EntrypointDebug {
+		return
+	}
+
+	e.log.V(1).Info("Entrypoint exit request caught, sleeping for debug",
+		"sleep_sec", e.config.DebugSleepSecOnExit,
+		"error", err)
+
+	time.Sleep(time.Duration(e.config.DebugSleepSecOnExit) * time.Second)
 }
 
 type ctxData struct {

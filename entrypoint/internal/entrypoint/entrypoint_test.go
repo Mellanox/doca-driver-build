@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"syscall"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -152,6 +153,32 @@ var _ = Describe("Entrypoint", func() {
 			driverMock.On("Unload", mock.Anything).Return(false, fmt.Errorf("test")).Once()
 
 			Expect(e.run(signalCH)).To(HaveOccurred())
+		})
+	})
+
+	Context("debugSleepOnExit", func() {
+		var e *entrypoint
+
+		BeforeEach(func() {
+			e = &entrypoint{
+				log:    logr.Discard(),
+				config: config.Config{},
+			}
+		})
+
+		It("should not sleep when EntrypointDebug is false", func() {
+			e.config.EntrypointDebug = false
+			start := time.Now()
+			e.debugSleepOnExit(fmt.Errorf("test error"))
+			Expect(time.Since(start)).To(BeNumerically("<", 100*time.Millisecond))
+		})
+
+		It("should sleep when EntrypointDebug is true", func() {
+			e.config.EntrypointDebug = true
+			e.config.DebugSleepSecOnExit = 1
+			start := time.Now()
+			e.debugSleepOnExit(fmt.Errorf("test error"))
+			Expect(time.Since(start)).To(BeNumerically(">=", 1*time.Second))
 		})
 	})
 })
