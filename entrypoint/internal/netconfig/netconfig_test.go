@@ -418,6 +418,80 @@ var _ = Describe("Netconfig", func() {
 				Expect(result).To(Equal(""))
 			})
 		})
+
+		Context("setIBGUIDs", func() {
+			It("should skip invalid all-zero GUID", func() {
+				// Test that invalid GUID (00:00:00:00:00:00:00:00) is skipped
+				// and no ip link commands are called
+				err := nc.setIBGUIDs(context.Background(), "eth0", 0, "00:00:00:00:00:00:00:00")
+				Expect(err).NotTo(HaveOccurred())
+
+				// Verify no commands were called
+				cmdMock.AssertNotCalled(GinkgoT(), "RunCommand")
+			})
+
+			It("should set valid GUID successfully", func() {
+				validGUID := "0c:42:a1:03:00:16:05:4c"
+
+				// Mock successful port_guid command
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "eth0", "vf", "0", "port_guid", validGUID).
+					Return("", "", nil).Once()
+
+				// Mock successful node_guid command
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "eth0", "vf", "0", "node_guid", validGUID).
+					Return("", "", nil).Once()
+
+				err := nc.setIBGUIDs(context.Background(), "eth0", 0, validGUID)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Verify both commands were called
+				cmdMock.AssertExpectations(GinkgoT())
+			})
+
+			It("should return error when port_guid command fails", func() {
+				validGUID := "0c:42:a1:03:00:16:05:4c"
+
+				// Mock failed port_guid command
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "eth0", "vf", "0", "port_guid", validGUID).
+					Return("", "error setting port_guid", fmt.Errorf("command failed")).Once()
+
+				err := nc.setIBGUIDs(context.Background(), "eth0", 0, validGUID)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("failed to set port GUID"))
+			})
+
+			It("should return error when node_guid command fails", func() {
+				validGUID := "0c:42:a1:03:00:16:05:4c"
+
+				// Mock successful port_guid command
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "eth0", "vf", "0", "port_guid", validGUID).
+					Return("", "", nil).Once()
+
+				// Mock failed node_guid command
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "eth0", "vf", "0", "node_guid", validGUID).
+					Return("", "error setting node_guid", fmt.Errorf("command failed")).Once()
+
+				err := nc.setIBGUIDs(context.Background(), "eth0", 0, validGUID)
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("failed to set node GUID"))
+			})
+
+			It("should handle different VF indices correctly", func() {
+				validGUID := "0c:42:a1:03:00:16:05:4d"
+				vfIndex := 3
+
+				// Mock successful commands for VF index 3
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "eth0", "vf", "3", "port_guid", validGUID).
+					Return("", "", nil).Once()
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "eth0", "vf", "3", "node_guid", validGUID).
+					Return("", "", nil).Once()
+
+				err := nc.setIBGUIDs(context.Background(), "eth0", vfIndex, validGUID)
+				Expect(err).NotTo(HaveOccurred())
+
+				cmdMock.AssertExpectations(GinkgoT())
+			})
+		})
 	})
 
 	Context("Switchdev Flow", func() {
