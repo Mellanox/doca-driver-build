@@ -53,6 +53,7 @@ type Config struct {
 	EntrypointDebug     bool   `env:"ENTRYPOINT_DEBUG"`
 	DebugLogFile        string `env:"DEBUG_LOG_FILE"          envDefault:"/tmp/entrypoint_debug_cmds.log"`
 	DebugSleepSecOnExit int    `env:"DEBUG_SLEEP_SEC_ON_EXIT" envDefault:"300"`
+	BindDelaySec        int    `env:"BIND_DELAY_SEC"          envDefault:"4"`
 }
 
 // GetConfig parses environment variables and returns a Config struct.

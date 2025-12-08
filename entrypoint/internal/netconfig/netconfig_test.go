@@ -58,7 +58,7 @@ var _ = Describe("Netconfig", func() {
 			sriovnetMock := sriovnetMockPkg.NewLib(GinkgoT())
 
 			netlinkMock := netlinkMockPkg.NewLib(GinkgoT())
-			netconfig := New(cmdMock, osMock, hostMock, sriovnetMock, netlinkMock)
+			netconfig := New(cmdMock, osMock, hostMock, sriovnetMock, netlinkMock, 4)
 			Expect(netconfig).NotTo(BeNil())
 		})
 	})
@@ -80,7 +80,7 @@ var _ = Describe("Netconfig", func() {
 			hostMock = hostMockPkg.NewInterface(GinkgoT())
 			sriovnetMock = sriovnetMockPkg.NewLib(GinkgoT())
 			netlinkMock = netlinkMockPkg.NewLib(GinkgoT())
-			nc = New(cmdMock, osMock, hostMock, sriovnetMock, netlinkMock).(*netconfig)
+			nc = New(cmdMock, osMock, hostMock, sriovnetMock, netlinkMock, 4).(*netconfig)
 			ctx = context.Background()
 		})
 
@@ -198,7 +198,7 @@ var _ = Describe("Netconfig", func() {
 			hostMock = hostMockPkg.NewInterface(GinkgoT())
 			sriovnetMock = sriovnetMockPkg.NewLib(GinkgoT())
 			netlinkMock = netlinkMockPkg.NewLib(GinkgoT())
-			nc = New(cmdMock, osMock, hostMock, sriovnetMock, netlinkMock).(*netconfig)
+			nc = New(cmdMock, osMock, hostMock, sriovnetMock, netlinkMock, 4).(*netconfig)
 			ctx = context.Background()
 		})
 
@@ -240,7 +240,7 @@ var _ = Describe("Netconfig", func() {
 			hostMock = hostMockPkg.NewInterface(GinkgoT())
 			sriovnetMock = sriovnetMockPkg.NewLib(GinkgoT())
 			netlinkMock := netlinkMockPkg.NewLib(GinkgoT())
-			nc = New(cmdMock, osMock, hostMock, sriovnetMock, netlinkMock).(*netconfig)
+			nc = New(cmdMock, osMock, hostMock, sriovnetMock, netlinkMock, 4).(*netconfig)
 		})
 
 		Context("getCurrentDeviceName", func() {
@@ -511,7 +511,7 @@ var _ = Describe("Netconfig", func() {
 			hostMock = hostMockPkg.NewInterface(GinkgoT())
 			sriovnetMock = sriovnetMockPkg.NewLib(GinkgoT())
 			netlinkMock = netlinkMockPkg.NewLib(GinkgoT())
-			nc = New(cmdMock, osMock, hostMock, sriovnetMock, netlinkMock).(*netconfig)
+			nc = New(cmdMock, osMock, hostMock, sriovnetMock, netlinkMock, 4).(*netconfig)
 			ctx = context.Background()
 		})
 
@@ -660,7 +660,7 @@ var _ = Describe("Netconfig", func() {
 			hostMock = hostMockPkg.NewInterface(GinkgoT())
 			sriovnetMock = sriovnetMockPkg.NewLib(GinkgoT())
 			netlinkMock = netlinkMockPkg.NewLib(GinkgoT())
-			nc = New(cmdMock, osMock, hostMock, sriovnetMock, netlinkMock).(*netconfig)
+			nc = New(cmdMock, osMock, hostMock, sriovnetMock, netlinkMock, 4).(*netconfig)
 			ctx = context.Background()
 		})
 		It("should return true when device uses new naming scheme (np suffix)", func() {

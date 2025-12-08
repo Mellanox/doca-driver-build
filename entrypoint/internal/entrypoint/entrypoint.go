@@ -59,7 +59,7 @@ func Run(signalCh chan os.Signal, log logr.Logger, containerMode string, cfg con
 		host:          hostHelper,
 		cmd:           cmdHelper,
 		os:            osWrapper,
-		netconfig:     netconfig.New(cmdHelper, osWrapper, hostHelper, sriovnet.New(), netlink.New()),
+		netconfig:     netconfig.New(cmdHelper, osWrapper, hostHelper, sriovnet.New(), netlink.New(), cfg.BindDelaySec),
 		drivermgr:     driver.New(containerMode, cfg, cmdHelper, hostHelper, osWrapper),
 	}
 	return m.run(signalCh)

@@ -67,6 +67,7 @@ func New(
 	hostHelper host.Interface,
 	sriovnetLib sriovnet.Lib,
 	netlinkLib netlink.Lib,
+	bindDelaySec int,
 ) Interface {
 	return &netconfig{
 		cmd:             cmdHelper,
@@ -75,6 +76,7 @@ func New(
 		sriovnetLib:     sriovnetLib,
 		netlinkLib:      netlinkLib,
 		mellanoxDevices: make(map[string]*MellanoxDevice),
+		bindDelaySec:    bindDelaySec,
 	}
 }
 
@@ -144,6 +146,7 @@ type netconfig struct {
 
 	// In-memory storage - Mellanox device information
 	mellanoxDevices map[string]*MellanoxDevice
+	bindDelaySec    int
 }
 
 // Save discovers and stores the current SRIOV configuration
@@ -255,6 +258,9 @@ func (n *netconfig) restoreDeviceConfig(ctx context.Context, devName string, dev
 		log.Error(err, "Failed to create VFs", "device", currentDevName, "vfs", device.PfNumVfs)
 		return err
 	}
+
+	// Sleep to wait until NIC device is initialized and udev rules are applied (matches bash script)
+	time.Sleep(time.Duration(n.bindDelaySec) * time.Second)
 
 	// Restore VF configurations (but don't rebind VFs if in switchdev mode)
 	if err := n.restoreVFConfigurations(ctx, currentDevName, device, device.EswitchMode); err != nil {
@@ -405,7 +411,7 @@ func (n *netconfig) restoreSingleVFConfig(ctx context.Context, devName string, v
 		}
 
 		// Wait for bind delay (matches bash script)
-		time.Sleep(3 * time.Second) // BIND_DELAY_SEC equivalent
+		time.Sleep(time.Duration(n.bindDelaySec) * time.Second)
 
 		// Restore VF MTU and admin state after rebind
 		if err := n.restoreVFState(vf); err != nil {
@@ -511,7 +517,7 @@ func (n *netconfig) rebindVFsInSwitchdevMode(ctx context.Context, device *Mellan
 		}
 
 		// Wait for bind delay (matches bash script)
-		time.Sleep(3 * time.Second) // BIND_DELAY_SEC equivalent
+		time.Sleep(time.Duration(n.bindDelaySec) * time.Second)
 
 		// Restore VF MTU and admin state
 		if err := n.restoreVFState(vf); err != nil {
