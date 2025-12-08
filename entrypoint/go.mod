@@ -35,7 +35,7 @@ require (
 require (
 	github.com/caarlos0/env/v11 v11.3.1
 	github.com/go-logr/zapr v1.3.0
-	github.com/onsi/ginkgo/v2 v2.27.2
+	github.com/onsi/ginkgo/v2 v2.27.3
 	github.com/onsi/gomega v1.38.2
 	golang.org/x/sys v0.37.0 // indirect
 )
