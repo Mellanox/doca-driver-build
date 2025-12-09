@@ -31,4 +31,6 @@ const (
 	// Default versions
 	DefaultRHELVersion      = "8.4"
 	DefaultOpenShiftVersion = "4.9"
+
+	InvalidGUID = "00:00:00:00:00:00:00:00"
 )

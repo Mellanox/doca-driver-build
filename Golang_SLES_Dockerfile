@@ -1,15 +1,15 @@
 # Common (multistage) args
-ARG D_OS="ubuntu22.04"
+ARG D_OS="sles15sp2"
 ARG D_ARCH="x86_64"
 ARG D_CONTAINER_VER="0"
 ARG D_DOCA_VERSION="2.9.1"
 ARG D_OFED_VERSION="24.10-1.1.4.0"
-ARG D_KERNEL_VER="5.15.0-25-generic"
+ARG D_KERNEL_VER="5.3.18-22-default"
 ARG D_OFED_SRC_DOWNLOAD_PATH="/run/mellanox/src"
 ARG OFED_SRC_LOCAL_DIR=${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_VERSION}
 
 # Common for build and final clean image of precompiled driver container
-ARG D_BASE_IMAGE="ubuntu:22.04"
+ARG D_BASE_IMAGE="registry.suse.com/suse/sle15:15.5"
 
 ##################################################################
 # Stage: build go binary for entrypoint
@@ -34,7 +34,6 @@ RUN TARGETARCH=${D_ARCH} TARGETOS=linux make build
 # Stage: Minimal base image update and install common requirements
 FROM $D_BASE_IMAGE AS base
 
-ARG D_APT_REMOVE=""
 ARG D_OFED_VERSION
 ARG D_CONTAINER_VER
 ARG D_OFED_SRC_DOWNLOAD_PATH
@@ -43,18 +42,20 @@ ENV NVIDIA_NIC_DRIVER_VER=${D_OFED_VERSION}
 ENV NVIDIA_NIC_CONTAINER_VER=${D_CONTAINER_VER}
 
 WORKDIR /root
+
 RUN set -x && \
-    for source in ${D_APT_REMOVE}; do rm -f /etc/apt/sources.list.d/${source}.list; done && \
 # Perform distro update and install prerequirements
-    apt-get -yq update && \
-    DEBIAN_FRONTEND=noninteractive apt-get -yq upgrade && \
-    DEBIAN_FRONTEND=noninteractive apt-get -yq install apt-utils \
+    zypper --gpg-auto-import-keys ref -s && \
+    zypper --non-interactive update && \
+    zypper --non-interactive install --no-recommends \
 # Driver build / install script requirements
-    perl pciutils kmod lsof python3 dh-python \
+    perl pciutils kmod lsof python3 \
+# dh-python not found
 # Container functional requirements
-    jq iproute2 udev ethtool ca-certificates
+    jq iproute2 udev ethtool awk procps
 
 COPY --from=go_builder /workspace/build/entrypoint /root/entrypoint
+WORKDIR /root
 ADD ./entrypoint.sh /root/entrypoint.sh
 ADD ./loader.sh /root/loader.sh
 
@@ -66,32 +67,28 @@ ENTRYPOINT ["/root/loader.sh"]
 FROM base AS driver-src
 
 # Inherited global args
-ARG D_OS
 ARG D_DOCA_VERSION
 ARG D_OFED_VERSION
 ARG D_OFED_SRC_DOWNLOAD_PATH
 
 # Stage args
 ARG D_OFED_BASE_URL="https://linux.mellanox.com/public/repo/doca/${D_DOCA_VERSION}/SOURCES/mlnx_ofed"
-ARG D_OFED_SRC_TYPE="debian-"
+ARG D_OFED_SRC_TYPE=""
 
 ARG D_OFED_SRC_ARCHIVE="MLNX_OFED_SRC-${D_OFED_SRC_TYPE}${D_OFED_VERSION}.tgz"
 ARG D_OFED_URL_PATH="${D_OFED_BASE_URL}/${D_OFED_SRC_ARCHIVE}"  # although argument name says URL, local `*.tgz` compressed files may also be used (intended for internal use)
+
 ENV NVIDIA_NIC_DRIVER_PATH="${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_VERSION}"
 
 WORKDIR /root
-RUN set -x && \
-    apt-get update
-RUN set -x && \
-    echo $D_OS | grep "ubuntu20.04" || GCC_VER="-12" && \
-# Install prerequirements \
-    DEBIAN_FRONTEND=noninteractive apt-get -yq install curl \
-    dkms make autoconf autotools-dev chrpath automake hostname debhelper gcc$GCC_VER quilt libc6-dev build-essential pkg-config ubuntu-advantage-tools && \
-# Cleanup \
-    apt-get clean autoclean && apt install --reinstall -y ca-certificates && \
-    rm -rf /var/lib/apt/lists/* && update-ca-certificates
 
-RUN echo $D_OS | grep "ubuntu20.04" || ln -fs gcc-12 /usr/bin/gcc  # 'build-essential' installs `gcc`, however (if above ubuntu 20.04) we need `gcc-12`, so we overwrite it with this link
+RUN set -x && \
+    for source in ${D_ZYPPER_REMOVE}; do rm -f /etc/zypp/repos.d/${source}.repo; done && \
+# Perform distro update and install prerequirements
+    zypper --gpg-auto-import-keys ref -s && \
+    zypper --non-interactive update && \
+    zypper --non-interactive install --no-recommends \
+    make autoconf chrpath automake hostname gcc quilt dracut rpm-build sysvinit-tools
 
 # Download NVIDIA NIC driver
 RUN mkdir -p ${D_OFED_SRC_DOWNLOAD_PATH}
@@ -119,47 +116,69 @@ FROM driver-src AS driver-builder
 ARG D_OS
 ARG D_KERNEL_VER
 ARG OFED_SRC_LOCAL_DIR
-# Additional local arg (for precompiled CI)
-ARG D_BUILD_EXTRA_ARGS
 
-# Driver build manadatory packages
+# Driver build mandatory packages
 RUN set -x && \
-    apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get -yq install linux-image-${D_KERNEL_VER} linux-headers-${D_KERNEL_VER}
-
-# Build driver
+# MOFED installation requirements
+    zypper --non-interactive install --no-recommends autoconf gcc make rpm-build dracut
 RUN set -x && \
-    ${OFED_SRC_LOCAL_DIR}/install.pl --without-depcheck --distro ${D_OS} --without-dkms --kernel ${D_KERNEL_VER} --kernel-only --build-only --copy-ifnames-udev --with-mlnx-tools --without-knem-modules --without-srp-modules --without-kernel-mft-modules --without-iser-modules --without-isert-modules ${D_BUILD_EXTRA_ARGS}
+    zypper search -s kernel-default-devel
 
+# Remove '-default' suffix if it exists
+RUN CLEANED_KERNEL_VER=${D_KERNEL_VER%-default} && \
+    echo "Installing kernel-default-devel=${CLEANED_KERNEL_VER}" && \
+# Install the kernel source
+    zypper --non-interactive install --no-recommends kernel-default-devel=${CLEANED_KERNEL_VER}
+
+RUN ls -l /lib/modules
+
+# Build driver --distro ${D_OS}
+RUN set -x && \
+    ${OFED_SRC_LOCAL_DIR}/install.pl -vvv --distro ${D_OS} --kernel-sources /lib/modules/${D_KERNEL_VER}/build --without-depcheck  --kernel ${D_KERNEL_VER} --kernel-only --build-only --copy-ifnames-udev --with-mlnx-tools --without-knem-modules --without-srp-modules --without-kernel-mft-modules --without-iser-modules --without-isert-modules
+RUN ls -l ${OFED_SRC_LOCAL_DIR}/RPMS/*/x86_64/
 ###################################
 # Stage: Install precompiled driver
 
 FROM base AS precompiled
 
 # Inherited global args
-ARG D_OS
 ARG D_ARCH
 ARG D_KERNEL_VER
+ARG D_OFED_VERSION
+ARG D_CONTAINER_VER
 ARG OFED_SRC_LOCAL_DIR
 
+ENV NVIDIA_NIC_DRIVER_VER=${D_OFED_VERSION}
 ENV NVIDIA_NIC_DRIVER_PATH=""
+ENV NVIDIA_NIC_CONTAINER_VER=${D_CONTAINER_VER}
+
+ENV NVIDIA_NIC_DRIVER_PATH=""
+COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/RPMS/sles-release-*/${D_ARCH}/*.rpm /root/
+
+WORKDIR /root/
+RUN set -x && \
+    rpm -ivh --nodeps \
+    ./mlnx-nfsrdma-*.rpm \
+    ./mlnx-nvme-*.rpm \
+    ./mlnx-ofa_kernel-*.rpm \
+    ./mlnx-tools-*.rpm
 
 RUN set -x && \
-    apt-get install -y lsb-release && \
-    test -n "${D_KERNEL_VER}" && apt-get install -y linux-modules-extra-${D_KERNEL_VER} || true  # only install this package when kernel variable defined
-# Cleanup
-RUN set -x && \
-    apt-get clean autoclean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install driver
-COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/DEBS/${D_OS}/*/*.deb /root/
-
-RUN apt-get install -y /root/*.deb
+    zypper --non-interactive install --no-recommends \
+    # MOFED functional requirements
+    make autoconf chrpath automake hostname gcc quilt dracut rpm-build sysvinit-tools \
+    # Container functional requirements
+    jq kmod procps
 
 # Prevent modprobe from giving a WARNING about missing files
 RUN touch /lib/modules/${D_KERNEL_VER}/modules.order /lib/modules/${D_KERNEL_VER}/modules.builtin && \
 # Introduce installed kernel modules
     depmod ${D_KERNEL_VER}
 
+WORKDIR /
+ADD ./entrypoint.sh /root/entrypoint.sh
+ADD ./dtk_nic_driver_build.sh /root/dtk_nic_driver_build.sh
+
+ENTRYPOINT ["/root/loader.sh"]
 CMD ["precompiled"]
+

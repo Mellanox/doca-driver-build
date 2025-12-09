@@ -24,15 +24,18 @@ import (
 // Config contains configuration for the entrypoint.
 type Config struct {
 	// public API
-	UnloadStorageModules          bool `env:"UNLOAD_STORAGE_MODULES"`
-	CreateIfnamesUdev             bool `env:"CREATE_IFNAMES_UDEV"`
-	EnableNfsRdma                 bool `env:"ENABLE_NFSRDMA"`
-	RestoreDriverOnPodTermination bool `env:"RESTORE_DRIVER_ON_POD_TERMINATION" envDefault:"false"`
+	UnloadStorageModules          bool   `env:"UNLOAD_STORAGE_MODULES"`
+	CreateIfnamesUdev             bool   `env:"CREATE_IFNAMES_UDEV"`
+	EnableNfsRdma                 bool   `env:"ENABLE_NFSRDMA"`
+	RestoreDriverOnPodTermination bool   `env:"RESTORE_DRIVER_ON_POD_TERMINATION" envDefault:"false"`
+	UbuntuProToken                string `env:"UBUNTU_PRO_TOKEN"`
 
 	// driver manager advanced settings
-	DriverReadyPath  string `env:"DRIVER_READY_PATH"   envDefault:"/run/mellanox/drivers/.driver-ready"`
-	MlxUdevRulesFile string `env:"MLX_UDEV_RULES_FILE" envDefault:"/host/etc/udev/rules.d/77-mlnx-net-names.rules"`
-	LockFilePath     string `env:"LOCK_FILE_PATH"      envDefault:"/run/mellanox/drivers/.lock"`
+	DriverReadyPath        string `env:"DRIVER_READY_PATH"         envDefault:"/run/mellanox/drivers/.driver-ready"`
+	MlxUdevRulesFile       string `env:"MLX_UDEV_RULES_FILE"       envDefault:"/host/etc/udev/rules.d/77-mlnx-net-names.rules"`
+	LockFilePath           string `env:"LOCK_FILE_PATH"            envDefault:"/run/mellanox/drivers/.lock"`
+	MlxDriversMount        string `env:"MLX_DRIVERS_MOUNT"         envDefault:"/run/mellanox/drivers"`
+	SharedKernelHeadersDir string `env:"SHARED_KERNEL_HEADERS_DIR" envDefault:"/usr/src/"`
 
 	NvidiaNicDriverVer    string `env:"NVIDIA_NIC_DRIVER_VER,required,notEmpty"`
 	NvidiaNicDriverPath   string `env:"NVIDIA_NIC_DRIVER_PATH"`
@@ -50,6 +53,7 @@ type Config struct {
 	EntrypointDebug     bool   `env:"ENTRYPOINT_DEBUG"`
 	DebugLogFile        string `env:"DEBUG_LOG_FILE"          envDefault:"/tmp/entrypoint_debug_cmds.log"`
 	DebugSleepSecOnExit int    `env:"DEBUG_SLEEP_SEC_ON_EXIT" envDefault:"300"`
+	BindDelaySec        int    `env:"BIND_DELAY_SEC"          envDefault:"4"`
 }
 
 // GetConfig parses environment variables and returns a Config struct.

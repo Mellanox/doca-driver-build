@@ -1493,6 +1493,11 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "readlink", "/sys/class/net/eth0/device/driver").Return("../../../../bus/pci/drivers/mlx5_core", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "ethtool", "--driver", "eth0").Return("version: 5.0-1.0.0", "", nil)
 
+			// Mock mountRootfs (mount already exists scenario)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return("/usr/src/ on /run/mellanox/drivers/usr/src/ type none", "", nil)
+
 			result, err := dm.Load(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).To(BeTrue())
@@ -1527,6 +1532,11 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "ls", "/sys/class/net/").Return("eth0 eth1", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "readlink", "/sys/class/net/eth0/device/driver").Return("../../../../bus/pci/drivers/mlx5_core", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "ethtool", "--driver", "eth0").Return("version: 5.0-1.0.0", "", nil)
+
+			// Mock mountRootfs (mount already exists scenario)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return("/usr/src/ on /run/mellanox/drivers/usr/src/ type none", "", nil)
 
 			result, err := dm.Load(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -1575,6 +1585,11 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "ls", "/sys/class/net/").Return("eth0 eth1", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "readlink", "/sys/class/net/eth0/device/driver").Return("../../../../bus/pci/drivers/mlx5_core", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "ethtool", "--driver", "eth0").Return("version: 5.0-1.0.0", "", nil)
+
+			// Mock mountRootfs (mount already exists scenario)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return("/usr/src/ on /run/mellanox/drivers/usr/src/ type none", "", nil)
 
 			result, err := dm.Load(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -1660,6 +1675,11 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "ls", "/sys/class/net/").Return("eth0 eth1", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "readlink", "/sys/class/net/eth0/device/driver").Return("../../../../bus/pci/drivers/mlx5_core", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "ethtool", "--driver", "eth0").Return("version: 5.0-1.0.0", "", nil)
+
+			// Mock mountRootfs (mount already exists scenario)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return("/usr/src/ on /run/mellanox/drivers/usr/src/ type none", "", nil)
 
 			result, err := dm.Load(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -2381,7 +2401,812 @@ var _ = Describe("Driver", func() {
 		})
 
 	})
+
+	Context("enableFIPSIfRequired", func() {
+		BeforeEach(func() {
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+		})
+
+		It("should skip FIPS setup when UBUNTU_PRO_TOKEN is not set", func() {
+			// Set empty token in config
+			dm.cfg.UbuntuProToken = ""
+
+			// No mocks should be called
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should skip FIPS setup when not running on Ubuntu", func() {
+			// Set Ubuntu Pro token in config
+			dm.cfg.UbuntuProToken = "test-token-12345"
+
+			// Mock GetOSType to return RedHat
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeRedHat, nil)
+
+			// No FIPS commands should be executed
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should skip FIPS setup when running on SLES", func() {
+			// Set Ubuntu Pro token in config
+			dm.cfg.UbuntuProToken = "test-token-12345"
+
+			// Mock GetOSType to return SLES
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeSLES, nil)
+
+			// No FIPS commands should be executed
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should enable FIPS successfully on Ubuntu", func() {
+			// Set Ubuntu Pro token in config
+			dm.cfg.UbuntuProToken = "test-token-12345"
+
+			// Mock GetOSType to return Ubuntu
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+
+			// Mock update-ca-certificates command
+			cmdMock.EXPECT().RunCommand(ctx, "update-ca-certificates").Return("", "", nil)
+
+			// Mock pro attach command
+			cmdMock.EXPECT().RunCommand(ctx, "pro", "attach", "--no-auto-enable", "test-token-12345").Return("", "", nil)
+
+			// Mock pro enable command
+			cmdMock.EXPECT().RunCommand(ctx, "pro", "enable", "--access-only", "--assume-yes", "fips-updates").Return("", "", nil)
+
+			// Mock apt-get install command
+			cmdMock.EXPECT().RunCommand(ctx, "apt-get", "-yqq", "install", "--no-install-recommends", "ubuntu-fips-userspace").Return("", "", nil)
+
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should return error when GetOSType fails", func() {
+			// Set Ubuntu Pro token in config
+			dm.cfg.UbuntuProToken = "test-token-12345"
+
+			expectedError := errors.New("failed to get OS type")
+			hostMock.EXPECT().GetOSType(ctx).Return("", expectedError)
+
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to get OS type"))
+		})
+
+		It("should return error when update-ca-certificates fails", func() {
+			// Set Ubuntu Pro token in config
+			dm.cfg.UbuntuProToken = "test-token-12345"
+
+			// Mock GetOSType to return Ubuntu
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+
+			// Mock update-ca-certificates command failure
+			expectedError := errors.New("ca certificates update failed")
+			cmdMock.EXPECT().RunCommand(ctx, "update-ca-certificates").Return("", "", expectedError)
+
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to update CA certificates"))
+		})
+
+		It("should return error when pro attach fails", func() {
+			// Set Ubuntu Pro token in config
+			dm.cfg.UbuntuProToken = "test-token-12345"
+
+			// Mock GetOSType to return Ubuntu
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+
+			// Mock update-ca-certificates command
+			cmdMock.EXPECT().RunCommand(ctx, "update-ca-certificates").Return("", "", nil)
+
+			// Mock pro attach command failure
+			expectedError := errors.New("pro attach failed")
+			cmdMock.EXPECT().RunCommand(ctx, "pro", "attach", "--no-auto-enable", "test-token-12345").Return("", "", expectedError)
+
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to attach Ubuntu Pro subscription"))
+		})
+
+		It("should return error when pro enable fips-updates fails", func() {
+			// Set Ubuntu Pro token in config
+			dm.cfg.UbuntuProToken = "test-token-12345"
+
+			// Mock GetOSType to return Ubuntu
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+
+			// Mock update-ca-certificates command
+			cmdMock.EXPECT().RunCommand(ctx, "update-ca-certificates").Return("", "", nil)
+
+			// Mock pro attach command
+			cmdMock.EXPECT().RunCommand(ctx, "pro", "attach", "--no-auto-enable", "test-token-12345").Return("", "", nil)
+
+			// Mock pro enable command failure
+			expectedError := errors.New("pro enable failed")
+			cmdMock.EXPECT().RunCommand(ctx, "pro", "enable", "--access-only", "--assume-yes", "fips-updates").Return("", "", expectedError)
+
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to enable FIPS updates"))
+		})
+
+		It("should return error when apt-get install ubuntu-fips-userspace fails", func() {
+			// Set Ubuntu Pro token in config
+			dm.cfg.UbuntuProToken = "test-token-12345"
+
+			// Mock GetOSType to return Ubuntu
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
+
+			// Mock update-ca-certificates command
+			cmdMock.EXPECT().RunCommand(ctx, "update-ca-certificates").Return("", "", nil)
+
+			// Mock pro attach command
+			cmdMock.EXPECT().RunCommand(ctx, "pro", "attach", "--no-auto-enable", "test-token-12345").Return("", "", nil)
+
+			// Mock pro enable command
+			cmdMock.EXPECT().RunCommand(ctx, "pro", "enable", "--access-only", "--assume-yes", "fips-updates").Return("", "", nil)
+
+			// Mock apt-get install command failure
+			expectedError := errors.New("apt-get install failed")
+			cmdMock.EXPECT().RunCommand(ctx, "apt-get", "-yqq", "install", "--no-install-recommends", "ubuntu-fips-userspace").Return("", "", expectedError)
+
+			err := dm.enableFIPSIfRequired(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to install ubuntu-fips-userspace"))
+		})
+	})
+
+	Context("mountRootfs", func() {
+		It("should successfully mount when no mount exists", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock mount --make-runbindable /sys
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
+
+			// Mock mount --make-private /sys
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
+
+			// Mock mount -l to check if mount exists (returns no mellanox mounts)
+			mountOutput := "/dev/sda1 on / type ext4 (rw,relatime)\n/dev/sdb1 on /data type ext4 (rw,relatime)\n"
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return(mountOutput, "", nil)
+
+			// Mock mkdir -p for mount path
+			osMock.EXPECT().MkdirAll("/run/mellanox/drivers/usr/src", os.FileMode(0o755)).Return(nil)
+
+			// Mock mount --rbind
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--rbind", "/usr/src/", "/run/mellanox/drivers/usr/src").Return("", "", nil)
+
+			err := dm.mountRootfs(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should skip mount when mellanox mount already exists", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock mount --make-runbindable /sys
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
+
+			// Mock mount --make-private /sys
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
+
+			// Mock mount -l to check if mount exists (returns existing mellanox mount)
+			mountOutput := "/dev/sda1 on / type ext4 (rw,relatime)\n/usr/src/ on /run/mellanox/drivers/usr/src/ type none (rw,relatime)\n"
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return(mountOutput, "", nil)
+
+			// Should not call mkdir or mount --rbind when mount exists
+
+			err := dm.mountRootfs(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should skip mount when mellanox tmpfs mount exists but not regular mount", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock mount --make-runbindable /sys
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
+
+			// Mock mount --make-private /sys
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
+
+			// Mock mount -l to check if mount exists (returns tmpfs mount - should be ignored)
+			mountOutput := "/dev/sda1 on / type ext4 (rw,relatime)\ntmpfs on /run/mellanox/tmp type tmpfs (rw,nosuid,nodev,mode=755)\n"
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return(mountOutput, "", nil)
+
+			// Should call mkdir and mount --rbind since tmpfs doesn't count
+			osMock.EXPECT().MkdirAll("/run/mellanox/drivers/usr/src", os.FileMode(0o755)).Return(nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--rbind", "/usr/src/", "/run/mellanox/drivers/usr/src").Return("", "", nil)
+
+			err := dm.mountRootfs(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should fail when mount --make-runbindable fails", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "permission denied", errors.New("mount failed"))
+
+			err := dm.mountRootfs(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to make /sys runbindable"))
+		})
+
+		It("should fail when mount --make-private fails", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "permission denied", errors.New("mount failed"))
+
+			err := dm.mountRootfs(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to make /sys private"))
+		})
+
+		It("should fail when mkdir fails", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return("", "", nil)
+			osMock.EXPECT().MkdirAll("/run/mellanox/drivers/usr/src", os.FileMode(0o755)).Return(errors.New("permission denied"))
+
+			err := dm.mountRootfs(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to create mount directory"))
+		})
+
+		It("should fail when mount --rbind fails", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return("", "", nil)
+			osMock.EXPECT().MkdirAll("/run/mellanox/drivers/usr/src", os.FileMode(0o755)).Return(nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--rbind", "/usr/src/", "/run/mellanox/drivers/usr/src").Return("", "mount failed", errors.New("mount error"))
+
+			err := dm.mountRootfs(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to rbind mount"))
+		})
+
+		It("should handle mount -l failure gracefully and proceed with mount", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return("", "", errors.New("mount command failed"))
+
+			// Should proceed with mounting even if mount -l fails
+			osMock.EXPECT().MkdirAll("/run/mellanox/drivers/usr/src", os.FileMode(0o755)).Return(nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--rbind", "/usr/src/", "/run/mellanox/drivers/usr/src").Return("", "", nil)
+
+			err := dm.mountRootfs(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("unmountRootfs", func() {
+		It("should successfully unmount when mounts exist (count > 1)", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock findmnt -r -o TARGET
+			findmntOutput := "/\n/sys\n/run/mellanox/drivers/usr/src\n/run/mellanox/drivers\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Mock umount -l -R
+			cmdMock.EXPECT().RunCommand(ctx, "umount", "-l", "-R", "/run/mellanox/drivers").Return("", "", nil)
+
+			// Mock rm -rf
+			osMock.EXPECT().RemoveAll("/run/mellanox/drivers/usr/src").Return(nil)
+
+			err := dm.unmountRootfs(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should skip unmount when mount count is 1 or less", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock findmnt -r -o TARGET with only one mellanox occurrence
+			findmntOutput := "/\n/sys\n/run/mellanox/drivers\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Should not call umount or RemoveAll when count <= 1
+
+			err := dm.unmountRootfs(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should skip unmount when no mellanox mounts exist", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock findmnt -r -o TARGET without any mellanox mounts
+			findmntOutput := "/\n/sys\n/proc\n/dev\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Should not call umount or RemoveAll
+
+			err := dm.unmountRootfs(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle findmnt failure gracefully", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock findmnt failing
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return("", "command not found", errors.New("findmnt failed"))
+
+			// Should not call umount or RemoveAll and should not return error
+
+			err := dm.unmountRootfs(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should return error when umount fails", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock findmnt -r -o TARGET
+			findmntOutput := "/\n/sys\n/run/mellanox/drivers/usr/src\n/run/mellanox/drivers\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Mock umount failing
+			cmdMock.EXPECT().RunCommand(ctx, "umount", "-l", "-R", "/run/mellanox/drivers").Return("", "target busy", errors.New("umount failed"))
+
+			// Should return error (matches mountRootfs pattern)
+			err := dm.unmountRootfs(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to unmount"))
+			Expect(err.Error()).To(ContainSubstring("target busy"))
+		})
+
+		It("should return error when RemoveAll fails", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock findmnt -r -o TARGET
+			findmntOutput := "/\n/sys\n/run/mellanox/drivers/usr/src\n/run/mellanox/drivers\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Mock umount succeeding
+			cmdMock.EXPECT().RunCommand(ctx, "umount", "-l", "-R", "/run/mellanox/drivers").Return("", "", nil)
+
+			// Mock RemoveAll failing
+			osMock.EXPECT().RemoveAll("/run/mellanox/drivers/usr/src").Return(errors.New("permission denied"))
+
+			// Should return error (matches mountRootfs pattern)
+			err := dm.unmountRootfs(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to remove directory"))
+			Expect(err.Error()).To(ContainSubstring("permission denied"))
+		})
+
+		It("should return error when umount fails (RemoveAll not called)", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock findmnt -r -o TARGET
+			findmntOutput := "/\n/sys\n/run/mellanox/drivers/usr/src\n/run/mellanox/drivers\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Mock umount failing - this will cause early return, RemoveAll won't be called
+			cmdMock.EXPECT().RunCommand(ctx, "umount", "-l", "-R", "/run/mellanox/drivers").Return("", "target busy", errors.New("umount failed"))
+
+			// Should return error on first failure (matches mountRootfs pattern)
+			err := dm.unmountRootfs(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to unmount"))
+		})
+
+		It("should count multiple mellanox mount entries correctly", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock findmnt with 3 mellanox mount entries
+			findmntOutput := "/\n/run/mellanox/drivers\n/run/mellanox/drivers/usr/src\n/run/mellanox/drivers/lib\n/sys\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Should unmount since count (3) > 1
+			cmdMock.EXPECT().RunCommand(ctx, "umount", "-l", "-R", "/run/mellanox/drivers").Return("", "", nil)
+			osMock.EXPECT().RemoveAll("/run/mellanox/drivers/usr/src").Return(nil)
+
+			err := dm.unmountRootfs(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("Clear", func() {
+		It("should call unmountRootfs and skip cleanup when inventory is reusable and build is complete", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			cfg.NvidiaNicDriversInventoryPath = "/persistent/inventory" // Reusable
+			cfg.NvidiaNicDriverVer = "test-version"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+			dm.driverBuildIncomplete = false // Build completed
+
+			// Mock findmnt (for unmountRootfs) - no mounts exist
+			findmntOutput := "/\n/sys\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Should NOT call GetKernelVersion or cleanup methods because isReusable=true and buildIncomplete=false
+
+			err := dm.Clear(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should cleanup temporary inventory when not reusable", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			cfg.NvidiaNicDriversInventoryPath = "" // Empty = not reusable (temporary)
+			cfg.NvidiaNicDriverVer = "test-version"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+			dm.driverBuildIncomplete = false // Build completed but inventory is temporary
+
+			// Mock findmnt (for unmountRootfs)
+			findmntOutput := "/\n/sys\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Mock inventory cleanup - GetKernelVersion
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.4.0-42-generic", nil)
+
+			// When NvidiaNicDriversInventoryPath is empty, checkDriverInventory creates timestamped path
+			// like /tmp/nvidia_nic_driver_03-12-2025_14-23-07 without calling Stat
+			// We can't predict the timestamp, so we use a matcher for RemoveAll
+			osMock.EXPECT().RemoveAll(mock.MatchedBy(func(path string) bool {
+				return strings.HasPrefix(path, "/tmp/nvidia_nic_driver_")
+			})).Return(nil)
+
+			err := dm.Clear(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should cleanup persistent inventory when build is incomplete", func() {
+			inventoryDir := filepath.Join(tempDir, "persistent-inventory")
+			Expect(os.MkdirAll(inventoryDir, 0755)).To(Succeed())
+
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			cfg.NvidiaNicDriversInventoryPath = inventoryDir // Persistent
+			cfg.NvidiaNicDriverVer = "test-version"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+			dm.driverBuildIncomplete = true // Build incomplete!
+
+			// Mock findmnt (for unmountRootfs)
+			findmntOutput := "/\n/sys\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Mock inventory cleanup - GetKernelVersion
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.4.0-42-generic", nil)
+
+			// Mock checkDriverInventory
+			inventoryPath := filepath.Join(inventoryDir, "5.4.0-42-generic", "test-version")
+			osMock.EXPECT().Stat(inventoryPath).Return(nil, nil) // Directory exists
+			osMock.EXPECT().Stat(inventoryPath+".checksum").Return(nil, os.ErrNotExist)
+
+			// Should remove the inventory because build is incomplete
+			osMock.EXPECT().RemoveAll(inventoryPath).Return(nil)
+
+			err := dm.Clear(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle GetKernelVersion failure gracefully during cleanup", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			cfg.NvidiaNicDriversInventoryPath = "" // Temporary
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock findmnt (for unmountRootfs)
+			findmntOutput := "/\n/sys\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Mock GetKernelVersion failure - should be handled gracefully
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("", errors.New("failed to get kernel version"))
+
+			// Should not fail, just skip cleanup
+			err := dm.Clear(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle checkDriverInventory failure gracefully during cleanup", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			cfg.NvidiaNicDriversInventoryPath = "" // Temporary
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock findmnt (for unmountRootfs)
+			findmntOutput := "/\n/sys\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Mock GetKernelVersion
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.4.0-42-generic", nil)
+
+			// When NvidiaNicDriversInventoryPath is empty, checkDriverInventory never fails
+			// It just returns a timestamped path. So this test should cleanup successfully.
+			osMock.EXPECT().RemoveAll(mock.MatchedBy(func(path string) bool {
+				return strings.HasPrefix(path, "/tmp/nvidia_nic_driver_")
+			})).Return(nil)
+
+			err := dm.Clear(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should return error when RemoveAll fails during cleanup", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			cfg.NvidiaNicDriversInventoryPath = "" // Temporary
+			cfg.NvidiaNicDriverVer = "test-version"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock findmnt (for unmountRootfs)
+			findmntOutput := "/\n/sys\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Mock GetKernelVersion
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.4.0-42-generic", nil)
+
+			// Mock RemoveAll failure for timestamped temporary path
+			expectedError := errors.New("permission denied")
+			osMock.EXPECT().RemoveAll(mock.MatchedBy(func(path string) bool {
+				return strings.HasPrefix(path, "/tmp/nvidia_nic_driver_")
+			})).Return(expectedError)
+
+			// Should return the error
+			err := dm.Clear(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("permission denied"))
+		})
+
+		It("should cleanup when temporary inventory path is used", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			cfg.NvidiaNicDriversInventoryPath = "" // Temporary
+			cfg.NvidiaNicDriverVer = "test-version"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock findmnt (for unmountRootfs)
+			findmntOutput := "/\n/sys\n/proc\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Mock GetKernelVersion
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.4.0-42-generic", nil)
+
+			// checkDriverInventory always returns a timestamped path when NvidiaNicDriversInventoryPath is empty
+			// So cleanup should always happen for temporary inventory
+			osMock.EXPECT().RemoveAll(mock.MatchedBy(func(path string) bool {
+				return strings.HasPrefix(path, "/tmp/nvidia_nic_driver_")
+			})).Return(nil)
+
+			err := dm.Clear(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should continue with cleanup even when unmountRootfs has errors", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			cfg.NvidiaNicDriversInventoryPath = "" // Temporary
+			cfg.NvidiaNicDriverVer = "test-version"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// Mock findmnt returning multiple mounts that need unmounting
+			findmntOutput := "/\n/run/mellanox/drivers/usr/src\n/run/mellanox/drivers\n"
+			cmdMock.EXPECT().RunCommand(ctx, "findmnt", "-r", "-o", "TARGET").Return(findmntOutput, "", nil)
+
+			// Mock umount failing
+			cmdMock.EXPECT().RunCommand(ctx, "umount", "-l", "-R", "/run/mellanox/drivers").Return("", "target busy", errors.New("umount failed"))
+
+			// Should still continue with inventory cleanup even though unmount failed
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.4.0-42-generic", nil)
+
+			osMock.EXPECT().RemoveAll(mock.MatchedBy(func(path string) bool {
+				return strings.HasPrefix(path, "/tmp/nvidia_nic_driver_")
+			})).Return(nil)
+
+			err := dm.Clear(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("cleanupDriverInventory", func() {
+		BeforeEach(func() {
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+		})
+
+		It("should skip cleanup when inventory path is not set", func() {
+			dm.cfg.NvidiaNicDriversInventoryPath = ""
+			err := dm.cleanupDriverInventory(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should return error when GetKernelVersion fails", func() {
+			dm.cfg.NvidiaNicDriversInventoryPath = "/inventory"
+			expectedError := errors.New("failed to get kernel version")
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("", expectedError)
+
+			err := dm.cleanupDriverInventory(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to get kernel version"))
+		})
+
+		It("should return nil when inventory directory does not exist", func() {
+			dm.cfg.NvidiaNicDriversInventoryPath = "/inventory"
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.4.0-generic", nil)
+			osMock.EXPECT().ReadDir("/inventory").Return(nil, os.ErrNotExist)
+
+			err := dm.cleanupDriverInventory(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle ReadDir failure", func() {
+			dm.cfg.NvidiaNicDriversInventoryPath = "/inventory"
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.4.0-generic", nil)
+			expectedError := errors.New("readdir failed")
+			osMock.EXPECT().ReadDir("/inventory").Return(nil, expectedError)
+
+			err := dm.cleanupDriverInventory(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to list inventory directory"))
+		})
+
+		It("should cleanup old kernel versions and driver versions", func() {
+			dm.cfg.NvidiaNicDriversInventoryPath = "/inventory"
+			dm.cfg.NvidiaNicDriverVer = "1.0.0"
+			kernelVer := "5.4.0-generic"
+
+			hostMock.EXPECT().GetKernelVersion(ctx).Return(kernelVer, nil)
+
+			// Mock inventory directory listing
+			// Contains:
+			// - 4.15.0-generic (Old kernel, should be removed)
+			// - 5.4.0-generic (Current kernel, should be processed)
+			// - some-file (Not a dir, should be ignored)
+			rootEntries := []os.DirEntry{
+				mockDirEntry{name: "4.15.0-generic", isDir: true},
+				mockDirEntry{name: "5.4.0-generic", isDir: true},
+				mockDirEntry{name: "some-file", isDir: false},
+			}
+			osMock.EXPECT().ReadDir("/inventory").Return(rootEntries, nil)
+
+			// Expect removal of old kernel directory
+			osMock.EXPECT().RemoveAll("/inventory/4.15.0-generic").Return(nil)
+
+			// Mock current kernel directory listing
+			// Contains:
+			// - 0.9.0 (Old driver, should be removed)
+			// - 1.0.0 (Current driver, should be kept)
+			// - 1.0.0.checksum (Current checksum, should be kept)
+			kernelDirEntries := []os.DirEntry{
+				mockDirEntry{name: "0.9.0", isDir: true}, // readDir returns files/dirs, assuming drivers are dirs or files? Code says RemoveAll so it handles both.
+				mockDirEntry{name: "1.0.0", isDir: true},
+				mockDirEntry{name: "1.0.0.checksum", isDir: false},
+			}
+			osMock.EXPECT().ReadDir("/inventory/5.4.0-generic").Return(kernelDirEntries, nil)
+
+			// Expect removal of old driver version
+			osMock.EXPECT().RemoveAll("/inventory/5.4.0-generic/0.9.0").Return(nil)
+
+			// Do NOT expect removal of current kernel directory because items remain (1.0.0, 1.0.0.checksum)
+
+			err := dm.cleanupDriverInventory(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should remove current kernel directory if all items are removed", func() {
+			dm.cfg.NvidiaNicDriversInventoryPath = "/inventory"
+			dm.cfg.NvidiaNicDriverVer = "1.0.0"
+			kernelVer := "5.4.0-generic"
+
+			hostMock.EXPECT().GetKernelVersion(ctx).Return(kernelVer, nil)
+
+			// Mock inventory directory listing
+			rootEntries := []os.DirEntry{
+				mockDirEntry{name: "5.4.0-generic", isDir: true},
+			}
+			osMock.EXPECT().ReadDir("/inventory").Return(rootEntries, nil)
+
+			// Mock current kernel directory listing containing only old versions
+			kernelDirEntries := []os.DirEntry{
+				mockDirEntry{name: "0.9.0", isDir: true},
+			}
+			osMock.EXPECT().ReadDir("/inventory/5.4.0-generic").Return(kernelDirEntries, nil)
+
+			// Expect removal of old driver version
+			osMock.EXPECT().RemoveAll("/inventory/5.4.0-generic/0.9.0").Return(nil)
+
+			// Expect removal of kernel directory since all items were removed
+			osMock.EXPECT().RemoveAll("/inventory/5.4.0-generic").Return(nil)
+
+			err := dm.cleanupDriverInventory(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle ReadDir failure for kernel directory gracefully", func() {
+			dm.cfg.NvidiaNicDriversInventoryPath = "/inventory"
+			kernelVer := "5.4.0-generic"
+
+			hostMock.EXPECT().GetKernelVersion(ctx).Return(kernelVer, nil)
+
+			rootEntries := []os.DirEntry{
+				mockDirEntry{name: "5.4.0-generic", isDir: true},
+			}
+			osMock.EXPECT().ReadDir("/inventory").Return(rootEntries, nil)
+
+			// Mock failure reading the kernel directory
+			osMock.EXPECT().ReadDir("/inventory/5.4.0-generic").Return(nil, errors.New("readdir failed"))
+
+			// Should continue without error
+			err := dm.cleanupDriverInventory(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should handle RemoveAll failure gracefully", func() {
+			dm.cfg.NvidiaNicDriversInventoryPath = "/inventory"
+			dm.cfg.NvidiaNicDriverVer = "1.0.0"
+			kernelVer := "5.4.0-generic"
+
+			hostMock.EXPECT().GetKernelVersion(ctx).Return(kernelVer, nil)
+
+			rootEntries := []os.DirEntry{
+				mockDirEntry{name: "4.15.0-generic", isDir: true}, // Old kernel
+				mockDirEntry{name: "5.4.0-generic", isDir: true},
+			}
+			osMock.EXPECT().ReadDir("/inventory").Return(rootEntries, nil)
+
+			// Expect removal of old kernel directory to fail
+			osMock.EXPECT().RemoveAll("/inventory/4.15.0-generic").Return(errors.New("remove failed"))
+
+			// Should continue to process other directories
+			kernelDirEntries := []os.DirEntry{
+				mockDirEntry{name: "0.9.0", isDir: true},
+			}
+			osMock.EXPECT().ReadDir("/inventory/5.4.0-generic").Return(kernelDirEntries, nil)
+			osMock.EXPECT().RemoveAll("/inventory/5.4.0-generic/0.9.0").Return(nil)
+			osMock.EXPECT().RemoveAll("/inventory/5.4.0-generic").Return(nil)
+
+			err := dm.cleanupDriverInventory(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
 })
+
+// Helper struct for mocking os.DirEntry
+type mockDirEntry struct {
+	name  string
+	isDir bool
+}
+
+func (m mockDirEntry) Name() string               { return m.name }
+func (m mockDirEntry) IsDir() bool                { return m.isDir }
+func (m mockDirEntry) Type() os.FileMode          { return 0 }
+func (m mockDirEntry) Info() (os.FileInfo, error) { return nil, nil }
 
 var _ = Describe("Driver OFED Blacklist", func() {
 	Context("generateOfedModulesBlacklist", func() {

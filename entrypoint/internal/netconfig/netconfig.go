@@ -28,6 +28,7 @@ import (
 
 	"github.com/go-logr/logr"
 
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/constants"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/netconfig/netlink"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/netconfig/sriovnet"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/cmd"
@@ -66,6 +67,7 @@ func New(
 	hostHelper host.Interface,
 	sriovnetLib sriovnet.Lib,
 	netlinkLib netlink.Lib,
+	bindDelaySec int,
 ) Interface {
 	return &netconfig{
 		cmd:             cmdHelper,
@@ -74,6 +76,7 @@ func New(
 		sriovnetLib:     sriovnetLib,
 		netlinkLib:      netlinkLib,
 		mellanoxDevices: make(map[string]*MellanoxDevice),
+		bindDelaySec:    bindDelaySec,
 	}
 }
 
@@ -143,6 +146,7 @@ type netconfig struct {
 
 	// In-memory storage - Mellanox device information
 	mellanoxDevices map[string]*MellanoxDevice
+	bindDelaySec    int
 }
 
 // Save discovers and stores the current SRIOV configuration
@@ -254,6 +258,9 @@ func (n *netconfig) restoreDeviceConfig(ctx context.Context, devName string, dev
 		log.Error(err, "Failed to create VFs", "device", currentDevName, "vfs", device.PfNumVfs)
 		return err
 	}
+
+	// Sleep to wait until NIC device is initialized and udev rules are applied (matches bash script)
+	time.Sleep(time.Duration(n.bindDelaySec) * time.Second)
 
 	// Restore VF configurations (but don't rebind VFs if in switchdev mode)
 	if err := n.restoreVFConfigurations(ctx, currentDevName, device, device.EswitchMode); err != nil {
@@ -404,7 +411,7 @@ func (n *netconfig) restoreSingleVFConfig(ctx context.Context, devName string, v
 		}
 
 		// Wait for bind delay (matches bash script)
-		time.Sleep(3 * time.Second) // BIND_DELAY_SEC equivalent
+		time.Sleep(time.Duration(n.bindDelaySec) * time.Second)
 
 		// Restore VF MTU and admin state after rebind
 		if err := n.restoreVFState(vf); err != nil {
@@ -421,6 +428,16 @@ func (n *netconfig) restoreSingleVFConfig(ctx context.Context, devName string, v
 
 // setIBGUIDs sets the GUIDs for an IB VF
 func (n *netconfig) setIBGUIDs(ctx context.Context, devName string, vfIndex int, guid string) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Check for invalid GUID (all zeros) - matches bash script line 880
+	// Do not set invalid GUID as it will cause issues
+	if guid == constants.InvalidGUID {
+		log.V(1).Info("VF GUID not set (00:00:00:00:00:00:00:00), skipping",
+			"device", devName, "vf_index", vfIndex)
+		return nil
+	}
+
 	// Set port GUID: ip link set {dev_name} vf {vf_index} port_guid {guid}
 	_, stderr, err := n.cmd.RunCommand(ctx, "ip", "link", "set", devName, "vf", fmt.Sprintf("%d", vfIndex), "port_guid", guid)
 	if err != nil {
@@ -500,7 +517,7 @@ func (n *netconfig) rebindVFsInSwitchdevMode(ctx context.Context, device *Mellan
 		}
 
 		// Wait for bind delay (matches bash script)
-		time.Sleep(3 * time.Second) // BIND_DELAY_SEC equivalent
+		time.Sleep(time.Duration(n.bindDelaySec) * time.Second)
 
 		// Restore VF MTU and admin state
 		if err := n.restoreVFState(vf); err != nil {
