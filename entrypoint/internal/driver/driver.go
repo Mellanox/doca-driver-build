@@ -1572,39 +1572,55 @@ func (d *driverMgr) checkLoadedKmodSrcverVsModinfo(ctx context.Context, modules 
 	return true, nil
 }
 
+// loadHostDependencies loads dependencies for all loaded modules from the host.
+func (d *driverMgr) loadHostDependencies(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+	log.V(1).Info("Loading host dependencies for loaded modules")
+
+	content, err := d.os.ReadFile("/proc/modules")
+	if err != nil {
+		return fmt.Errorf("failed to read /proc/modules: %w", err)
+	}
+
+	for _, line := range strings.Split(string(content), "\n") {
+		if fields := strings.Fields(line); len(fields) > 0 {
+			d.loadModuleDependencies(ctx, fields[0])
+		}
+	}
+	return nil
+}
+
+// loadModuleDependencies loads dependencies for a single module
+func (d *driverMgr) loadModuleDependencies(ctx context.Context, modName string) {
+	output, _, err := d.cmd.RunCommand(ctx, "modinfo", "-F", "depends", modName)
+	if err != nil {
+		return
+	}
+
+	for _, dep := range strings.Split(output, ",") {
+		if dep = strings.TrimSpace(dep); dep != "" {
+			logr.FromContextOrDiscard(ctx).V(1).Info("Loading dependency", "dependency", dep)
+			_, _, _ = d.cmd.RunCommand(ctx, "modprobe", "-d", "/host", dep)
+		}
+	}
+}
+
 // restartDriver restarts the driver modules
 func (d *driverMgr) restartDriver(ctx context.Context) error {
 	log := logr.FromContextOrDiscard(ctx)
 
 	log.V(1).Info("Restarting driver modules")
 
-	// Load dependencies
-	_, _, err := d.cmd.RunCommand(ctx, "modprobe", "-d", "/host", "tls")
-	if err != nil {
-		log.V(1).Info("Failed to load tls module", "error", err)
+	// Load dependencies for all loaded modules from host
+	if err := d.loadHostDependencies(ctx); err != nil {
+		log.V(1).Info("Failed to load host dependencies", "error", err)
 		// Non-fatal, continue
-	}
-
-	_, _, err = d.cmd.RunCommand(ctx, "modprobe", "-d", "/host", "psample")
-	if err != nil {
-		log.V(1).Info("Failed to load psample module", "error", err)
-		// Non-fatal, continue
-	}
-
-	// Check if mlx5_ib depends on macsec and load it if needed
-	depends, _, err := d.cmd.RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib")
-	if err == nil && strings.Contains(depends, "macsec") {
-		_, _, err = d.cmd.RunCommand(ctx, "modprobe", "-d", "/host", "macsec")
-		if err != nil {
-			log.V(1).Info("Failed to load macsec module", "error", err)
-			// Non-fatal, continue
-		}
 	}
 
 	// Load pci-hyperv-intf if needed (simplified logic)
 	arch := d.getArchitecture(ctx)
 	if arch != "aarch64" {
-		_, _, err = d.cmd.RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf")
+		_, _, err := d.cmd.RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf")
 		if err != nil {
 			log.V(1).Info("Failed to load pci-hyperv-intf module", "error", err)
 			// Non-fatal, continue
@@ -1620,7 +1636,7 @@ func (d *driverMgr) restartDriver(ctx context.Context) error {
 	}
 
 	// Restart openibd service
-	_, _, err = d.cmd.RunCommand(ctx, "/etc/init.d/openibd", "restart")
+	_, _, err := d.cmd.RunCommand(ctx, "/etc/init.d/openibd", "restart")
 	if err != nil {
 		return fmt.Errorf("failed to restart openibd service: %w", err)
 	}

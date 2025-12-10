@@ -1505,6 +1505,21 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("should restart driver when modules don't match", func() {
+			dm = &driverMgr{
+				cfg:  cfg,
+				cmd:  cmdMock,
+				host: hostMock,
+				os:   osMock,
+			}
+
+			// Mock generateOfedModulesBlacklist
+			blacklistFile, err := os.CreateTemp(tempDir, "blacklist")
+			Expect(err).NotTo(HaveOccurred())
+			osMock.EXPECT().Create(cfg.OfedBlacklistModulesFile).Return(blacklistFile, nil)
+			// Mock removeOfedModulesBlacklist (deferred cleanup)
+			osMock.EXPECT().Stat(cfg.OfedBlacklistModulesFile).Return(nil, nil)
+			osMock.EXPECT().RemoveAll(cfg.OfedBlacklistModulesFile).Return(nil)
+
 			// Mock checkLoadedKmodSrcverVsModinfo to return false (modules don't match)
 			hostMock.EXPECT().LsMod(ctx).Return(map[string]host.LoadedModule{
 				"mlx5_core": {Name: "mlx5_core", RefCount: 1, UsedBy: []string{}},
@@ -1516,9 +1531,8 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_core").Return("srcversion: ABC123", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "cat", "/sys/module/mlx5_core/srcversion").Return("XYZ789", "", nil)
 
-			// Mock restartDriver
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "tls").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "psample").Return("", "", nil)
+			// Mock restartDriver - loadHostDependencies
+			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
@@ -1550,8 +1564,16 @@ var _ = Describe("Driver", func() {
 				cfg:  cfg,
 				cmd:  cmdMock,
 				host: hostMock,
-				os:   wrappers.NewOS(),
+				os:   osMock,
 			}
+
+			// Mock generateOfedModulesBlacklist
+			blacklistFile, err := os.CreateTemp(tempDir, "blacklist")
+			Expect(err).NotTo(HaveOccurred())
+			osMock.EXPECT().Create(cfg.OfedBlacklistModulesFile).Return(blacklistFile, nil)
+			// Mock removeOfedModulesBlacklist (deferred cleanup)
+			osMock.EXPECT().Stat(cfg.OfedBlacklistModulesFile).Return(nil, nil)
+			osMock.EXPECT().RemoveAll(cfg.OfedBlacklistModulesFile).Return(nil)
 
 			// Mock checkLoadedKmodSrcverVsModinfo to return false (modules don't match)
 			hostMock.EXPECT().LsMod(ctx).Return(map[string]host.LoadedModule{
@@ -1566,9 +1588,8 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_core").Return("srcversion: ABC123", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "cat", "/sys/module/mlx5_core/srcversion").Return("XYZ789", "", nil)
 
-			// Mock restartDriver
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "tls").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "psample").Return("", "", nil)
+			// Mock restartDriver - loadHostDependencies
+			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
@@ -1608,6 +1629,21 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("should return error when restartDriver fails", func() {
+			dm = &driverMgr{
+				cfg:  cfg,
+				cmd:  cmdMock,
+				host: hostMock,
+				os:   osMock,
+			}
+
+			// Mock generateOfedModulesBlacklist
+			blacklistFile, err := os.CreateTemp(tempDir, "blacklist")
+			Expect(err).NotTo(HaveOccurred())
+			osMock.EXPECT().Create(cfg.OfedBlacklistModulesFile).Return(blacklistFile, nil)
+			// Mock removeOfedModulesBlacklist (deferred cleanup)
+			osMock.EXPECT().Stat(cfg.OfedBlacklistModulesFile).Return(nil, nil)
+			osMock.EXPECT().RemoveAll(cfg.OfedBlacklistModulesFile).Return(nil)
+
 			// Mock checkLoadedKmodSrcverVsModinfo to return false (modules don't match)
 			hostMock.EXPECT().LsMod(ctx).Return(map[string]host.LoadedModule{
 				"mlx5_core": {Name: "mlx5_core", RefCount: 1, UsedBy: []string{}},
@@ -1619,9 +1655,8 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_core").Return("srcversion: ABC123", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "cat", "/sys/module/mlx5_core/srcversion").Return("XYZ789", "", nil)
 
-			// Mock restartDriver failure
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "tls").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "psample").Return("", "", nil)
+			// Mock restartDriver failure - loadHostDependencies
+			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
@@ -1640,8 +1675,16 @@ var _ = Describe("Driver", func() {
 				cfg:  cfg,
 				cmd:  cmdMock,
 				host: hostMock,
-				os:   wrappers.NewOS(),
+				os:   osMock,
 			}
+
+			// Mock generateOfedModulesBlacklist
+			blacklistFile, err := os.CreateTemp(tempDir, "blacklist")
+			Expect(err).NotTo(HaveOccurred())
+			osMock.EXPECT().Create(cfg.OfedBlacklistModulesFile).Return(blacklistFile, nil)
+			// Mock removeOfedModulesBlacklist (deferred cleanup)
+			osMock.EXPECT().Stat(cfg.OfedBlacklistModulesFile).Return(nil, nil)
+			osMock.EXPECT().RemoveAll(cfg.OfedBlacklistModulesFile).Return(nil)
 
 			// Mock checkLoadedKmodSrcverVsModinfo to return false (modules don't match)
 			hostMock.EXPECT().LsMod(ctx).Return(map[string]host.LoadedModule{
@@ -1656,9 +1699,8 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_core").Return("srcversion: ABC123", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "cat", "/sys/module/mlx5_core/srcversion").Return("XYZ789", "", nil)
 
-			// Mock restartDriver
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "tls").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "psample").Return("", "", nil)
+			// Mock restartDriver - loadHostDependencies
+			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
@@ -1818,9 +1860,8 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("should restart driver successfully", func() {
-			// Mock all the modprobe commands
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "tls").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "psample").Return("", "", nil)
+			// Mock loadHostDependencies
+			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
@@ -1832,9 +1873,8 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("should load macsec when mlx5_ib depends on it", func() {
-			// Mock all the modprobe commands
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "tls").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "psample").Return("", "", nil)
+			// Mock loadHostDependencies
+			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("macsec", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "macsec").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
@@ -1847,9 +1887,8 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("should skip pci-hyperv-intf on aarch64", func() {
-			// Mock all the modprobe commands
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "tls").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "psample").Return("", "", nil)
+			// Mock loadHostDependencies
+			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("aarch64", "", nil)
 			// pci-hyperv-intf should not be called for aarch64
@@ -1861,9 +1900,8 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("should load mlx5_vdpa when available", func() {
-			// Mock all the modprobe commands
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "tls").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "psample").Return("", "", nil)
+			// Mock loadHostDependencies
+			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
@@ -1880,9 +1918,8 @@ var _ = Describe("Driver", func() {
 			cfg.StorageModules = []string{"ib_isert", "nvme_rdma"}
 			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
 
-			// Mock all the modprobe commands
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "tls").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "psample").Return("", "", nil)
+			// Mock loadHostDependencies
+			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
@@ -1901,9 +1938,8 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("should return error when openibd restart fails", func() {
-			// Mock all the modprobe commands
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "tls").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "psample").Return("", "", nil)
+			// Mock loadHostDependencies
+			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
@@ -1918,10 +1954,9 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("should continue when non-critical modprobe commands fail", func() {
-			// Mock modprobe failures (should not cause restartDriver to fail)
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "tls").Return("", "", errors.New("tls load failed"))
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "psample").Return("", "", errors.New("psample load failed"))
-			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
+			// Mock loadHostDependencies - modinfo failure is non-critical
+			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", errors.New("modinfo failed"))
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", errors.New("pci-hyperv-intf load failed"))
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
