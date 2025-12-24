@@ -7,6 +7,7 @@ ARG D_OFED_VERSION="24.10-1.1.4.0"
 ARG D_KERNEL_VER="5.15.0-25-generic"
 ARG D_OFED_SRC_DOWNLOAD_PATH="/run/mellanox/src"
 ARG OFED_SRC_LOCAL_DIR=${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_VERSION}
+ARG STIG_COMPLIANT=false
 
 # Common for build and final clean image of precompiled driver container
 ARG D_BASE_IMAGE="ubuntu:22.04"
@@ -38,6 +39,7 @@ ARG D_APT_REMOVE=""
 ARG D_OFED_VERSION
 ARG D_CONTAINER_VER
 ARG D_OFED_SRC_DOWNLOAD_PATH
+ARG STIG_COMPLIANT
 
 ENV NVIDIA_NIC_DRIVER_VER=${D_OFED_VERSION}
 ENV NVIDIA_NIC_CONTAINER_VER=${D_CONTAINER_VER}
@@ -57,6 +59,16 @@ RUN set -x && \
 COPY --from=go_builder /workspace/build/entrypoint /root/entrypoint
 ADD ./entrypoint.sh /root/entrypoint.sh
 ADD ./loader.sh /root/loader.sh
+
+# dockerfile COPY instruction limitation requires adding a file - even if it's an empty/dummy file
+COPY stig-fixer.sh /tmp/stig-fixer.sh
+# run STIG fixer script for STIG complaint image builds
+RUN set -x && \
+  if [ "$STIG_COMPLIANT" = "true" ]; then \
+    chmod +x /tmp/stig-fixer.sh && \
+    /tmp/stig-fixer.sh ; \
+  fi && \
+  rm -f /tmp/stig-fixer.sh
 
 ENTRYPOINT ["/root/loader.sh"]
 
