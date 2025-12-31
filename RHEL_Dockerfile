@@ -7,6 +7,7 @@ ARG D_OFED_VERSION="24.10-1.1.4.0"
 ARG D_KERNEL_VER="5.14.0-284.32.1.el9_2.x86_64"
 ARG D_OFED_SRC_DOWNLOAD_PATH="/run/mellanox/src"
 ARG OFED_SRC_LOCAL_DIR=${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_VERSION}
+ARG STIG_COMPLIANT=false
 
 # Final clean image of precompiled driver container
 ARG D_FINAL_BASE_IMAGE=registry.access.redhat.com/ubi9/ubi:latest
@@ -47,6 +48,7 @@ ARG D_DOCA_VERSION
 ARG D_OFED_VERSION
 ARG D_CONTAINER_VER
 ARG D_OFED_SRC_DOWNLOAD_PATH
+ARG STIG_COMPLIANT
 
 # Stage args
 ARG D_OFED_BASE_URL="https://linux.mellanox.com/public/repo/doca/${D_DOCA_VERSION}/SOURCES/mlnx_ofed"
@@ -79,6 +81,16 @@ RUN if file ${D_OFED_SRC_ARCHIVE} | grep compressed; then \
 WORKDIR /
 ADD ./entrypoint.sh /root/entrypoint.sh
 ADD ./dtk_nic_driver_build.sh /root/dtk_nic_driver_build.sh
+
+# dockerfile COPY instruction limitation requires adding a file - even if it's an empty/dummy file
+COPY stig-fixer.sh /tmp/stig-fixer.sh
+# run STIG fixer script for STIG complaint image builds
+RUN set -x && \
+  if [ "$STIG_COMPLIANT" = "true" ]; then \
+    chmod +x /tmp/stig-fixer.sh && \
+    /tmp/stig-fixer.sh ; \
+  fi && \
+  rm -f /tmp/stig-fixer.sh
 
 ENTRYPOINT ["/root/entrypoint.sh"]
 CMD ["sources"]
