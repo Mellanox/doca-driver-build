@@ -13,6 +13,25 @@ ARG STIG_COMPLIANT=false
 ARG D_BASE_IMAGE="ubuntu:22.04"
 
 ##################################################################
+# Stage: build go binary for entrypoint
+FROM golang:1.24 AS go_builder
+
+# Set GOPROXY if provided
+ARG GOPROXY
+ENV GOPROXY=$GOPROXY
+
+WORKDIR /workspace
+
+COPY entrypoint/go.mod go.mod
+COPY entrypoint/go.sum go.sum
+
+RUN go mod download
+
+COPY entrypoint/ .
+
+RUN TARGETARCH=${D_ARCH} TARGETOS=linux make build
+
+##################################################################
 # Stage: Minimal base image update and install common requirements
 FROM $D_BASE_IMAGE AS base
 
@@ -37,8 +56,9 @@ RUN set -x && \
 # Container functional requirements
     jq iproute2 udev ethtool ca-certificates
 
-WORKDIR /
+COPY --from=go_builder /workspace/build/entrypoint /root/entrypoint
 ADD ./entrypoint.sh /root/entrypoint.sh
+ADD ./loader.sh /root/loader.sh
 
 # dockerfile COPY instruction limitation requires adding a file - even if it's an empty/dummy file
 COPY stig-fixer.sh /tmp/stig-fixer.sh
@@ -50,7 +70,7 @@ RUN set -x && \
   fi && \
   rm -f /tmp/stig-fixer.sh
 
-ENTRYPOINT ["/root/entrypoint.sh"]
+ENTRYPOINT ["/root/loader.sh"]
 
 ##############################################################################################
 # Stage: Download NVIDIA driver sources and install src driver container packages requirements
@@ -72,6 +92,8 @@ ARG D_OFED_URL_PATH="${D_OFED_BASE_URL}/${D_OFED_SRC_ARCHIVE}"  # although argum
 ENV NVIDIA_NIC_DRIVER_PATH="${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_VERSION}"
 
 WORKDIR /root
+RUN set -x && \
+    apt-get update
 RUN set -x && \
     echo $D_OS | grep "ubuntu20.04" || GCC_VER="-12" && \
 # Install prerequirements \
