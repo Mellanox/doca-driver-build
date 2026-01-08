@@ -66,4 +66,5 @@ exec_cmd "touch ${DTK_OCP_DONE_COMPILE_FLAG}"
 exec_cmd "rm ${DTK_OCP_START_COMPILE_FLAG}"
 
 timestamp_print "DTK driver build script end"
-sleep infinity & wait
+sleep infinity &
+wait $!

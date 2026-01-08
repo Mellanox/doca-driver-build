@@ -21,7 +21,7 @@
 : "${USE_NEW_ENTRYPOINT:=false}"
 
 if ${USE_NEW_ENTRYPOINT}; then
-    ./entrypoint "$@"
+    exec ./entrypoint "$@"
 else
-    ./entrypoint.sh "$@"
+    exec ./entrypoint.sh "$@"
 fi

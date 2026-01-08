@@ -1508,4 +1508,5 @@ ${reuse_driver_inventory} && cleanup_driver_inventory
 exec_cmd "touch /tmp/entrypoint_done"
 
 timestamp_print "NVIDIA driver container exec end, sleeping"
-sleep infinity & wait
+sleep infinity &
+wait $!
