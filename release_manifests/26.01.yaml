@@ -25,6 +25,9 @@ dynamically_compiled:
 - os: ubuntu24.04-stig
   archs:
   - amd64
+- os: rhel9.6-stig
+  archs:
+  - amd64
 - os: ubuntu24.04
   archs:
   - amd64
