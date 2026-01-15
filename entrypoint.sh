@@ -534,7 +534,7 @@ function restart_driver() {
 
     timestamp_print "Apply blacklisted mofed modules file to host (${OFED_BLACKLIST_MODULES_FILE})"
     trap 'remove_ofed_modules_blacklist' EXIT
-    generate_ofed_modules_blacklist 
+    generate_ofed_modules_blacklist
     ${UNLOAD_STORAGE_MODULES} && unload_storage_modules
 
     exec_cmd "/etc/init.d/openibd restart"
@@ -957,6 +957,10 @@ function restore_sriov_config() {
         num_mlx_devices=$(($num_mlx_devices-1))
     done
 
+    # Two-phase rename array - used to avoid name collisions when interfaces are swapped after driver reload
+    declare -a representor_rename_ops=()
+    local rename_op_idx=0
+
     for representor_record in $(seq 0 1 $((representor_record_idx-1))); do
         declare -a representor_info=(${switchdev_representors_arr[$representor_record]})
 
@@ -1006,15 +1010,45 @@ function restore_sriov_config() {
 
             debug_print "Switchdev representor ${netdev_path} belongs to this vf id ${vf_id}, setting parameters"
 
-            representor_new_name=$(basename "$netdev_path") && [[ -n $representor_new_name ]]
+            representor_current_name=$(basename "$netdev_path") && [[ -n $representor_current_name ]]
 
-            exec_cmd "ip link set dev ${representor_new_name} name ${representor_name}"
-            exec_cmd "ip link set dev ${representor_name} mtu ${representor_mtu_val}"
-            exec_cmd "ip link set dev ${representor_name} ${representor_adminstate}"
+            # Two-phase rename to avoid name collisions when interfaces are swapped after driver reload:
+            # Phase 1: Rename current name to temporary name (frees up the target namespace)
+            # Phase 2: Rename from temporary names to final target names (done after this loop)
+            # Note: temp name must be <= 15 chars (IFNAMSIZ). Format: t<switch_hash>p<port>v<vf> (e.g. t341cp0v0)
+            # Include last 4 chars of phys_switch_id to ensure uniqueness across multiple NICs
+            switch_hash=${pf_phys_switch_id: -4}
+            representor_temp_name="t${switch_hash}p${pf_port_num}v${vf_id}"
+
+            # Store the rename operation for Phase 2: temp_name target_name adminstate mtu
+            representor_rename_ops[$rename_op_idx]="${representor_temp_name} ${representor_name} ${representor_adminstate} ${representor_mtu_val}"
+            rename_op_idx=$((rename_op_idx+1))
+
+            debug_print "Phase 1: Renaming representor ${representor_current_name} to temporary name ${representor_temp_name}"
+            exec_cmd "ip link set dev ${representor_current_name} name ${representor_temp_name}"
 
             break
         done
 
+    done
+
+    debug_print "Phase 2: Renaming representors from temporary names to final target names"
+
+    for rename_op in "${representor_rename_ops[@]}"; do
+        declare -a op_info=(${rename_op})
+
+        # temp_name target_name adminstate mtu
+        # [0]       [1]         [2]        [3]
+        representor_temp_name=${op_info[0]}
+        representor_target_name=${op_info[1]}
+        representor_adminstate=${op_info[2]}
+        representor_mtu_val=${op_info[3]}
+
+        debug_print "Renaming representor ${representor_temp_name} to final name ${representor_target_name}"
+
+        exec_cmd "ip link set dev ${representor_temp_name} name ${representor_target_name}"
+        exec_cmd "ip link set dev ${representor_target_name} mtu ${representor_mtu_val}"
+        exec_cmd "ip link set dev ${representor_target_name} ${representor_adminstate}"
     done
 }
 
@@ -1277,7 +1311,7 @@ function prepare_gcc() {
     # Ubuntu: Linux version 6.6.87.1-microsoft-standard-WSL2 (root@af282157c79e) (gcc (GCC) 11.2.0, GNU ld (GNU Binutils) 2.37) #1 SMP PREEMPT_DYNAMIC Mon Apr 21 17:08:54 UTC 2025
     # SLES: Linux version 6.4.0-150600.21-default (geeko@buildhost) (gcc (SUSE Linux) 7.5.0, GNU ld (GNU Binutils; SUSE Linux Enterprise 15) 2.41.0.20230908-150100.7.46) #1 SMP PREEMPT_DYNAMIC Thu May 16 11:09:22 UTC 2024 (36c1e09)
     # RHEL: Linux version 5.14.0-570.12.1.el9_6.x86_64 (mockbuild@x86-64-03.build.eng.rdu2.redhat.com) (gcc (GCC) 11.5.0 20240719 (Red Hat 11.5.0-5), GNU ld version 2.35.2-63.el9) #1 SMP PREEMPT_DYNAMIC Fri Apr 4 10:41:31 EDT 2025
-    
+
     # Extract GCC version - flexible regex to catch anything between "gcc" and version number
     gcc_version=$(echo "${proc_version}" | grep -oiE 'gcc[^0-9]*[0-9]+\.[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 
