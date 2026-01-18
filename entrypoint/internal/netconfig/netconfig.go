@@ -1435,6 +1435,14 @@ func (n *netconfig) collectRepresentorInfo(representorName, physSwitchID, physPo
 	}, nil
 }
 
+// representorRenameOp holds information for a two-phase representor rename operation
+type representorRenameOp struct {
+	TempName   string
+	TargetName string
+	AdminState string
+	MTU        int
+}
+
 // restoreRepresentors restores representor configurations
 func (n *netconfig) restoreRepresentors(ctx context.Context, pfName string, device *MellanoxDevice) error {
 	log := logr.FromContextOrDiscard(ctx)
@@ -1457,10 +1465,14 @@ func (n *netconfig) restoreRepresentors(ctx context.Context, pfName string, devi
 		return fmt.Errorf("failed to parse PF physical port number: %w", err)
 	}
 
-	// Restore each representor
+	// Two-phase rename array - used to avoid name collisions when interfaces are swapped after driver reload
+	renameOps := make([]representorRenameOp, 0, len(device.Representors))
+
+	// Phase 1: Rename current representor names to temporary names (frees up the target namespace)
+	log.Info("Phase 1: Renaming representors to temporary names")
 	for _, representor := range device.Representors {
-		log.Info("Restoring representor",
-			"name", representor.Name, "vf_id", representor.VFID, "admin_state", representor.AdminState, "mtu", representor.MTU)
+		log.V(1).Info("Processing representor for Phase 1",
+			"name", representor.Name, "vf_id", representor.VFID)
 
 		// Find the current representor device
 		currentRepresentorName, err := n.findCurrentRepresentor(ctx, pfPhysSwitchID, pfPhysPortNum, representor.VFID)
@@ -1469,28 +1481,63 @@ func (n *netconfig) restoreRepresentors(ctx context.Context, pfName string, devi
 			continue
 		}
 
-		// Rename representor if needed
-		if currentRepresentorName != representor.Name {
-			if err := n.renameRepresentor(ctx, currentRepresentorName, representor.Name); err != nil {
-				log.Error(err, "Failed to rename representor", "current_name", currentRepresentorName, "target_name", representor.Name)
-				continue
-			}
-			log.Info("Renamed representor", "from", currentRepresentorName, "to", representor.Name)
+		// Two-phase rename to avoid name collisions when interfaces are swapped after driver reload:
+		// Phase 1: Rename current name to temporary name (frees up the target namespace)
+		// Phase 2: Rename from temporary names to final target names (done after this loop)
+		// Note: temp name must be <= 15 chars (IFNAMSIZ). Format: t<switch_hash>p<port>v<vf> (e.g. t341cp0v0)
+		// Include last 4 chars of phys_switch_id to ensure uniqueness across multiple NICs
+		switchHash := pfPhysSwitchID
+		if len(pfPhysSwitchID) > 4 {
+			switchHash = pfPhysSwitchID[len(pfPhysSwitchID)-4:]
+		}
+		tempName := fmt.Sprintf("t%sp%sv%s", switchHash, pfPhysPortNum, representor.VFID)
+
+		// Phase 1: Rename to temporary name
+		log.V(1).Info("Phase 1: Renaming representor to temporary name",
+			"current_name", currentRepresentorName, "temp_name", tempName)
+		if err := n.renameRepresentor(ctx, currentRepresentorName, tempName); err != nil {
+			log.Error(err, "Failed to rename representor to temporary name",
+				"current_name", currentRepresentorName, "temp_name", tempName)
+			continue
+		}
+
+		// Only store the rename operation for Phase 2 if Phase 1 succeeded
+		renameOps = append(renameOps, representorRenameOp{
+			TempName:   tempName,
+			TargetName: representor.Name,
+			AdminState: representor.AdminState,
+			MTU:        representor.MTU,
+		})
+	}
+
+	// Phase 2: Rename from temporary names to final target names
+	log.Info("Phase 2: Renaming representors from temporary names to final target names")
+	for _, renameOp := range renameOps {
+		log.V(1).Info("Phase 2: Renaming representor to final name",
+			"temp_name", renameOp.TempName, "target_name", renameOp.TargetName)
+
+		// Rename from temp name to final target name
+		if err := n.renameRepresentor(ctx, renameOp.TempName, renameOp.TargetName); err != nil {
+			log.Error(err, "Failed to rename representor to final name",
+				"temp_name", renameOp.TempName, "target_name", renameOp.TargetName)
+			continue
 		}
 
 		// Set representor MTU
-		if err := n.setRepresentorMTU(representor.Name, representor.MTU); err != nil {
-			log.Error(err, "Failed to set representor MTU", "representor", representor.Name, "mtu", representor.MTU)
+		if err := n.setRepresentorMTU(renameOp.TargetName, renameOp.MTU); err != nil {
+			log.Error(err, "Failed to set representor MTU",
+				"representor", renameOp.TargetName, "mtu", renameOp.MTU)
 			continue
 		}
 
 		// Set representor admin state
-		if err := n.setRepresentorAdminState(representor.Name, representor.AdminState); err != nil {
-			log.Error(err, "Failed to set representor admin state", "representor", representor.Name, "state", representor.AdminState)
+		if err := n.setRepresentorAdminState(renameOp.TargetName, renameOp.AdminState); err != nil {
+			log.Error(err, "Failed to set representor admin state",
+				"representor", renameOp.TargetName, "state", renameOp.AdminState)
 			continue
 		}
 
-		log.Info("Successfully restored representor", "name", representor.Name)
+		log.Info("Successfully restored representor", "name", renameOp.TargetName)
 	}
 
 	log.Info("Representor restoration completed", "device", pfName)
