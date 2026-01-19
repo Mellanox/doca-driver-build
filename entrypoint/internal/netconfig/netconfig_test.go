@@ -641,6 +641,286 @@ var _ = Describe("Netconfig", func() {
 				Expect(err).NotTo(HaveOccurred())
 			})
 		})
+
+		Context("restoreRepresentors with two-phase rename", func() {
+			It("should use two-phase rename to avoid name collisions", func() {
+				// This test verifies the two-phase rename mechanism prevents name collisions
+				// when interfaces are swapped after driver reload
+				// Scenario: rep1 should become eth_rep0, rep0 should become eth_rep1
+				// Without two-phase rename, this would fail due to name collision
+
+				device := &MellanoxDevice{
+					PCIAddr:     "0000:08:00.0",
+					DevType:     devTypeEth,
+					AdminState:  adminStateUp,
+					MTU:         1500,
+					GUID:        "-",
+					EswitchMode: eswitchModeSwitchdev,
+					PfNumVfs:    2,
+					VFs: []VF{
+						{VFIndex: 0, VFPCIAddr: "0000:08:00.2", VFName: "eth_vf0", AdminState: adminStateUp, MACAddress: "aa:bb:cc:dd:ee:01", AdminMAC: "aa:bb:cc:dd:ee:01", MTU: 1500, GUID: "-"},
+						{VFIndex: 1, VFPCIAddr: "0000:08:00.3", VFName: "eth_vf1", AdminState: adminStateDown, MACAddress: "aa:bb:cc:dd:ee:02", AdminMAC: "aa:bb:cc:dd:ee:02", MTU: 9000, GUID: "-"},
+					},
+					Representors: []Representor{
+						{PhysSwitchID: "00000000000000ab", PhysPortNum: "1", VFID: "0", Name: "eth_rep0", AdminState: adminStateUp, MTU: 1500},
+						{PhysSwitchID: "00000000000000ab", PhysPortNum: "1", VFID: "1", Name: "eth_rep1", AdminState: adminStateDown, MTU: 9000},
+					},
+				}
+
+				// Mock PF physical switch ID and port name
+				osMock.On("ReadFile", "/sys/class/net/eth5/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/eth5/phys_port_name").Return([]byte("p1"), nil).Once()
+
+				// Phase 1: Find current representors and rename to temporary names
+				// For VF 0 - find current representor (currently named "rep1")
+				osMock.On("ReadDir", "/sys/class/net/").Return([]os.DirEntry{
+					&mockDirEntry{name: "rep0"},
+					&mockDirEntry{name: "rep1"},
+					&mockDirEntry{name: "lo"},
+				}, nil).Once()
+
+				// Check rep0 - this is VF 1 representor
+				osMock.On("ReadFile", "/sys/class/net/rep0/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/rep0/phys_port_name").Return([]byte("pf1vf1"), nil).Once()
+
+				// Check rep1 - this is VF 0 representor (matches!)
+				osMock.On("ReadFile", "/sys/class/net/rep1/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/rep1/phys_port_name").Return([]byte("pf1vf0"), nil).Once()
+
+				// Phase 1: Rename rep1 -> t00abp1v0 (temporary name with switch hash)
+				// Switch ID "00000000000000ab" -> last 4 chars = "00ab"
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "rep1", "name", "t00abp1v0").Return("", "", nil).Once()
+
+				// For VF 1 - find current representor (currently named "rep0")
+				osMock.On("ReadDir", "/sys/class/net/").Return([]os.DirEntry{
+					&mockDirEntry{name: "rep0"},
+					&mockDirEntry{name: "t00abp1v0"}, // rep1 already renamed to temp
+					&mockDirEntry{name: "lo"},
+				}, nil).Once()
+
+				// Check rep0 - this is VF 1 representor (matches!)
+				osMock.On("ReadFile", "/sys/class/net/rep0/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/rep0/phys_port_name").Return([]byte("pf1vf1"), nil).Once()
+
+				// Phase 1: Rename rep0 -> t00abp1v1 (temporary name with switch hash)
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "rep0", "name", "t00abp1v1").Return("", "", nil).Once()
+
+				// Phase 2: Rename from temporary to final names
+				// Rename t00abp1v0 -> eth_rep0
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "t00abp1v0", "name", "eth_rep0").Return("", "", nil).Once()
+
+				// Set MTU for eth_rep0 (LinkByName called once for MTU)
+				mockLink0 := &mockLink{
+					attrs: &netlink.LinkAttrs{
+						Name:  "eth_rep0",
+						Flags: net.FlagUp,
+						MTU:   1500,
+					},
+				}
+				netlinkMock.On("LinkByName", "eth_rep0").Return(mockLink0, nil).Once()
+				netlinkMock.On("LinkSetMTU", mockLink0, 1500).Return(nil).Once()
+
+				// Set admin state for eth_rep0 (LinkByName called again for admin state)
+				netlinkMock.On("LinkByName", "eth_rep0").Return(mockLink0, nil).Once()
+				netlinkMock.On("LinkSetUp", mockLink0).Return(nil).Once()
+
+				// Rename t00abp1v1 -> eth_rep1
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "t00abp1v1", "name", "eth_rep1").Return("", "", nil).Once()
+
+				// Set MTU for eth_rep1 (LinkByName called once for MTU)
+				mockLink1 := &mockLink{
+					attrs: &netlink.LinkAttrs{
+						Name:  "eth_rep1",
+						Flags: 0, // Down
+						MTU:   9000,
+					},
+				}
+				netlinkMock.On("LinkByName", "eth_rep1").Return(mockLink1, nil).Once()
+				netlinkMock.On("LinkSetMTU", mockLink1, 9000).Return(nil).Once()
+
+				// Set admin state for eth_rep1 (LinkByName called again for admin state)
+				netlinkMock.On("LinkByName", "eth_rep1").Return(mockLink1, nil).Once()
+				netlinkMock.On("LinkSetDown", mockLink1).Return(nil).Once()
+
+				err := nc.restoreRepresentors(ctx, "eth5", device)
+				Expect(err).NotTo(HaveOccurred())
+
+				// Verify all expectations were met
+				cmdMock.AssertExpectations(GinkgoT())
+				osMock.AssertExpectations(GinkgoT())
+				netlinkMock.AssertExpectations(GinkgoT())
+			})
+
+			It("should handle error in Phase 1 rename gracefully", func() {
+				device := &MellanoxDevice{
+					PCIAddr:     "0000:08:00.0",
+					DevType:     devTypeEth,
+					AdminState:  adminStateUp,
+					MTU:         1500,
+					GUID:        "-",
+					EswitchMode: eswitchModeSwitchdev,
+					PfNumVfs:    1,
+					VFs: []VF{
+						{VFIndex: 0, VFPCIAddr: "0000:08:00.2", VFName: "eth_vf0", AdminState: adminStateUp, MACAddress: "aa:bb:cc:dd:ee:01", AdminMAC: "aa:bb:cc:dd:ee:01", MTU: 1500, GUID: "-"},
+					},
+					Representors: []Representor{
+						{PhysSwitchID: "00000000000000ab", PhysPortNum: "1", VFID: "0", Name: "eth_rep0", AdminState: adminStateUp, MTU: 1500},
+					},
+				}
+
+				// Mock PF physical switch ID and port name
+				osMock.On("ReadFile", "/sys/class/net/eth5/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/eth5/phys_port_name").Return([]byte("p1"), nil).Once()
+
+				// Find current representor
+				osMock.On("ReadDir", "/sys/class/net/").Return([]os.DirEntry{
+					&mockDirEntry{name: "rep0"},
+					&mockDirEntry{name: "lo"},
+				}, nil).Once()
+
+				osMock.On("ReadFile", "/sys/class/net/rep0/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/rep0/phys_port_name").Return([]byte("pf1vf0"), nil).Once()
+
+				// Phase 1: Rename fails
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "rep0", "name", "t00abp1v0").
+					Return("", "device busy", fmt.Errorf("rename failed")).Once()
+
+				// Phase 2 should not execute since Phase 1 failed (no renameOps added)
+				// No additional mock expectations needed - Phase 2 won't run
+
+				// The function should continue despite the error
+				err := nc.restoreRepresentors(ctx, "eth5", device)
+				Expect(err).NotTo(HaveOccurred())
+
+				cmdMock.AssertExpectations(GinkgoT())
+				osMock.AssertExpectations(GinkgoT())
+			})
+
+			It("should generate correct temporary names for different ports and VFs", func() {
+				// This test verifies the temporary name format: t<switch_hash>p<port>v<vf>
+				device := &MellanoxDevice{
+					PCIAddr:     "0000:08:00.0",
+					DevType:     devTypeEth,
+					AdminState:  adminStateUp,
+					MTU:         1500,
+					GUID:        "-",
+					EswitchMode: eswitchModeSwitchdev,
+					PfNumVfs:    3,
+					VFs: []VF{
+						{VFIndex: 0, VFPCIAddr: "0000:08:00.2", VFName: "eth_vf0", AdminState: adminStateUp, MACAddress: "aa:bb:cc:dd:ee:01", AdminMAC: "aa:bb:cc:dd:ee:01", MTU: 1500, GUID: "-"},
+						{VFIndex: 1, VFPCIAddr: "0000:08:00.3", VFName: "eth_vf1", AdminState: adminStateUp, MACAddress: "aa:bb:cc:dd:ee:02", AdminMAC: "aa:bb:cc:dd:ee:02", MTU: 1500, GUID: "-"},
+						{VFIndex: 2, VFPCIAddr: "0000:08:00.4", VFName: "eth_vf2", AdminState: adminStateUp, MACAddress: "aa:bb:cc:dd:ee:03", AdminMAC: "aa:bb:cc:dd:ee:03", MTU: 1500, GUID: "-"},
+					},
+					Representors: []Representor{
+						{PhysSwitchID: "00000000000000ab", PhysPortNum: "2", VFID: "0", Name: "final_rep0", AdminState: adminStateUp, MTU: 1500},
+						{PhysSwitchID: "00000000000000ab", PhysPortNum: "2", VFID: "1", Name: "final_rep1", AdminState: adminStateUp, MTU: 1500},
+						{PhysSwitchID: "00000000000000ab", PhysPortNum: "2", VFID: "2", Name: "final_rep2", AdminState: adminStateUp, MTU: 1500},
+					},
+				}
+
+				// Mock PF physical switch ID and port name - port 2
+				osMock.On("ReadFile", "/sys/class/net/eth5/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/eth5/phys_port_name").Return([]byte("p2"), nil).Once()
+
+				// Expected temporary names: t00abp2v0, t00abp2v1, t00abp2v2 (switch_hash=00ab, port=2, vf=0,1,2)
+
+				// Mock finding and renaming each representor to temp names (Phase 1)
+				// For each representor, findCurrentRepresentor scans all devices
+				for i := 0; i < 3; i++ {
+					currentName := fmt.Sprintf("rep%d", i)
+					tempName := fmt.Sprintf("t00abp2v%d", i) // switch_hash=00ab, port=2, vf=i
+
+					// Mock ReadDir for findCurrentRepresentor
+					osMock.On("ReadDir", "/sys/class/net/").Return([]os.DirEntry{
+						&mockDirEntry{name: "rep0"},
+						&mockDirEntry{name: "rep1"},
+						&mockDirEntry{name: "rep2"},
+						&mockDirEntry{name: "lo"},
+					}, nil).Once()
+
+					// findCurrentRepresentor will check each device until it finds the match
+					// It checks rep0 first
+					osMock.On("ReadFile", "/sys/class/net/rep0/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
+					osMock.On("ReadFile", "/sys/class/net/rep0/phys_port_name").Return([]byte("pf2vf0"), nil).Once()
+
+					// If looking for VF 0, it matches on rep0, so we stop here
+					// If looking for VF 1 or 2, we continue checking
+					if i > 0 {
+						// Check rep1
+						osMock.On("ReadFile", "/sys/class/net/rep1/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
+						osMock.On("ReadFile", "/sys/class/net/rep1/phys_port_name").Return([]byte("pf2vf1"), nil).Once()
+					}
+
+					if i > 1 {
+						// Check rep2
+						osMock.On("ReadFile", "/sys/class/net/rep2/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
+						osMock.On("ReadFile", "/sys/class/net/rep2/phys_port_name").Return([]byte("pf2vf2"), nil).Once()
+					}
+
+					// Phase 1: Rename to temp name
+					cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", currentName, "name", tempName).Return("", "", nil).Once()
+				}
+
+				// Mock Phase 2: Rename from temp to final names and set configs
+				for i := 0; i < 3; i++ {
+					tempName := fmt.Sprintf("t00abp2v%d", i)
+					finalName := fmt.Sprintf("final_rep%d", i)
+
+					cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", tempName, "name", finalName).Return("", "", nil).Once()
+
+					mockLink := &mockLink{
+						attrs: &netlink.LinkAttrs{
+							Name:  finalName,
+							Flags: net.FlagUp,
+							MTU:   1500,
+						},
+					}
+					// LinkByName called twice per representor (once for MTU, once for admin state)
+					netlinkMock.On("LinkByName", finalName).Return(mockLink, nil).Once()
+					netlinkMock.On("LinkSetMTU", mockLink, 1500).Return(nil).Once()
+					netlinkMock.On("LinkByName", finalName).Return(mockLink, nil).Once()
+					netlinkMock.On("LinkSetUp", mockLink).Return(nil).Once()
+				}
+
+				err := nc.restoreRepresentors(ctx, "eth5", device)
+				Expect(err).NotTo(HaveOccurred())
+
+				cmdMock.AssertExpectations(GinkgoT())
+				osMock.AssertExpectations(GinkgoT())
+				netlinkMock.AssertExpectations(GinkgoT())
+			})
+
+			It("should handle representor not found error", func() {
+				device := &MellanoxDevice{
+					PCIAddr:     "0000:08:00.0",
+					DevType:     devTypeEth,
+					AdminState:  adminStateUp,
+					MTU:         1500,
+					GUID:        "-",
+					EswitchMode: eswitchModeSwitchdev,
+					PfNumVfs:    1,
+					VFs: []VF{
+						{VFIndex: 0, VFPCIAddr: "0000:08:00.2", VFName: "eth_vf0", AdminState: adminStateUp, MACAddress: "aa:bb:cc:dd:ee:01", AdminMAC: "aa:bb:cc:dd:ee:01", MTU: 1500, GUID: "-"},
+					},
+					Representors: []Representor{
+						{PhysSwitchID: "00000000000000ab", PhysPortNum: "1", VFID: "0", Name: "eth_rep0", AdminState: adminStateUp, MTU: 1500},
+					},
+				}
+
+				// Mock PF physical switch ID and port name
+				osMock.On("ReadFile", "/sys/class/net/eth5/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/eth5/phys_port_name").Return([]byte("p1"), nil).Once()
+
+				// Mock finding representor - but none found
+				osMock.On("ReadDir", "/sys/class/net/").Return([]os.DirEntry{
+					&mockDirEntry{name: "lo"},
+				}, nil).Once()
+
+				// Should continue without error
+				err := nc.restoreRepresentors(ctx, "eth5", device)
+				Expect(err).NotTo(HaveOccurred())
+			})
+		})
 	})
 
 	Context("DevicesUseNewNamingScheme", func() {
