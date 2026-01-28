@@ -1907,7 +1907,25 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_vdpa").Return("", "", nil) // Module exists
+			// Mock GetOSType for non-SLES case
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "mlx5_vdpa").Return("", "", nil)
+
+			err := dm.restartDriver(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should load mlx5_vdpa with --allow-unsupported on SLES", func() {
+			// Mock loadHostDependencies
+			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_vdpa").Return("", "", nil) // Module exists
+			// Mock GetOSType for SLES case
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeSLES, nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "--allow-unsupported", "mlx5_vdpa").Return("", "", nil)
 
 			err := dm.restartDriver(ctx)
 			Expect(err).NotTo(HaveOccurred())
