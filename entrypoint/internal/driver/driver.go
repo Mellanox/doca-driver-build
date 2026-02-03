@@ -1645,7 +1645,16 @@ func (d *driverMgr) restartDriver(ctx context.Context) error {
 	_, _, err = d.cmd.RunCommand(ctx, "modinfo", "mlx5_vdpa")
 	if err == nil {
 		// Module exists, try to load it
-		_, _, err = d.cmd.RunCommand(ctx, "modprobe", "mlx5_vdpa")
+		// On SLES, we need --allow-unsupported
+		osType, err := d.host.GetOSType(ctx)
+		if err != nil {
+			log.V(1).Info("Failed to get OS type, proceeding without --allow-unsupported flag", "error", err)
+		}
+		if osType == constants.OSTypeSLES {
+			_, _, err = d.cmd.RunCommand(ctx, "modprobe", "--allow-unsupported", "mlx5_vdpa")
+		} else {
+			_, _, err = d.cmd.RunCommand(ctx, "modprobe", "mlx5_vdpa")
+		}
 		if err != nil {
 			log.V(1).Info("Failed to load mlx5_vdpa module", "error", err)
 			// Non-fatal, continue
