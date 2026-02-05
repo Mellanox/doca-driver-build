@@ -43,6 +43,10 @@ type Config struct {
 
 	DtkOcpDriverBuild             bool   `env:"DTK_OCP_DRIVER_BUILD"`
 	DtkOcpNicSharedDir            string `env:"DTK_OCP_NIC_SHARED_DIR"            envDefault:"/mnt/shared-nvidia-nic-driver-toolkit"`
+	DtkOcpCompiledDriverVer       string `env:"DTK_OCP_COMPILED_DRIVER_VER"`
+	DtkOcpStartCompileFlag        string `env:"DTK_OCP_START_COMPILE_FLAG"`
+	DtkOcpDoneCompileFlag         string `env:"DTK_OCP_DONE_COMPILE_FLAG"`
+	AppendDriverBuildFlags        string `env:"APPEND_DRIVER_BUILD_FLAGS"`
 	NvidiaNicDriversInventoryPath string `env:"NVIDIA_NIC_DRIVERS_INVENTORY_PATH"`
 
 	OfedBlacklistModulesFile string   `env:"OFED_BLACKLIST_MODULES_FILE" envDefault:"/host/etc/modprobe.d/blacklist-ofed-modules.conf"`
