@@ -17,11 +17,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/go-logr/logr"
@@ -30,9 +32,38 @@ import (
 
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/config"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/constants"
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/dtk"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/entrypoint"
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/cmd"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/version"
 )
+
+type ctxData struct {
+	//nolint:containedctx
+	Ctx    context.Context
+	Cancel context.CancelFunc
+}
+
+// setupSignalHandler takes a signal channel and contexts with cancel functions.
+// It starts a goroutine that cancels the first uncanceled context on receiving a signal,
+// if no uncanceled context exists, it exits the application with code 1.
+func setupSignalHandler(ch chan os.Signal, ctxs []ctxData) {
+	go func() {
+	OUT:
+		for {
+			<-ch
+			for _, ctx := range ctxs {
+				if ctx.Ctx.Err() != nil {
+					// context is already canceled, try next one
+					continue
+				}
+				ctx.Cancel()
+				continue OUT
+			}
+			os.Exit(1)
+		}
+	}()
+}
 
 func main() {
 	cfg, err := config.GetConfig()
@@ -57,6 +88,20 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("start manager", "mode", containerMode)
+	if containerMode == constants.DriverContainerModeDtkBuild {
+		// Use a context that is canceled on signal
+		ctx, cancel := context.WithCancel(context.Background())
+		// Attach logger to context
+		ctx = logr.NewContext(ctx, log)
+		setupSignalHandler(getSignalChannel(), []ctxData{{Ctx: ctx, Cancel: cancel}})
+
+		if err := dtk.RunBuild(ctx, log, cfg, cmd.New()); err != nil {
+			log.Error(err, "DTK Build failed")
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := entrypoint.Run(getSignalChannel(), log, containerMode, cfg); err != nil {
 		log.Error(err, "Entrypoint Run failed")
 		os.Exit(1)
@@ -67,9 +112,11 @@ func getContainerMode() (string, error) {
 	flag.Parse()
 	containerMode := flag.Arg(0)
 	if flag.NArg() != 1 ||
-		(containerMode != constants.DriverContainerModePrecompiled && containerMode != string(constants.DriverContainerModeSources)) {
-		return "", fmt.Errorf("container mode argument has invalid value %s, supported values: %s, %s",
-			containerMode, constants.DriverContainerModePrecompiled, constants.DriverContainerModeSources)
+		(containerMode != constants.DriverContainerModePrecompiled &&
+			containerMode != constants.DriverContainerModeSources &&
+			containerMode != constants.DriverContainerModeDtkBuild) {
+		return "", fmt.Errorf("container mode argument has invalid value %s, supported values: %s, %s, %s",
+			containerMode, constants.DriverContainerModePrecompiled, constants.DriverContainerModeSources, constants.DriverContainerModeDtkBuild)
 	}
 	return containerMode, nil
 }
@@ -87,6 +134,11 @@ func getLogger(cfg config.Config) logr.Logger {
 	if cfg.EntrypointDebug {
 		logConfig.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
 		if cfg.DebugLogFile != "" {
+			// Create directory if it doesn't exist
+			logDir := filepath.Dir(cfg.DebugLogFile)
+			if err := os.MkdirAll(logDir, 0o755); err != nil {
+				fmt.Fprintf(os.Stderr, "WARNING: failed to create log directory %s: %v\n", logDir, err)
+			}
 			logConfig.OutputPaths = append(logConfig.OutputPaths, cfg.DebugLogFile)
 			logConfig.ErrorOutputPaths = append(logConfig.ErrorOutputPaths, cfg.DebugLogFile)
 		}
