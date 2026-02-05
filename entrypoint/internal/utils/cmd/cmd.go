@@ -58,6 +58,13 @@ func (c *cmd) RunCommand(ctx context.Context, command string, args ...string) (s
 	var stdout, stderr bytes.Buffer
 
 	cmd := exec.CommandContext(ctx, command, args...)
+	// Ensure child process is killed when context is canceled
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		return cmd.Process.Signal(syscall.SIGTERM)
+	}
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 

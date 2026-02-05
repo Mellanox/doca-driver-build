@@ -1,6 +1,18 @@
 #!/bin/bash
 # Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 
+# Load environment variables if file exists
+if [ -f "$(dirname "$0")/dtk.env" ]; then
+    source "$(dirname "$0")/dtk.env"
+fi
+
+: ${USE_NEW_ENTRYPOINT:=false}
+
+if [ "$USE_NEW_ENTRYPOINT" = "true" ]; then
+    echo "Using Go entrypoint for DTK build"
+    exec "$(dirname "$0")/entrypoint" dtk-build
+fi
+
 : ${ENTRYPOINT_DEBUG:=false}
 : ${DTK_OCP_NIC_SHARED_DIR:=/mnt/shared-nvidia-nic-driver-toolkit}
 
