@@ -21,6 +21,7 @@ const (
 
 	DriverContainerModeSources     = "sources"
 	DriverContainerModePrecompiled = "precompiled"
+	DriverContainerModeDtkBuild    = "dtk-build"
 
 	// OS Types
 	OSTypeUbuntu    = "ubuntu"
@@ -33,4 +34,9 @@ const (
 	DefaultOpenShiftVersion = "4.9"
 
 	InvalidGUID = "00:00:00:00:00:00:00:00"
+
+	// DTK constants
+	DtkOcpBuildScriptPath    = "/root/dtk_nic_driver_build.sh"
+	DtkStartCompileFlag      = "dtk_start_compile"
+	DtkDoneCompileFlagPrefix = "dtk_done_compile_"
 )

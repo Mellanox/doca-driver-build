@@ -1310,6 +1310,10 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", mock.Anything).Return("", "", nil) // ls -la destination directory
 			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", mock.Anything).Return("", "", nil) // cp command
 
+			// Mock fixSourceLink
+			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
+			osMock.EXPECT().Readlink(mock.Anything).Return("/usr/src/ofa_kernel/x86_64/5.4.0-42-generic", nil)
+
 			// Mock storeBuildChecksum - return valid checksum
 			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", mock.Anything).Return("abc123def456", "", nil)
 
