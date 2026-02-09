@@ -49,8 +49,8 @@ RUN set -x && \
     for source in ${D_APT_REMOVE}; do rm -f /etc/apt/sources.list.d/${source}.list; done && \
 # Perform distro update and install prerequirements
     apt-get -yq update && \
-    DEBIAN_FRONTEND=noninteractive apt-get -yq upgrade && \
-    DEBIAN_FRONTEND=noninteractive apt-get -yq install apt-utils \
+    DEBIAN_FRONTEND=noninteractive apt-get -yq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" upgrade && \
+    DEBIAN_FRONTEND=noninteractive apt-get -yq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install apt-utils \
 # Driver build / install script requirements
     perl pciutils kmod lsof python3 dh-python \
 # Container functional requirements
@@ -97,7 +97,7 @@ RUN set -x && \
 RUN set -x && \
     echo $D_OS | grep "ubuntu20.04" || GCC_VER="-12" && \
 # Install prerequirements \
-    DEBIAN_FRONTEND=noninteractive apt-get -yq install curl \
+    DEBIAN_FRONTEND=noninteractive apt-get -yq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install curl \
     dkms make autoconf autotools-dev chrpath automake hostname debhelper gcc$GCC_VER quilt libc6-dev build-essential pkg-config ubuntu-advantage-tools && \
 # Cleanup \
     apt-get clean autoclean && apt install --reinstall -y ca-certificates && \
@@ -137,7 +137,7 @@ ARG D_BUILD_EXTRA_ARGS
 # Driver build manadatory packages
 RUN set -x && \
     apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get -yq install linux-image-${D_KERNEL_VER} linux-headers-${D_KERNEL_VER}
+    DEBIAN_FRONTEND=noninteractive apt-get -yq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install linux-image-${D_KERNEL_VER} linux-headers-${D_KERNEL_VER}
 
 # Build driver
 RUN set -x && \
@@ -157,8 +157,8 @@ ARG OFED_SRC_LOCAL_DIR
 ENV NVIDIA_NIC_DRIVER_PATH=""
 
 RUN set -x && \
-    apt-get install -y lsb-release && \
-    test -n "${D_KERNEL_VER}" && apt-get install -y linux-modules-extra-${D_KERNEL_VER} || true  # only install this package when kernel variable defined
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" lsb-release && \
+    test -n "${D_KERNEL_VER}" && DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" linux-modules-extra-${D_KERNEL_VER} || true  # only install this package when kernel variable defined
 # Cleanup
 RUN set -x && \
     apt-get clean autoclean && \
@@ -167,7 +167,7 @@ RUN set -x && \
 # Install driver
 COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/DEBS/${D_OS}/*/*.deb /root/
 
-RUN apt-get install -y /root/*.deb
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" /root/*.deb
 
 # Prevent modprobe from giving a WARNING about missing files
 RUN touch /lib/modules/${D_KERNEL_VER}/modules.order /lib/modules/${D_KERNEL_VER}/modules.builtin && \
