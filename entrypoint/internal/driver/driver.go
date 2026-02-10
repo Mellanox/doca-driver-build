@@ -1036,7 +1036,13 @@ func (d *driverMgr) getBuildFlagsForOS(osType, kernelVersion string) []string {
 	case constants.OSTypeUbuntu:
 		return []string{"--disable-kmp", "--without-dkms"}
 	case constants.OSTypeSLES:
-		return []string{"--disable-kmp", "--without-dkms", "--kernel-sources", "/lib/modules/" + kernelVersion + "/build"}
+		return []string{
+			"--disable-kmp",
+			"--without-dkms",
+			"--kernel-sources", "/lib/modules/" + kernelVersion + "/build",
+			"--without-xpmem",
+			"--without-xpmem-modules",
+		}
 	case constants.OSTypeRedHat:
 		return []string{"--disable-kmp", "--without-dkms"}
 	default:

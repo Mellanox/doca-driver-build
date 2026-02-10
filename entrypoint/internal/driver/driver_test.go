@@ -1001,9 +1001,10 @@ var _ = Describe("Driver", func() {
 				"--without-depcheck", "--kernel", "5.4.0-42-default", "--kernel-only", "--build-only",
 				"--with-mlnx-tools", "--without-knem", "--without-iser",
 				"--without-isert", "--without-srp", "--without-kernel-mft",
-				"--without-mlnx-rdma-rxe", "--disable-kmp", "--without-dkms", "--kernel-sources",
-				"/lib/modules/5.4.0-42-default/build", "--without-mlnx-nfsrdma",
-				"--without-mlnx-nvme").Return("", "", nil)
+				"--without-mlnx-rdma-rxe",
+				"--disable-kmp", "--without-dkms", "--kernel-sources",
+				"/lib/modules/5.4.0-42-default/build", "--without-xpmem", "--without-xpmem-modules",
+				"--without-mlnx-nfsrdma", "--without-mlnx-nvme").Return("", "", nil)
 
 			// Mock copyBuildArtifacts - debug logging and copy
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)

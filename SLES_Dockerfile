@@ -134,7 +134,7 @@ RUN ls -l /lib/modules
 
 # Build driver --distro ${D_OS}
 RUN set -x && \
-    ${OFED_SRC_LOCAL_DIR}/install.pl -vvv --distro ${D_OS} --kernel-sources /lib/modules/${D_KERNEL_VER}/build --without-depcheck  --kernel ${D_KERNEL_VER} --kernel-only --build-only --copy-ifnames-udev --with-mlnx-tools --without-knem-modules --without-srp-modules --without-kernel-mft-modules --without-iser-modules --without-isert-modules
+    ${OFED_SRC_LOCAL_DIR}/install.pl -vvv --distro ${D_OS} --kernel-sources /lib/modules/${D_KERNEL_VER}/build --without-depcheck  --kernel ${D_KERNEL_VER} --kernel-only --build-only --copy-ifnames-udev --with-mlnx-tools --without-knem-modules --without-srp-modules --without-kernel-mft-modules --without-iser-modules --without-isert-modules --without-xpmem-modules --without-xpmem
 RUN ls -l ${OFED_SRC_LOCAL_DIR}/RPMS/*/x86_64/
 ###################################
 # Stage: Install precompiled driver

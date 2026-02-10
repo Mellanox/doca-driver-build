@@ -388,6 +388,7 @@ function build_driver_from_src() {
         package_type="rpm"
         append_driver_build_flags="$append_driver_build_flags --disable-kmp"
         append_driver_build_flags="$append_driver_build_flags --kernel-sources /lib/modules/${FULL_KVER}/build"
+        append_driver_build_flags="$append_driver_build_flags --without-xpmem --without-xpmem-modules"
     fi
 
     timestamp_print "Starting driver build"
