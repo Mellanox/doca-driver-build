@@ -33,7 +33,8 @@ RUN if [[ "${D_OS}" == *"rhel9"* ]] ; then \
     fi
 
 RUN set -x && \
-# Driver build / install script requirements
+# Perform distro update and install prerequirements
+    dnf -y update && \
     dnf -y install perl \
 # Container functional requirements
     jq iproute kmod procps-ng udev
