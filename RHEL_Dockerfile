@@ -12,15 +12,34 @@ ARG STIG_COMPLIANT=false
 # Final clean image of precompiled driver container
 ARG D_FINAL_BASE_IMAGE=registry.access.redhat.com/ubi9/ubi:latest
 
-##################################################################
-# Stage: Minimal base image update and install common requirements
-
 # DTK base image (below example for specific kernel headers version)
 ARG D_BASE_IMAGE="registry.redhat.io/openshift4/driver-toolkit-rhel9:v4.13.0-202309112001.p0.gd719bdc.assembly.stream"
 # Standart: registry.access.redhat.com/ubi9:latest
 
 ARG D_PYTHON_VERSION="36"
 ARG D_PYTHON="python${D_PYTHON_VERSION}"
+
+##################################################################
+# Stage: build go binary for entrypoint
+FROM golang:1.24 AS go_builder
+
+# Set GOPROXY if provided
+ARG GOPROXY
+ENV GOPROXY=$GOPROXY
+
+WORKDIR /workspace
+
+COPY entrypoint/go.mod go.mod
+COPY entrypoint/go.sum go.sum
+
+RUN go mod download
+
+COPY entrypoint/ .
+
+RUN TARGETARCH=${D_ARCH} TARGETOS=linux make build
+
+##################################################################
+# Stage: Minimal base image update and install common requirements
 
 FROM $D_BASE_IMAGE AS base
 
@@ -38,6 +57,13 @@ RUN set -x && \
     dnf -y install perl \
 # Container functional requirements
     jq iproute kmod procps-ng udev
+
+COPY --from=go_builder /workspace/build/entrypoint /root/entrypoint
+WORKDIR /root
+ADD ./entrypoint.sh /root/entrypoint.sh
+ADD ./loader.sh /root/loader.sh
+
+ENTRYPOINT ["/root/loader.sh"]
 
 ##############################################################################################
 # Stage: Download NVIDIA driver sources and install src driver container packages requirements
@@ -79,7 +105,7 @@ RUN if file ${D_OFED_SRC_ARCHIVE} | grep compressed; then \
     mv ${D_OFED_SRC_ARCHIVE}/MLNX_OFED_SRC-${D_OFED_VERSION} . ; \
   fi
 
-WORKDIR /
+WORKDIR /root
 ADD ./entrypoint.sh /root/entrypoint.sh
 ADD ./dtk_nic_driver_build.sh /root/dtk_nic_driver_build.sh
 
@@ -93,7 +119,7 @@ RUN set -x && \
   fi && \
   rm -f /tmp/stig-fixer.sh
 
-ENTRYPOINT ["/root/entrypoint.sh"]
+ENTRYPOINT ["/root/loader.sh"]
 CMD ["sources"]
 
 LABEL doca-version=${D_DOCA_VERSION}
@@ -150,9 +176,11 @@ RUN touch /lib/modules/${D_KERNEL_VER}/modules.order /lib/modules/${D_KERNEL_VER
 # Introduce installed kernel modules
     depmod ${D_KERNEL_VER}
 
-WORKDIR /
+WORKDIR /root
 ADD ./entrypoint.sh /root/entrypoint.sh
+ADD ./loader.sh /root/loader.sh
+COPY --from=go_builder /workspace/build/entrypoint /root/entrypoint
 ADD ./dtk_nic_driver_build.sh /root/dtk_nic_driver_build.sh
 
-ENTRYPOINT ["/root/entrypoint.sh"]
+ENTRYPOINT ["/root/loader.sh"]
 CMD ["precompiled"]
