@@ -59,7 +59,7 @@ done
 
 timestamp_print "Starting compilation of driver version ${DTK_OCP_COMPILED_DRIVER_VER}"
 
-exec_cmd "${DTK_OCP_NIC_SHARED_DIR}/MLNX_OFED_SRC-${DTK_OCP_COMPILED_DRIVER_VER}/install.pl --build-only --kernel-only --without-knem --without-iser --without-isert --without-srp  --with-mlnx-tools --with-ofed-scripts --copy-ifnames-udev ${append_driver_build_flags}"
+exec_cmd "${DTK_OCP_NIC_SHARED_DIR}/MLNX_OFED_SRC-${DTK_OCP_COMPILED_DRIVER_VER}/install.pl --build-only --kernel-only --without-knem --without-iser --without-isert --without-srp  --with-mlnx-tools --with-ofed-scripts --copy-ifnames-udev --disable-kmp --without-dkms ${append_driver_build_flags}"
 
 exec_cmd "touch ${DTK_OCP_DONE_COMPILE_FLAG}"
 
