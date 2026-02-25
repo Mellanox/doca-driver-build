@@ -171,25 +171,38 @@ func (d *driverMgr) Build(ctx context.Context) error {
 		// Mark build as incomplete at the start
 		d.driverBuildIncomplete = true
 
-		// Create inventory directory
-		if err := d.createInventoryDirectory(ctx, inventoryPath); err != nil {
-			return fmt.Errorf("failed to create inventory directory: %w", err)
-		}
+		// Check if DTK OCP driver build is enabled
+		if d.cfg.DtkOcpDriverBuild {
+			if err := d.buildDriverDTK(ctx, kernelVersion, inventoryPath); err != nil {
+				return err
+			}
+		} else {
+			// Create inventory directory
+			if err := d.createInventoryDirectory(ctx, inventoryPath); err != nil {
+				return fmt.Errorf("failed to create inventory directory: %w", err)
+			}
 
-		// Install OS-specific prerequisites
-		log.V(1).Info("About to install prerequisites", "os", osType, "kernel", kernelVersion)
-		if err := d.installPrerequisitesForOS(ctx, osType, kernelVersion); err != nil {
-			return fmt.Errorf("failed to install prerequisites: %w", err)
-		}
+			// Install OS-specific prerequisites
+			log.V(1).Info("About to install prerequisites", "os", osType, "kernel", kernelVersion)
+			if err := d.installPrerequisitesForOS(ctx, osType, kernelVersion); err != nil {
+				return fmt.Errorf("failed to install prerequisites: %w", err)
+			}
 
-		// Build driver from source
-		if err := d.buildDriverFromSource(ctx, d.cfg.NvidiaNicDriverPath, kernelVersion, osType); err != nil {
-			return fmt.Errorf("failed to build driver from source: %w", err)
-		}
+			// Build driver from source
+			if err := d.buildDriverFromSource(ctx, d.cfg.NvidiaNicDriverPath, kernelVersion, osType); err != nil {
+				return fmt.Errorf("failed to build driver from source: %w", err)
+			}
 
-		// Copy build artifacts to inventory
-		if err := d.copyBuildArtifacts(ctx, d.cfg.NvidiaNicDriverPath, inventoryPath, osType); err != nil {
-			return fmt.Errorf("failed to copy build artifacts: %w", err)
+			// Copy build artifacts to inventory
+			if err := d.copyBuildArtifacts(ctx, d.cfg.NvidiaNicDriverPath, inventoryPath, osType); err != nil {
+				return fmt.Errorf("failed to copy build artifacts: %w", err)
+			}
+
+			// Fix source link if needed
+			if err := d.fixSourceLink(ctx, kernelVersion); err != nil {
+				log.V(1).Info("Failed to fix source link", "error", err)
+				// Non-fatal error, continue
+			}
 		}
 
 		// Calculate and store checksum
@@ -197,12 +210,6 @@ func (d *driverMgr) Build(ctx context.Context) error {
 			if err := d.storeBuildChecksum(ctx, inventoryPath, kernelVersion); err != nil {
 				return fmt.Errorf("failed to store build checksum: %w", err)
 			}
-		}
-
-		// Fix source link if needed
-		if err := d.fixSourceLink(ctx, kernelVersion); err != nil {
-			log.V(1).Info("Failed to fix source link", "error", err)
-			// Non-fatal error, continue
 		}
 
 		// Mark build as complete after successful build
