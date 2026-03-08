@@ -1306,13 +1306,20 @@ var _ = Describe("Driver", func() {
 
 			// Mock copyBuildArtifacts - debug logging and copy
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", mock.Anything).Return("", "", nil) // ls -la source directory
-			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", mock.Anything).Return("", "", nil) // find .deb files
-			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", mock.Anything).Return("", "", nil) // ls -la destination directory
-			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", mock.Anything).Return("", "", nil) // cp command
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", mock.Anything).Return("", "", nil).Times(4)
+
+			// Mock fixSourceLink
+			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
+			osMock.EXPECT().Readlink(mock.Anything).Return("/usr/src/ofa_kernel/x86_64/5.4.0-42-generic", nil)
 
 			// Mock storeBuildChecksum - return valid checksum
-			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", mock.Anything).Return("abc123def456", "", nil)
+			// Use a more specific matcher for the command to avoid matching other sh -c calls
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", mock.MatchedBy(func(cmd string) bool {
+				return strings.Contains(cmd, "md5sum")
+			})).Return("abc123def456", "", nil)
+
+			// Mock WriteFile failure
+			osMock.EXPECT().WriteFile(mock.Anything, mock.Anything, os.FileMode(0o644)).Return(errors.New("write failed"))
 
 			err := dm.Build(ctx)
 			Expect(err).To(HaveOccurred())
