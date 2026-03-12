@@ -18,8 +18,16 @@
 package config
 
 import (
+	"strings"
+
 	"github.com/caarlos0/env/v11"
 )
+
+// DefaultOfedBlacklistModules is the default set of kernel modules to blacklist.
+var DefaultOfedBlacklistModules = []string{
+	"mlx5_core", "mlx5_ib", "ib_umad", "ib_uverbs", "ib_ipoib",
+	"rdma_cm", "rdma_ucm", "ib_core", "ib_cm",
+}
 
 // Config contains configuration for the entrypoint.
 type Config struct {
@@ -46,8 +54,8 @@ type Config struct {
 	NvidiaNicDriversInventoryPath string `env:"NVIDIA_NIC_DRIVERS_INVENTORY_PATH"`
 
 	OfedBlacklistModulesFile string   `env:"OFED_BLACKLIST_MODULES_FILE" envDefault:"/host/etc/modprobe.d/blacklist-ofed-modules.conf"`
-	OfedBlacklistModules     []string `env:"OFED_BLACKLIST_MODULES"      envDefault:"mlx5_core:mlx5_ib:ib_umad:ib_uverbs:ib_ipoib:rdma_cm:rdma_ucm:ib_core:ib_cm" envSeparator:":"`
-	StorageModules           []string `env:"STORAGE_MODULES"             envDefault:"ib_isert:nvme_rdma:nvmet_rdma:rpcrdma:xprtrdma:ib_srpt"                      envSeparator:":"`
+	OfedBlacklistModules     []string `env:"OFED_BLACKLIST_MODULES"      envSeparator:":"`
+	StorageModules           []string `env:"STORAGE_MODULES"             envDefault:"ib_isert:nvme_rdma:nvmet_rdma:rpcrdma:xprtrdma:ib_srpt" envSeparator:":"`
 
 	// debug settings
 	EntrypointDebug     bool   `env:"ENTRYPOINT_DEBUG"`
@@ -62,5 +70,30 @@ func GetConfig() (Config, error) {
 	if err := env.Parse(&cfg); err != nil {
 		return Config{}, err
 	}
+	cfg.OfedBlacklistModules = mergeModules(DefaultOfedBlacklistModules, cfg.OfedBlacklistModules)
 	return cfg, nil
+}
+
+// mergeModules merges defaults and additional module lists, deduplicating while preserving order.
+func mergeModules(defaults, additional []string) []string {
+	seen := make(map[string]bool, len(defaults)+len(additional))
+	result := make([]string, 0, len(defaults)+len(additional))
+
+	for _, m := range defaults {
+		m = strings.TrimSpace(m)
+		if m != "" && !seen[m] {
+			seen[m] = true
+			result = append(result, m)
+		}
+	}
+
+	for _, m := range additional {
+		m = strings.TrimSpace(m)
+		if m != "" && !seen[m] {
+			seen[m] = true
+			result = append(result, m)
+		}
+	}
+
+	return result
 }
