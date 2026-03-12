@@ -50,6 +50,15 @@
 : ${OFED_BLACKLIST_MODULES_FILE:=/host/etc/modprobe.d/blacklist-ofed-modules.conf}
 : ${OFED_BLACKLIST_MODULES:=mlx5_core:mlx5_ib:ib_umad:ib_uverbs:ib_ipoib:rdma_cm:rdma_ucm:ib_core:ib_cm}
 
+# UNLOAD_THIRD_PARTY_RDMA_MODULES: when true, all known third-party RDMA kernel
+# modules (from rdma-core) are blacklisted and unloaded before OFED driver reload.
+# The module list is hardcoded — no user input needed.
+# Example: UNLOAD_THIRD_PARTY_RDMA_MODULES=true
+: ${UNLOAD_THIRD_PARTY_RDMA_MODULES:=false}
+
+# Hardcoded list of known third-party RDMA modules (non-NVIDIA, from rdma-core)
+THIRD_PARTY_RDMA_MODULES="bnxt_re efa erdma iw_cxgb4 hfi1 hns_roce ionic_rdma irdma ib_qib mana_ib ocrdma qedr rdma_rxe siw vmw_pvrdma ib_srp ib_iser iw_cm ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma"
+
 : ${UBUNTU_PRO_TOKEN:=""}
 
 : ${USE_DKMS:=false}
@@ -504,6 +513,27 @@ function unload_storage_modules() {
     fi
 }
 
+function unload_third_party_rdma_modules() {
+    debug_print "Function: ${FUNCNAME[0]}"
+
+    timestamp_print "Extending modules unload list with third-party RDMA modules: ${THIRD_PARTY_RDMA_MODULES}"
+    unload_script="/etc/init.d/openibd"
+    if [ -f "/usr/share/mlnx_ofed/mod_load_funcs" ]; then
+        unload_script="/usr/share/mlnx_ofed/mod_load_funcs"
+    fi
+
+    # Pick the first module to verify injection
+    local first_mod
+    first_mod=$(echo "${THIRD_PARTY_RDMA_MODULES}" | awk '{print $1}')
+
+    sed -i -e "/^[[:space:]]*UNLOAD_MODULES=\"[a-z]/a\\    UNLOAD_MODULES=\"\$UNLOAD_MODULES ${THIRD_PARTY_RDMA_MODULES}\"" ${unload_script}
+
+    if ! grep -q "UNLOAD_MODULES=.*${first_mod}" "${unload_script}"; then
+        timestamp_print "Failed to inject third-party RDMA modules for unload"
+        exit_entryp 1
+    fi
+}
+
 function generate_ofed_modules_blacklist(){
     echo "Function: ${FUNCNAME[0]}"
 
@@ -515,6 +545,14 @@ function generate_ofed_modules_blacklist(){
     for component in "${components[@]}"; do
         echo "blacklist $component" >> ${OFED_BLACKLIST_MODULES_FILE}
     done
+
+    # Append third-party RDMA modules to blacklist if enabled
+    if ${UNLOAD_THIRD_PARTY_RDMA_MODULES}; then
+        echo -e "\n# blacklist third-party RDMA modules to prevent reload conflicts" >> ${OFED_BLACKLIST_MODULES_FILE}
+        for mod in ${THIRD_PARTY_RDMA_MODULES}; do
+            echo "blacklist $mod" >> ${OFED_BLACKLIST_MODULES_FILE}
+        done
+    fi
 
     debug_print "`cat ${OFED_BLACKLIST_MODULES_FILE}`"
 }
@@ -560,6 +598,7 @@ function restart_driver() {
     trap 'remove_ofed_modules_blacklist' EXIT
     generate_ofed_modules_blacklist
     ${UNLOAD_STORAGE_MODULES} && unload_storage_modules
+    ${UNLOAD_THIRD_PARTY_RDMA_MODULES} && unload_third_party_rdma_modules
 
     exec_cmd "/etc/init.d/openibd restart"
 

@@ -154,6 +154,17 @@ podman pull --authfile=/path/to/pull-secret.txt docker://quay.io/openshift-relea
     --target precompiled .
 ```
 
+## Runtime Environment Variables
+
+The following environment variables can be set at container runtime to control driver loading behavior:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OFED_BLACKLIST_MODULES` | `mlx5_core:mlx5_ib:ib_umad:ib_uverbs:ib_ipoib:rdma_cm:rdma_ucm:ib_core:ib_cm` | Colon-separated list of OFED kernel modules to blacklist on the host. |
+| `UNLOAD_THIRD_PARTY_RDMA_MODULES` | `false` | When `true`, all known third-party RDMA kernel modules (from rdma-core: qedr, efa, siw, etc.) are blacklisted and unloaded before OFED driver reload. The module list is hardcoded. |
+| `UNLOAD_STORAGE_MODULES` | `false` | When `true`, storage modules (ib_isert, nvme_rdma, etc.) are unloaded during driver restart. |
+| `RESTORE_DRIVER_ON_POD_TERMINATION` | `false` | When `true`, restores the inbox driver on container teardown. |
+
 >[!IMPORTANT]
 >Dockerfiles contain default build parameters, which may fail build proccess on your system if not overridden.
 

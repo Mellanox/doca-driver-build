@@ -55,12 +55,31 @@ type Config struct {
 
 	// DKMS settings
 	UseDKMS bool `env:"USE_DKMS" envDefault:"false"`
+	// UnloadThirdPartyRdmaModules enables blacklisting and unloading of all known
+	// third-party RDMA kernel modules (from rdma-core) before OFED driver reload.
+	// When true, modules from ThirdPartyRDMAModules are:
+	//   1. Added to the modprobe blacklist file (prevents auto-reload by the kernel)
+	//   2. Injected into openibd's UNLOAD_MODULES list (unloaded during driver restart)
+	//
+	// Example: UNLOAD_THIRD_PARTY_RDMA_MODULES=true
+	UnloadThirdPartyRdmaModules bool `env:"UNLOAD_THIRD_PARTY_RDMA_MODULES"`
 
 	// debug settings
 	EntrypointDebug     bool   `env:"ENTRYPOINT_DEBUG"`
 	DebugLogFile        string `env:"DEBUG_LOG_FILE"          envDefault:"/tmp/entrypoint_debug_cmds.log"`
 	DebugSleepSecOnExit int    `env:"DEBUG_SLEEP_SEC_ON_EXIT" envDefault:"300"`
 	BindDelaySec        int    `env:"BIND_DELAY_SEC"          envDefault:"4"`
+}
+
+// ThirdPartyRDMAModules is the hardcoded list of known third-party RDMA kernel modules
+// (non-NVIDIA modules from the rdma-core ecosystem) that can block MOFED driver reload.
+// This list is used when UnloadThirdPartyRdmaModules is true.
+var ThirdPartyRDMAModules = []string{
+	"bnxt_re", "efa", "erdma", "iw_cxgb4", "hfi1", "hns_roce",
+	"ionic_rdma", "irdma", "ib_qib", "mana_ib", "ocrdma", "qedr",
+	"rdma_rxe", "siw", "vmw_pvrdma",
+	"ib_srp", "ib_iser", "iw_cm", "ib_isert",
+	"nvme_rdma", "nvmet_rdma", "rpcrdma", "xprtrdma",
 }
 
 // GetConfig parses environment variables and returns a Config struct.
