@@ -8,6 +8,7 @@ ARG D_KERNEL_VER="5.15.0-25-generic"
 ARG D_OFED_SRC_DOWNLOAD_PATH="/run/mellanox/src"
 ARG OFED_SRC_LOCAL_DIR=${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_VERSION}
 ARG STIG_COMPLIANT=false
+ARG D_ENABLE_DKMS=false
 
 # Common for build and final clean image of precompiled driver container
 ARG D_BASE_IMAGE="ubuntu:22.04"
@@ -40,6 +41,7 @@ ARG D_OFED_VERSION
 ARG D_CONTAINER_VER
 ARG D_OFED_SRC_DOWNLOAD_PATH
 ARG STIG_COMPLIANT
+ARG D_ENABLE_DKMS
 
 ENV NVIDIA_NIC_DRIVER_VER=${D_OFED_VERSION}
 ENV NVIDIA_NIC_CONTAINER_VER=${D_CONTAINER_VER}
@@ -54,7 +56,9 @@ RUN set -x && \
 # Driver build / install script requirements
     perl pciutils kmod lsof python3 dh-python \
 # Container functional requirements
-    jq iproute2 udev ethtool ca-certificates
+    jq iproute2 udev ethtool ca-certificates && \
+# DKMS and kernel module build tools (always installed for driver build/install)
+    DEBIAN_FRONTEND=noninteractive apt-get -yq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install dkms build-essential bison flex libelf-dev
 
 COPY --from=go_builder /workspace/build/entrypoint /root/entrypoint
 ADD ./entrypoint.sh /root/entrypoint.sh
@@ -133,15 +137,21 @@ ARG D_KERNEL_VER
 ARG OFED_SRC_LOCAL_DIR
 # Additional local arg (for precompiled CI)
 ARG D_BUILD_EXTRA_ARGS
+ARG D_ENABLE_DKMS
 
 # Driver build manadatory packages
 RUN set -x && \
     apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get -yq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install linux-image-${D_KERNEL_VER} linux-headers-${D_KERNEL_VER}
 
-# Build driver
+# Build driver. When D_ENABLE_DKMS=true, install.pl produces DKMS-enabled .deb packages
+# (source + dkms.conf under /usr/src/<module>-<version>/). When false, --without-dkms is used.
 RUN set -x && \
-    ${OFED_SRC_LOCAL_DIR}/install.pl --without-depcheck --distro ${D_OS} --without-dkms --kernel ${D_KERNEL_VER} --kernel-only --build-only --copy-ifnames-udev --with-mlnx-tools --without-knem-modules --without-srp-modules --without-kernel-mft-modules --without-iser-modules --without-isert-modules ${D_BUILD_EXTRA_ARGS}
+    if [ "$D_ENABLE_DKMS" = "true" ]; then \
+        ${OFED_SRC_LOCAL_DIR}/install.pl --without-depcheck --distro ${D_OS} --kernel ${D_KERNEL_VER} --kernel-only --build-only --copy-ifnames-udev --with-mlnx-tools --without-knem-modules --without-srp-modules --without-kernel-mft-modules --without-iser-modules --without-isert-modules ${D_BUILD_EXTRA_ARGS}; \
+    else \
+        ${OFED_SRC_LOCAL_DIR}/install.pl --without-depcheck --distro ${D_OS} --without-dkms --kernel ${D_KERNEL_VER} --kernel-only --build-only --copy-ifnames-udev --with-mlnx-tools --without-knem-modules --without-srp-modules --without-kernel-mft-modules --without-iser-modules --without-isert-modules ${D_BUILD_EXTRA_ARGS}; \
+    fi
 
 ###################################
 # Stage: Install precompiled driver
@@ -153,18 +163,24 @@ ARG D_OS
 ARG D_ARCH
 ARG D_KERNEL_VER
 ARG OFED_SRC_LOCAL_DIR
+ARG D_ENABLE_DKMS
 
 ENV NVIDIA_NIC_DRIVER_PATH=""
 
 RUN set -x && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" lsb-release && \
-    test -n "${D_KERNEL_VER}" && DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" linux-modules-extra-${D_KERNEL_VER} || true  # only install this package when kernel variable defined
+    test -n "${D_KERNEL_VER}" && DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" linux-modules-extra-${D_KERNEL_VER} || true && \
+# Install DKMS and build tools if enabled (needed at runtime for dkms add/build/install)
+    if [ "$D_ENABLE_DKMS" = "true" ]; then \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" dkms build-essential bison flex libelf-dev pkg-config; \
+    fi
 # Cleanup
 RUN set -x && \
     apt-get clean autoclean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install driver
+# Install driver packages. When D_ENABLE_DKMS was true, .debs install source and dkms.conf
+# under /usr/src/. Runtime DKMS setup (add/build/install) runs in entrypoint.sh and driver.go.
 COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/DEBS/${D_OS}/*/*.deb /root/
 
 RUN DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" /root/*.deb
