@@ -216,6 +216,13 @@ func (d *driverMgr) Build(ctx context.Context) error {
 		return fmt.Errorf("failed to install driver: %w", err)
 	}
 
+	// Setup DKMS if enabled (must run after installDriver so sources are in /usr/src/)
+	if d.cfg.UseDKMS {
+		if err := d.setupDKMS(ctx, kernelVersion); err != nil {
+			return fmt.Errorf("failed to setup DKMS: %w", err)
+		}
+	}
+
 	// Sync Ubuntu network configuration tools if running on Ubuntu
 	if osType == constants.OSTypeUbuntu {
 		if err := d.ubuntuSyncNetworkConfigurationTools(ctx); err != nil {
@@ -281,6 +288,19 @@ func (d *driverMgr) Load(ctx context.Context) (bool, error) {
 	if err := d.printLoadedDriverVersion(ctx); err != nil {
 		log.V(1).Info("Failed to print driver version", "error", err)
 		// Non-fatal error, continue
+	}
+
+	// Setup DKMS if enabled. In precompiled mode this is the only place it runs; in sources mode
+	// Build() already ran it—safe to call again.
+	if d.cfg.UseDKMS {
+		// Get kernel version for DKMS setup
+		if kernelVersion, err := d.host.GetKernelVersion(ctx); err != nil {
+			log.V(1).Info("Failed to get kernel version for DKMS setup", "error", err)
+			// Non-fatal, continue without DKMS
+		} else if err := d.setupDKMS(ctx, kernelVersion); err != nil {
+			log.V(1).Info("Failed to setup DKMS", "error", err)
+			// Non-fatal, continue without DKMS
+		}
 	}
 
 	// Mount rootfs for shared kernel headers
@@ -1034,17 +1054,34 @@ func (d *driverMgr) buildDriverFromSource(ctx context.Context, driverPath, kerne
 func (d *driverMgr) getBuildFlagsForOS(osType, kernelVersion string) []string {
 	switch osType {
 	case constants.OSTypeUbuntu:
-		return []string{"--disable-kmp", "--without-dkms"}
+		flags := []string{"--disable-kmp"}
+		// Conditionally add --without-dkms based on config
+		// If UseDKMS is true, we want install.pl to create DKMS packages
+		if !d.cfg.UseDKMS {
+			flags = append(flags, "--without-dkms")
+		}
+		return flags
 	case constants.OSTypeSLES:
-		return []string{
+		flags := []string{
 			"--disable-kmp",
-			"--without-dkms",
-			"--kernel-sources", "/lib/modules/" + kernelVersion + "/build",
+		}
+		// Conditionally add --without-dkms based on config (must come before --kernel-sources)
+		if !d.cfg.UseDKMS {
+			flags = append(flags, "--without-dkms")
+		}
+		flags = append(flags,
+			"--kernel-sources", "/lib/modules/"+kernelVersion+"/build",
 			"--without-xpmem",
 			"--without-xpmem-modules",
-		}
+		)
+		return flags
 	case constants.OSTypeRedHat:
-		return []string{"--disable-kmp", "--without-dkms"}
+		flags := []string{"--disable-kmp"}
+		// Conditionally add --without-dkms based on config
+		if !d.cfg.UseDKMS {
+			flags = append(flags, "--without-dkms")
+		}
+		return flags
 	default:
 		return []string{}
 	}
@@ -1977,4 +2014,230 @@ func (d *driverMgr) enableFIPSIfRequired(ctx context.Context) error {
 
 	log.Info("FIPS mode enabled successfully")
 	return nil
+}
+
+// setupDKMS handles DKMS registration, build, and install for the current kernel
+func (d *driverMgr) setupDKMS(ctx context.Context, kernelVersion string) error {
+	log := logr.FromContextOrDiscard(ctx)
+	log.Info("Setting up DKMS for kernel", "kernel", kernelVersion)
+
+	// Step 1: Discover module name and version from /usr/src/
+	moduleName, moduleVersion, err := d.discoverDKMSModule(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to discover DKMS module: %w", err)
+	}
+
+	log.Info("Discovered DKMS module", "name", moduleName, "version", moduleVersion)
+
+	// Step 2: Check if already installed for this kernel
+	installed, err := d.dkmsStatus(ctx, moduleName, moduleVersion, kernelVersion)
+	if err != nil {
+		return fmt.Errorf("failed to check DKMS status: %w", err)
+	}
+
+	if installed {
+		log.Info("DKMS module already installed for kernel", "kernel", kernelVersion)
+		return nil
+	}
+
+	// Step 3: Add module to DKMS
+	if err := d.dkmsAdd(ctx, moduleName, moduleVersion); err != nil {
+		return fmt.Errorf("failed to add DKMS module: %w", err)
+	}
+
+	// Step 4: Build module for current kernel
+	if err := d.dkmsBuild(ctx, moduleName, moduleVersion, kernelVersion); err != nil {
+		return fmt.Errorf("failed to build DKMS module: %w", err)
+	}
+
+	// Step 5: Install module
+	if err := d.dkmsInstall(ctx, moduleName, moduleVersion, kernelVersion); err != nil {
+		return fmt.Errorf("failed to install DKMS module: %w", err)
+	}
+
+	log.Info("DKMS setup completed successfully", "module", moduleName, "version", moduleVersion, "kernel", kernelVersion)
+	return nil
+}
+
+// discoverDKMSModule finds the DKMS module name and version by scanning /usr/src/ for
+// directories containing dkms.conf. Expects install.pl (run without --without-dkms) to have
+// installed source and dkms.conf under /usr/src/<name>-<version>/.
+// Returns the module name, module version, and an error if no valid DKMS module is found.
+func (d *driverMgr) discoverDKMSModule(ctx context.Context) (string, string, error) {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// List all directories in /usr/src/
+	entries, err := d.os.ReadDir("/usr/src/")
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read /usr/src/: %w", err)
+	}
+
+	// Look for directories containing dkms.conf
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		dirName := entry.Name()
+		dkmsConfPath := filepath.Join("/usr/src", dirName, "dkms.conf")
+
+		// Check if dkms.conf exists
+		if _, err := d.os.Stat(dkmsConfPath); err == nil {
+			// Read dkms.conf to extract PACKAGE_NAME and PACKAGE_VERSION
+			moduleName, moduleVersion, err := d.parseDKMSConf(dkmsConfPath)
+			if err != nil {
+				log.V(1).Info("Failed to parse dkms.conf", "path", dkmsConfPath, "error", err)
+				continue
+			}
+
+			log.V(1).Info("Found DKMS module", "dir", dirName, "name", moduleName, "version", moduleVersion)
+			return moduleName, moduleVersion, nil
+		}
+	}
+
+	return "", "", fmt.Errorf(
+		"no DKMS module found in /usr/src/. This may indicate that install.pl did not create DKMS-enabled packages. " +
+			"Verify that install.pl was run without --without-dkms flag and that the packages were installed correctly")
+}
+
+// parseDKMSConf reads the dkms.conf at dkmsConfPath and extracts PACKAGE_NAME and PACKAGE_VERSION.
+// Returns the module name, module version, and an error if the file cannot be read or the fields are missing.
+func (d *driverMgr) parseDKMSConf(dkmsConfPath string) (string, string, error) {
+	content, err := d.os.ReadFile(dkmsConfPath)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read dkms.conf: %w", err)
+	}
+
+	var moduleName, moduleVersion string
+
+	// Parse PACKAGE_NAME="..." and PACKAGE_VERSION="..."
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "PACKAGE_NAME=") {
+			moduleName = strings.Trim(strings.TrimPrefix(line, "PACKAGE_NAME="), `"`)
+		} else if strings.HasPrefix(line, "PACKAGE_VERSION=") {
+			moduleVersion = strings.Trim(strings.TrimPrefix(line, "PACKAGE_VERSION="), `"`)
+		}
+	}
+
+	if moduleName == "" || moduleVersion == "" {
+		return "", "", fmt.Errorf("failed to extract PACKAGE_NAME or PACKAGE_VERSION from dkms.conf")
+	}
+
+	return moduleName, moduleVersion, nil
+}
+
+// dkmsAdd registers the module with DKMS
+func (d *driverMgr) dkmsAdd(ctx context.Context, moduleName, moduleVersion string) error {
+	log := logr.FromContextOrDiscard(ctx)
+	log.V(1).Info("Adding DKMS module", "name", moduleName, "version", moduleVersion)
+
+	// Check if already added
+	stdout, _, err := d.cmd.RunCommand(ctx, "dkms", "status", moduleName, moduleVersion)
+	if err == nil && strings.Contains(stdout, moduleName+"/"+moduleVersion) {
+		log.V(1).Info("DKMS module already added", "name", moduleName, "version", moduleVersion)
+		return nil
+	}
+
+	// Add module to DKMS
+	_, stderr, err := d.cmd.RunCommand(ctx, "dkms", "add", "-m", moduleName, "-v", moduleVersion)
+	if err != nil {
+		return fmt.Errorf("failed to add DKMS module: %w, stderr: %s", err, stderr)
+	}
+
+	log.Info("DKMS module added successfully", "name", moduleName, "version", moduleVersion)
+	return nil
+}
+
+// dkmsBuild builds the module for the specified kernel
+func (d *driverMgr) dkmsBuild(ctx context.Context, moduleName, moduleVersion, kernelVersion string) error {
+	log := logr.FromContextOrDiscard(ctx)
+	log.V(1).Info("Building DKMS module", "name", moduleName, "version", moduleVersion, "kernel", kernelVersion)
+
+	// Check if already built. DKMS stores compiled modules under
+	// buildPath/<arch>/module/*.ko, never directly under buildPath.
+	buildPath := filepath.Join("/var/lib/dkms", moduleName, moduleVersion, kernelVersion)
+	if _, err := d.os.Stat(buildPath); err == nil {
+		archEntries, _ := d.os.ReadDir(buildPath)
+		for _, arch := range archEntries {
+			if !arch.IsDir() {
+				continue
+			}
+			moduleFiles, _ := d.os.ReadDir(filepath.Join(buildPath, arch.Name(), "module"))
+			for _, file := range moduleFiles {
+				if strings.HasSuffix(file.Name(), ".ko") {
+					log.V(1).Info("DKMS module already built", "name", moduleName, "version", moduleVersion, "kernel", kernelVersion)
+					return nil
+				}
+			}
+		}
+	}
+
+	// Build module for current kernel
+	stdout, stderr, err := d.cmd.RunCommand(ctx, "dkms", "build", "-m", moduleName, "-v", moduleVersion, "-k", kernelVersion)
+	if err != nil {
+		return fmt.Errorf("failed to build DKMS module: %w, stdout: %s, stderr: %s", err, stdout, stderr)
+	}
+
+	log.Info("DKMS module built successfully", "name", moduleName, "version", moduleVersion, "kernel", kernelVersion)
+	return nil
+}
+
+// dkmsInstall installs the built module
+func (d *driverMgr) dkmsInstall(ctx context.Context, moduleName, moduleVersion, kernelVersion string) error {
+	log := logr.FromContextOrDiscard(ctx)
+	log.V(1).Info("Installing DKMS module", "name", moduleName, "version", moduleVersion, "kernel", kernelVersion)
+
+	// Check if already installed
+	installed, err := d.dkmsStatus(ctx, moduleName, moduleVersion, kernelVersion)
+	if err != nil {
+		return fmt.Errorf("failed to check DKMS install status: %w", err)
+	}
+
+	if installed {
+		log.V(1).Info("DKMS module already installed", "name", moduleName, "version", moduleVersion, "kernel", kernelVersion)
+		return nil
+	}
+
+	// Install module
+	_, stderr, err := d.cmd.RunCommand(ctx, "dkms", "install", "-m", moduleName, "-v", moduleVersion, "-k", kernelVersion)
+	if err != nil {
+		return fmt.Errorf("failed to install DKMS module: %w, stderr: %s", err, stderr)
+	}
+
+	log.Info("DKMS module installed successfully", "name", moduleName, "version", moduleVersion, "kernel", kernelVersion)
+	return nil
+}
+
+// dkmsStatus checks if module is already installed for kernel
+func (d *driverMgr) dkmsStatus(ctx context.Context, moduleName, moduleVersion, kernelVersion string) (bool, error) {
+	log := logr.FromContextOrDiscard(ctx)
+
+	// Check DKMS status
+	stdout, _, err := d.cmd.RunCommand(ctx, "dkms", "status", moduleName, moduleVersion)
+	if err != nil {
+		// dkms status fails for unregistered modules; treat as not installed and do not propagate.
+		log.V(1).Info("dkms status failed, module not installed", "error", err)
+		// Return false to indicate module is not installed
+		// The error from dkms status is expected when module is not registered, so we don't propagate it
+		return false, nil
+	}
+
+	// Status format: module/version, kernel/version: installed
+	statusPattern := fmt.Sprintf("%s/%s.*%s.*installed",
+		regexp.QuoteMeta(moduleName),
+		regexp.QuoteMeta(moduleVersion),
+		regexp.QuoteMeta(kernelVersion))
+	matched, err := regexp.MatchString(statusPattern, stdout)
+	if err != nil {
+		return false, fmt.Errorf("failed to parse DKMS status: %w", err)
+	}
+
+	if matched {
+		log.V(1).Info("DKMS module is installed", "name", moduleName, "version", moduleVersion, "kernel", kernelVersion)
+		return true, nil
+	}
+
+	return false, nil
 }

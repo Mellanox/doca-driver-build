@@ -52,6 +52,8 @@
 
 : ${UBUNTU_PRO_TOKEN:=""}
 
+: ${USE_DKMS:=false}
+
 # TODO: this environment variable should be removed once we implement better wait implementation for NIC device
 : ${BIND_DELAY_SEC:=4}
 
@@ -374,7 +376,12 @@ function build_driver_from_src() {
     sub_path_str="RPMS"
     os_str="redhat"
     package_type="rpm"
-    append_driver_build_flags="$append_driver_build_flags --disable-kmp --without-dkms"
+    append_driver_build_flags="$append_driver_build_flags --disable-kmp"
+
+    # Conditionally add --without-dkms based on USE_DKMS
+    if [[ "${USE_DKMS}" != true ]]; then
+        append_driver_build_flags="$append_driver_build_flags --without-dkms"
+    fi
 
     if ${IS_OS_UBUNTU}; then
         sub_path_str="DEBS"
@@ -1144,6 +1151,11 @@ function install_driver() {
 
     # Introduce installed kernel modules
     exec_cmd "depmod ${FULL_KVER}"
+
+    # Setup DKMS if enabled (must run after install_driver so sources are in /usr/src/)
+    if [[ "${USE_DKMS}" = true ]]; then
+        setup_dkms
+    fi
 }
 
 function calculate_driver_inventory_md5_checksum() {
@@ -1377,6 +1389,119 @@ function print_loaded_drv_ver_str() {
     fi
 }
 
+function setup_dkms() {
+    debug_print "Function: ${FUNCNAME[0]}"
+
+    timestamp_print "Setting up DKMS for kernel ${FULL_KVER}"
+
+    # Step 1: Discover module name and version from /usr/src/
+    discover_dkms_module_info
+    if [ -z "${DKMS_MODULE_NAME}" ] || [ -z "${DKMS_MODULE_VERSION}" ]; then
+        timestamp_print "Failed to discover DKMS module from /usr/src/"
+        exit_entryp 1
+    fi
+
+    debug_print "Discovered DKMS module: ${DKMS_MODULE_NAME}/${DKMS_MODULE_VERSION}"
+
+    # Step 2: Check if already installed for this kernel
+    if dkms_status; then
+        debug_print "DKMS module already installed for kernel ${FULL_KVER}"
+        return 0
+    fi
+
+    # Step 3: Add module to DKMS
+    dkms_add
+
+    # Step 4: Build module for current kernel
+    dkms_build
+
+    # Step 5: Install module
+    dkms_install
+
+    timestamp_print "DKMS setup completed successfully"
+}
+
+function discover_dkms_module_info() {
+    debug_print "Function: ${FUNCNAME[0]}"
+
+    DKMS_MODULE_NAME=""
+    DKMS_MODULE_VERSION=""
+
+    # Look for directories in /usr/src/ containing dkms.conf
+    for dir in /usr/src/*; do
+        if [ -d "${dir}" ] && [ -f "${dir}/dkms.conf" ]; then
+            debug_print "Found dkms.conf in ${dir}"
+
+            # Parse dkms.conf to extract PACKAGE_NAME and PACKAGE_VERSION
+            DKMS_MODULE_NAME=$(grep "^PACKAGE_NAME=" "${dir}/dkms.conf" | cut -d'"' -f2)
+            DKMS_MODULE_VERSION=$(grep "^PACKAGE_VERSION=" "${dir}/dkms.conf" | cut -d'"' -f2)
+
+            if [ -n "${DKMS_MODULE_NAME}" ] && [ -n "${DKMS_MODULE_VERSION}" ]; then
+                debug_print "Found DKMS module: ${DKMS_MODULE_NAME}/${DKMS_MODULE_VERSION}"
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
+
+function dkms_add() {
+    debug_print "Function: ${FUNCNAME[0]}"
+
+    # Check if already added
+    if dkms status ${DKMS_MODULE_NAME} ${DKMS_MODULE_VERSION} 2>/dev/null | grep -q "${DKMS_MODULE_NAME}/${DKMS_MODULE_VERSION}"; then
+        debug_print "DKMS module already added: ${DKMS_MODULE_NAME}/${DKMS_MODULE_VERSION}"
+        return 0
+    fi
+
+    timestamp_print "Adding DKMS module: ${DKMS_MODULE_NAME}/${DKMS_MODULE_VERSION}"
+    exec_cmd "dkms add -m ${DKMS_MODULE_NAME} -v ${DKMS_MODULE_VERSION}"
+}
+
+function dkms_build() {
+    debug_print "Function: ${FUNCNAME[0]}"
+
+    # Check if already built
+    build_path="/var/lib/dkms/${DKMS_MODULE_NAME}/${DKMS_MODULE_VERSION}/${FULL_KVER}"
+    if [ -d "${build_path}" ] && [ -n "$(find ${build_path} -name '*.ko' 2>/dev/null)" ]; then
+        debug_print "DKMS module already built: ${DKMS_MODULE_NAME}/${DKMS_MODULE_VERSION} for kernel ${FULL_KVER}"
+        return 0
+    fi
+
+    timestamp_print "Building DKMS module: ${DKMS_MODULE_NAME}/${DKMS_MODULE_VERSION} for kernel ${FULL_KVER}"
+    exec_cmd "dkms build -m ${DKMS_MODULE_NAME} -v ${DKMS_MODULE_VERSION} -k ${FULL_KVER}"
+}
+
+function dkms_install() {
+    debug_print "Function: ${FUNCNAME[0]}"
+
+    # Check if already installed
+    if dkms_status; then
+        debug_print "DKMS module already installed: ${DKMS_MODULE_NAME}/${DKMS_MODULE_VERSION} for kernel ${FULL_KVER}"
+        return 0
+    fi
+
+    timestamp_print "Installing DKMS module: ${DKMS_MODULE_NAME}/${DKMS_MODULE_VERSION} for kernel ${FULL_KVER}"
+    exec_cmd "dkms install -m ${DKMS_MODULE_NAME} -v ${DKMS_MODULE_VERSION} -k ${FULL_KVER}"
+}
+
+function dkms_status() {
+    debug_print "Function: ${FUNCNAME[0]}"
+
+    # Check DKMS status
+    status_output=$(dkms status ${DKMS_MODULE_NAME} ${DKMS_MODULE_VERSION} 2>/dev/null)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+    # Status format: module/version, kernel/version: installed
+    if echo "${status_output}" | grep -q "${DKMS_MODULE_NAME}/${DKMS_MODULE_VERSION}.*${FULL_KVER}.*installed"; then
+        return 0
+    fi
+
+    return 1
+}
+
 function update_ca_certificates() {
     if ${IS_OS_UBUNTU}; then
         timestamp_print "Updating system CA certificates (Ubuntu)..."
@@ -1537,6 +1662,12 @@ if ! ${build_precompiled}; then
 fi
 
 load_driver
+
+# Setup DKMS if enabled (for precompiled mode, DKMS setup happens here since build_driver is not called)
+# For sources mode, DKMS setup already happened in install_driver, but this is safe to call again
+if [[ "${USE_DKMS}" = true ]]; then
+    setup_dkms
+fi
 
 ${reuse_driver_inventory} && cleanup_driver_inventory
 
