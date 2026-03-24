@@ -53,6 +53,9 @@ type Config struct {
 	OfedBlacklistModules     []string `env:"OFED_BLACKLIST_MODULES"      envDefault:"mlx5_core:mlx5_ib:ib_umad:ib_uverbs:ib_ipoib:rdma_cm:rdma_ucm:ib_core:ib_cm" envSeparator:":"`
 	StorageModules           []string `env:"STORAGE_MODULES"             envDefault:"ib_isert:nvme_rdma:nvmet_rdma:rpcrdma:xprtrdma:ib_srpt"                      envSeparator:":"`
 
+	// DKMS settings
+	UseDKMS bool `env:"USE_DKMS" envDefault:"false"`
+
 	// debug settings
 	EntrypointDebug     bool   `env:"ENTRYPOINT_DEBUG"`
 	DebugLogFile        string `env:"DEBUG_LOG_FILE"          envDefault:"/tmp/entrypoint_debug_cmds.log"`
