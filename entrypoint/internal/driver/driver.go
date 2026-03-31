@@ -159,6 +159,14 @@ func (d *driverMgr) Build(ctx context.Context) error {
 		return fmt.Errorf("failed to get OS type: %w", err)
 	}
 
+	// Install OS-specific prerequisites (e.g. kernel headers).
+	// This must happen before the cache check because even when driver packages
+	// are cached, DKMS still needs kernel headers to build modules at runtime.
+	log.V(1).Info("About to install prerequisites", "os", osType, "kernel", kernelVersion)
+	if err := d.installPrerequisitesForOS(ctx, osType, kernelVersion); err != nil {
+		return fmt.Errorf("failed to install prerequisites: %w", err)
+	}
+
 	// Check driver inventory and validate checksums
 	shouldBuild, inventoryPath, err := d.checkDriverInventory(ctx, kernelVersion)
 	if err != nil {
@@ -180,12 +188,6 @@ func (d *driverMgr) Build(ctx context.Context) error {
 			// Create inventory directory
 			if err := d.createInventoryDirectory(ctx, inventoryPath); err != nil {
 				return fmt.Errorf("failed to create inventory directory: %w", err)
-			}
-
-			// Install OS-specific prerequisites
-			log.V(1).Info("About to install prerequisites", "os", osType, "kernel", kernelVersion)
-			if err := d.installPrerequisitesForOS(ctx, osType, kernelVersion); err != nil {
-				return fmt.Errorf("failed to install prerequisites: %w", err)
 			}
 
 			// Build driver from source
@@ -256,22 +258,16 @@ func (d *driverMgr) Load(ctx context.Context) (bool, error) {
 		modulesToCheck = append(modulesToCheck, "nvme_rdma", "rpcrdma")
 	}
 
-	// Setup DKMS if enabled (Ubuntu only for now). Must run before restartDriver so that
+	// Setup DKMS if enabled. Must run before restartDriver so that
 	// dkms build/install places .ko files in /lib/modules/<kernel>/ before modprobe tries
 	// to load them. Covers both precompiled and sources mode. Idempotent.
 	if d.cfg.UseDKMS {
-		osType, err := d.host.GetOSType(ctx)
+		kernelVersion, err := d.host.GetKernelVersion(ctx)
 		if err != nil {
-			return false, fmt.Errorf("failed to get OS type for DKMS setup: %w", err)
+			return false, fmt.Errorf("failed to get kernel version for DKMS setup: %w", err)
 		}
-		if osType == constants.OSTypeUbuntu {
-			if kernelVersion, err := d.host.GetKernelVersion(ctx); err != nil {
-				return false, fmt.Errorf("failed to get kernel version for DKMS setup: %w", err)
-			} else if err := d.setupDKMS(ctx, kernelVersion); err != nil {
-				return false, fmt.Errorf("failed to setup DKMS: %w", err)
-			}
-		} else {
-			log.V(1).Info("DKMS is only supported on Ubuntu, skipping", "osType", osType)
+		if err := d.setupDKMS(ctx, kernelVersion); err != nil {
+			return false, fmt.Errorf("failed to setup DKMS: %w", err)
 		}
 	}
 
@@ -1043,6 +1039,12 @@ func (d *driverMgr) buildDriverFromSource(ctx context.Context, driverPath, kerne
 	// Add OS-specific flags
 	args = append(args, buildFlags...)
 
+	// Exclude xpmem for all OSes; when DKMS is enabled, explicitly exclude xpmem-dkms
+	args = append(args, "--without-xpmem", "--without-xpmem-modules")
+	if d.cfg.UseDKMS {
+		args = append(args, "--without-xpmem-dkms")
+	}
+
 	// Add additional flags based on environment variables
 	args = append(args, appendFlags...)
 
@@ -1077,8 +1079,6 @@ func (d *driverMgr) getBuildFlagsForOS(osType, kernelVersion string) []string {
 		}
 		flags = append(flags,
 			"--kernel-sources", "/lib/modules/"+kernelVersion+"/build",
-			"--without-xpmem",
-			"--without-xpmem-modules",
 		)
 		return flags
 	case constants.OSTypeRedHat:
@@ -1458,6 +1458,12 @@ func (d *driverMgr) setupEUSRepositories(ctx context.Context, versionInfo *host.
 // installKernelPackages installs kernel packages based on kernel type
 func (d *driverMgr) installKernelPackages(ctx context.Context, kernelVersion string, versionInfo *host.RedhatVersionInfo) error {
 	log := logr.FromContextOrDiscard(ctx)
+
+	buildDir := "/lib/modules/" + kernelVersion + "/build"
+	if _, err := d.os.Stat(buildDir); err == nil {
+		log.V(1).Info("Kernel build directory already present, skipping kernel package installation", "path", buildDir)
+		return nil
+	}
 
 	// Determine kernel type and naming pattern
 	kernelType, kVer, rtHpSubstr, releaseverStr := d.analyzeKernelType(ctx, kernelVersion, versionInfo)
@@ -2066,38 +2072,43 @@ func (d *driverMgr) setupDKMS(ctx context.Context, kernelVersion string) error {
 }
 
 // discoverDKMSModule finds the DKMS module name and version by scanning /usr/src/ for
-// directories containing dkms.conf. Expects install.pl (run without --without-dkms) to have
-// installed source and dkms.conf under /usr/src/<name>-<version>/.
+// directories containing dkms.conf. Prioritizes mlnx-ofa_kernel-* directories since that
+// is the primary NIC driver DKMS module, then falls back to any other directory with dkms.conf.
 // Returns the module name, module version, and an error if no valid DKMS module is found.
 func (d *driverMgr) discoverDKMSModule(ctx context.Context) (string, string, error) {
 	log := logr.FromContextOrDiscard(ctx)
 
-	// List all directories in /usr/src/
 	entries, err := d.os.ReadDir("/usr/src/")
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read /usr/src/: %w", err)
 	}
 
-	// Look for directories containing dkms.conf
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		dirName := entry.Name()
-		dkmsConfPath := filepath.Join("/usr/src", dirName, "dkms.conf")
-
-		// Check if dkms.conf exists
-		if _, err := d.os.Stat(dkmsConfPath); err == nil {
-			// Read dkms.conf to extract PACKAGE_NAME and PACKAGE_VERSION
-			moduleName, moduleVersion, err := d.parseDKMSConf(dkmsConfPath)
-			if err != nil {
-				log.V(1).Info("Failed to parse dkms.conf", "path", dkmsConfPath, "error", err)
+	// Two-pass scan: first mlnx-ofa_kernel-* directories, then everything else
+	for pass := range 2 {
+		for _, entry := range entries {
+			if !entry.IsDir() {
 				continue
 			}
 
-			log.V(1).Info("Found DKMS module", "dir", dirName, "name", moduleName, "version", moduleVersion)
-			return moduleName, moduleVersion, nil
+			dirName := entry.Name()
+			isMlnxOfa := strings.HasPrefix(dirName, "mlnx-ofa_kernel-")
+
+			if (pass == 0 && !isMlnxOfa) || (pass == 1 && isMlnxOfa) {
+				continue
+			}
+
+			dkmsConfPath := filepath.Join("/usr/src", dirName, "dkms.conf")
+
+			if _, err := d.os.Stat(dkmsConfPath); err == nil {
+				moduleName, moduleVersion, err := d.parseDKMSConf(dkmsConfPath)
+				if err != nil {
+					log.V(1).Info("Failed to parse dkms.conf", "path", dkmsConfPath, "error", err)
+					continue
+				}
+
+				log.V(1).Info("Found DKMS module", "dir", dirName, "name", moduleName, "version", moduleVersion)
+				return moduleName, moduleVersion, nil
+			}
 		}
 	}
 

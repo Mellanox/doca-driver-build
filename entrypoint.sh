@@ -272,7 +272,11 @@ function redhat_install_prerequisites() {
     k_ver="not_set"
     releasever_str="--releasever=${RHEL_VERSION}"
 
-    if [[ ! ${FULL_KVER} =~ rt && ! ${FULL_KVER} =~ 64k ]]; then
+    # Skip kernel package installation if build directory is already present (e.g. mounted from host)
+    if [ -d "/lib/modules/${FULL_KVER}/build" ]; then
+        timestamp_print "Kernel build directory already present at /lib/modules/${FULL_KVER}/build, skipping kernel package installation"
+        k_ver=$FULL_KVER
+    elif [[ ! ${FULL_KVER} =~ rt && ! ${FULL_KVER} =~ 64k ]]; then
         k_ver=$FULL_KVER
 
         eus_available=("8.4" "8.6" "8.8" "9.0" "9.2" "9.4")
@@ -281,8 +285,6 @@ function redhat_install_prerequisites() {
         then
           exec_cmd "dnf config-manager --set-enabled rhel-${RHEL_MAJOR_VERSION}-for-${ARCH}-baseos-eus-rpms"
         fi
-
-
 
         # Dependencies for RH 9.x changed, thus explict installation required
         exec_cmd "dnf -q -y ${releasever_str} install kernel-${FULL_KVER}"
@@ -326,13 +328,20 @@ function redhat_install_prerequisites() {
         fi
     fi
 
-    exec_cmd "dnf -q -y ${releasever_str} install kernel-${rt_hp_substr}devel-${k_ver}"
-    exec_cmd "dnf -q -y ${releasever_str} install kernel-${rt_hp_substr}modules-${k_ver}"
+    # Skip kernel devel/modules install if build directory already present
+    if [ ! -d "/lib/modules/${FULL_KVER}/build" ]; then
+        exec_cmd "dnf -q -y ${releasever_str} install kernel-${rt_hp_substr}devel-${k_ver}"
+        exec_cmd "dnf -q -y ${releasever_str} install kernel-${rt_hp_substr}modules-${k_ver}"
+    fi
 
-    exec_cmd "dnf -q -y --releasever=${RHEL_VERSION} install elfutils-libelf-devel kernel-rpm-macros numactl-libs lsof rpm-build patch hostname"
+    # These packages should already be installed from the container image; best-effort install
+    # in case the image was built without them
+    dnf -q -y install elfutils-libelf-devel kernel-rpm-macros numactl-libs lsof rpm-build patch hostname 2>/dev/null || \
+        dnf -q -y --releasever=${RHEL_VERSION} install elfutils-libelf-devel kernel-rpm-macros numactl-libs lsof rpm-build patch hostname 2>/dev/null || \
+        timestamp_print "Warning: could not install build tool packages via dnf, assuming they are pre-installed in the image"
 
-    if ! dnf makecache --releasever=${RHEL_VERSION}; then
-        exec_cmd "dnf config-manager --set-disabled rhel-${RHEL_MAJOR_VERSION}-for-${ARCH}-baseos-eus-rpms"
+    if ! dnf makecache --releasever=${RHEL_VERSION} 2>/dev/null; then
+        dnf config-manager --set-disabled rhel-${RHEL_MAJOR_VERSION}-for-${ARCH}-baseos-eus-rpms 2>/dev/null || true
     fi
 }
 
@@ -355,7 +364,7 @@ function dtk_ocp_setup_driver_build() {
     exec_cmd "sed -i '/DTK_OCP_COMPILED_DRIVER_VER=/c\DTK_OCP_COMPILED_DRIVER_VER=${NVIDIA_NIC_DRIVER_VER}' ${DTK_OCP_BUILD_SCRIPT}"
     exec_cmd "sed -i '/DTK_OCP_START_COMPILE_FLAG=/c\DTK_OCP_START_COMPILE_FLAG=${DTK_OCP_START_COMPILE_FLAG}' ${DTK_OCP_BUILD_SCRIPT}"
     exec_cmd "sed -i '/DTK_OCP_DONE_COMPILE_FLAG=/c\DTK_OCP_DONE_COMPILE_FLAG=${DTK_OCP_DONE_COMPILE_FLAG}' ${DTK_OCP_BUILD_SCRIPT}"
-
+    exec_cmd "sed -i '/USE_DKMS=/c\USE_DKMS=${USE_DKMS}' ${DTK_OCP_BUILD_SCRIPT}"
     exec_cmd "cp ${DTK_OCP_BUILD_SCRIPT} ${DTK_OCP_NIC_SHARED_DIR}/"
 
     exec_cmd "touch ${DTK_OCP_START_COMPILE_FLAG}"
@@ -385,20 +394,25 @@ function build_driver_from_src() {
         append_driver_build_flags="$append_driver_build_flags --without-dkms"
     fi
 
+    # Exclude xpmem; when DKMS is enabled use --without-xpmem-dkms instead of global --without-dkms
+    local xpmem_flags="--without-xpmem --without-xpmem-modules"
+    if [[ "${USE_DKMS}" = true ]]; then
+        xpmem_flags="$xpmem_flags --without-xpmem-dkms"
+    fi
+
     if ${IS_OS_UBUNTU}; then
         sub_path_str="DEBS"
         os_str="ubuntu"
         package_type="deb"
-    fi
-
-    if ${IS_OS_SLES}; then
+    elif ${IS_OS_SLES}; then
         sub_path_str="RPMS"
         os_str="sles"
         package_type="rpm"
         append_driver_build_flags="$append_driver_build_flags --disable-kmp"
         append_driver_build_flags="$append_driver_build_flags --kernel-sources /lib/modules/${FULL_KVER}/build"
-        append_driver_build_flags="$append_driver_build_flags --without-xpmem --without-xpmem-modules"
     fi
+
+    append_driver_build_flags="$append_driver_build_flags $xpmem_flags"
 
     timestamp_print "Starting driver build"
     exec_cmd "${NVIDIA_NIC_DRIVER_PATH}/install.pl --without-depcheck --kernel ${FULL_KVER} --kernel-only --build-only --with-mlnx-tools --without-knem${pkg_suffix} --without-iser${pkg_suffix} --without-isert${pkg_suffix} --without-srp${pkg_suffix} --without-kernel-mft${pkg_suffix} --without-mlnx-rdma-rxe${pkg_suffix} ${append_driver_build_flags}"
@@ -1109,10 +1123,10 @@ function check_loaded_kmod_srcver_vs_modinfo() {
 function load_driver() {
     debug_print "Function: ${FUNCNAME[0]}"
 
-    # Setup DKMS if enabled (Ubuntu only for now). Must run before restart_driver so that
+    # Setup DKMS if enabled. Must run before restart_driver so that
     # dkms build/install places .ko files in /lib/modules/ before modprobe tries to load them.
     # Covers both precompiled and sources mode. Idempotent — skips if already installed.
-    if [[ "${USE_DKMS}" = true ]] && ${IS_OS_UBUNTU}; then
+    if [[ "${USE_DKMS}" = true ]]; then
         setup_dkms
     fi
 
@@ -1182,6 +1196,17 @@ function build_driver() {
 
                 if [ "${stored_checksum}" == "${current_checksum}" ]; then
                     timestamp_print "Skipping driver build, reusing previously built packages for kernel ${FULL_KVER}"
+                    # When DKMS is enabled, kernel headers are still needed for dkms build
+                    if [[ "${USE_DKMS}" = true ]] && ${build_src}; then
+                        timestamp_print "Installing kernel prerequisites for DKMS"
+                        if ${IS_OS_UBUNTU}; then
+                            ubuntu_install_prerequisites
+                        elif ${IS_OS_SLES}; then
+                            sles_install_prerequisites
+                        else
+                            redhat_install_prerequisites
+                        fi
+                    fi
                     return 0
                 else
                     timestamp_print "Check sum of the existing artifacts does not match, building the driver again"
@@ -1431,16 +1456,17 @@ function discover_dkms_module_info() {
     DKMS_MODULE_NAME=""
     DKMS_MODULE_VERSION=""
 
-    # Look for directories in /usr/src/ containing dkms.conf
-    for dir in /usr/src/*; do
+    # Prioritize mlnx-ofa_kernel — it's the primary DKMS module for the NIC driver
+    for dir in /usr/src/mlnx-ofa_kernel-* /usr/src/*; do
         if [ -d "${dir}" ] && [ -f "${dir}/dkms.conf" ]; then
             debug_print "Found dkms.conf in ${dir}"
 
-            # Parse dkms.conf to extract PACKAGE_NAME and PACKAGE_VERSION
-            DKMS_MODULE_NAME=$(grep "^PACKAGE_NAME=" "${dir}/dkms.conf" | cut -d'"' -f2)
-            DKMS_MODULE_VERSION=$(grep "^PACKAGE_VERSION=" "${dir}/dkms.conf" | cut -d'"' -f2)
+            local name=$(grep "^PACKAGE_NAME=" "${dir}/dkms.conf" | sed "s/^PACKAGE_NAME=//;s/[\"']//g")
+            local version=$(grep "^PACKAGE_VERSION=" "${dir}/dkms.conf" | sed "s/^PACKAGE_VERSION=//;s/[\"']//g")
 
-            if [ -n "${DKMS_MODULE_NAME}" ] && [ -n "${DKMS_MODULE_VERSION}" ]; then
+            if [ -n "${name}" ] && [ -n "${version}" ]; then
+                DKMS_MODULE_NAME="${name}"
+                DKMS_MODULE_VERSION="${version}"
                 debug_print "Found DKMS module: ${DKMS_MODULE_NAME}/${DKMS_MODULE_VERSION}"
                 return 0
             fi
