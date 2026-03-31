@@ -28,6 +28,7 @@ RETRY_DELAY_SEC=3
 
 # Modified by main entrypoint prior to execution
 append_driver_build_flags=""
+USE_DKMS=false
 
 function timestamp_print () {
     date_time_stamp=$(date +'%d-%b-%y_%H:%M:%S')
@@ -71,7 +72,13 @@ done
 
 timestamp_print "Starting compilation of driver version ${DTK_OCP_COMPILED_DRIVER_VER}"
 
-exec_cmd "${DTK_OCP_NIC_SHARED_DIR}/MLNX_OFED_SRC-${DTK_OCP_COMPILED_DRIVER_VER}/install.pl --build-only --kernel-only --without-knem --without-iser --without-isert --without-srp  --with-mlnx-tools --with-ofed-scripts --copy-ifnames-udev --disable-kmp --without-dkms ${append_driver_build_flags}"
+COMMON_BUILD_FLAGS="--build-only --kernel-only --without-knem --without-iser --without-isert --without-srp --with-mlnx-tools --with-ofed-scripts --copy-ifnames-udev --disable-kmp --without-xpmem --without-xpmem-modules"
+
+if [[ "${USE_DKMS}" = true ]]; then
+    exec_cmd "${DTK_OCP_NIC_SHARED_DIR}/MLNX_OFED_SRC-${DTK_OCP_COMPILED_DRIVER_VER}/install.pl ${COMMON_BUILD_FLAGS} --without-xpmem-dkms ${append_driver_build_flags}"
+else
+    exec_cmd "${DTK_OCP_NIC_SHARED_DIR}/MLNX_OFED_SRC-${DTK_OCP_COMPILED_DRIVER_VER}/install.pl ${COMMON_BUILD_FLAGS} --without-dkms ${append_driver_build_flags}"
+fi
 
 exec_cmd "touch ${DTK_OCP_DONE_COMPILE_FLAG}"
 
