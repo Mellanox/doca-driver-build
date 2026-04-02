@@ -804,13 +804,22 @@ func (d *driverMgr) generateOfedModulesBlacklist(ctx context.Context) error {
 		log.V(2).Info("Added module to blacklist", "module", module)
 	}
 
+	if d.cfg.UnloadThirdPartyRdmaModules {
+		content.WriteString("\n# blacklist third-party RDMA modules to prevent reload conflicts\n")
+		for _, module := range config.ThirdPartyRDMAModules {
+			content.WriteString(fmt.Sprintf("blacklist %s\n", module))
+			log.V(2).Info("Added third-party RDMA module to blacklist", "module", module)
+		}
+	}
+
 	// Write all content at once
 	if _, err := file.WriteString(content.String()); err != nil {
 		log.Error(err, "Failed to write blacklist content to file")
 		return fmt.Errorf("failed to write blacklist content to file: %w", err)
 	}
 
-	log.Info("Successfully generated OFED modules blacklist", "file", d.cfg.OfedBlacklistModulesFile, "modules", d.cfg.OfedBlacklistModules)
+	log.Info("Successfully generated OFED modules blacklist", "file", d.cfg.OfedBlacklistModulesFile,
+		"ofedModules", d.cfg.OfedBlacklistModules, "unloadThirdPartyRdma", d.cfg.UnloadThirdPartyRdmaModules)
 	return nil
 }
 

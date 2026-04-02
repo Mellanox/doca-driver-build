@@ -97,6 +97,8 @@ linters-settings:
     line-length: 140
   misspell:
     locale: US
+    ignore-words:
+      - lustre
   stylecheck:
     checks: ["all", "-ST1000"]
     dot-import-whitelist:

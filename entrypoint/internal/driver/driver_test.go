@@ -3741,6 +3741,96 @@ var _ = Describe("Driver OFED Blacklist", func() {
 			}
 			Expect(blacklistLines).To(Equal(1))
 		})
+
+		It("should include third-party RDMA modules in blacklist when flag is true", func() {
+			blacklistFile := filepath.Join(tempDir, "third-party-rdma-blacklist.conf")
+			cfg := config.Config{
+				OfedBlacklistModulesFile:     blacklistFile,
+				OfedBlacklistModules:         []string{"mlx5_core", "mlx5_ib"},
+				UnloadThirdPartyRdmaModules: true,
+			}
+
+			dm = &driverMgr{
+				cfg:  cfg,
+				cmd:  cmdMock,
+				host: hostMock,
+				os:   wrappers.NewOS(),
+			}
+
+			err := dm.generateOfedModulesBlacklist(ctx)
+			Expect(err).ToNot(HaveOccurred())
+
+			// Verify file exists
+			_, err = os.Stat(blacklistFile)
+			Expect(err).ToNot(HaveOccurred())
+
+			// Read and verify content
+			content, err := os.ReadFile(blacklistFile)
+			Expect(err).ToNot(HaveOccurred())
+
+			contentStr := string(content)
+			Expect(contentStr).To(ContainSubstring("# blacklist ofed-related modules on host to prevent inbox or host OFED driver loading"))
+			Expect(contentStr).To(ContainSubstring("blacklist mlx5_core"))
+			Expect(contentStr).To(ContainSubstring("blacklist mlx5_ib"))
+			Expect(contentStr).To(ContainSubstring("# blacklist third-party RDMA modules to prevent reload conflicts"))
+			// Verify a few representative third-party modules
+			Expect(contentStr).To(ContainSubstring("blacklist bnxt_re"))
+			Expect(contentStr).To(ContainSubstring("blacklist qedr"))
+			Expect(contentStr).To(ContainSubstring("blacklist nvme_rdma"))
+			Expect(contentStr).To(ContainSubstring("blacklist xprtrdma"))
+
+			// Count blacklist lines - should be 2 OFED + len(ThirdPartyRDMAModules)
+			lines := strings.Split(contentStr, "\n")
+			blacklistLines := 0
+			for _, line := range lines {
+				if strings.HasPrefix(strings.TrimSpace(line), "blacklist") {
+					blacklistLines++
+				}
+			}
+			Expect(blacklistLines).To(Equal(2 + len(config.ThirdPartyRDMAModules)))
+		})
+
+		It("should not include third-party RDMA modules section when flag is false", func() {
+			blacklistFile := filepath.Join(tempDir, "no-third-party-rdma-blacklist.conf")
+			cfg := config.Config{
+				OfedBlacklistModulesFile:     blacklistFile,
+				OfedBlacklistModules:         []string{"mlx5_core", "mlx5_ib"},
+				UnloadThirdPartyRdmaModules: false,
+			}
+
+			dm = &driverMgr{
+				cfg:  cfg,
+				cmd:  cmdMock,
+				host: hostMock,
+				os:   wrappers.NewOS(),
+			}
+
+			err := dm.generateOfedModulesBlacklist(ctx)
+			Expect(err).ToNot(HaveOccurred())
+
+			// Verify file exists
+			_, err = os.Stat(blacklistFile)
+			Expect(err).ToNot(HaveOccurred())
+
+			// Read and verify content
+			content, err := os.ReadFile(blacklistFile)
+			Expect(err).ToNot(HaveOccurred())
+
+			contentStr := string(content)
+			Expect(contentStr).To(ContainSubstring("blacklist mlx5_core"))
+			Expect(contentStr).To(ContainSubstring("blacklist mlx5_ib"))
+			Expect(contentStr).NotTo(ContainSubstring("# blacklist third-party RDMA modules to prevent reload conflicts"))
+
+			// Count blacklist lines - should be 2 (only OFED)
+			lines := strings.Split(contentStr, "\n")
+			blacklistLines := 0
+			for _, line := range lines {
+				if strings.HasPrefix(strings.TrimSpace(line), "blacklist") {
+					blacklistLines++
+				}
+			}
+			Expect(blacklistLines).To(Equal(2))
+		})
 	})
 
 	Context("removeOfedModulesBlacklist", func() {

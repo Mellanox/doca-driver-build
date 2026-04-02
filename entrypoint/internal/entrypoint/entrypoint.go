@@ -272,9 +272,10 @@ func (e *entrypoint) createUDEVRulesIfRequired(ctx context.Context) error {
 }
 
 // handleKernelModules function ensures the nvidia_peermem module is unloaded
-// and confirms storage modules will unload during openibd restart.
+// and confirms storage and third-party RDMA modules will unload during openibd restart.
 func (e *entrypoint) handleKernelModules(ctx context.Context) error {
 	e.log.Info("Verifying loaded modules will not prevent future driver restart")
+
 	loadedModules, err := e.host.LsMod(ctx)
 	if err != nil {
 		e.log.Error(err, "failed to list loaded kernel modules")
@@ -297,16 +298,30 @@ func (e *entrypoint) handleKernelModules(ctx context.Context) error {
 	}
 	if e.config.UnloadStorageModules {
 		// storage modules will be unloaded by the openibd restart, no need to check if they are loaded
-		return nil
-	}
-	for _, mod := range e.config.StorageModules {
-		if _, found := loadedModules[mod]; found {
-			err = fmt.Errorf("storage modules are loaded for current driver," +
-				"terminating prior driver reload failure due to UNLOAD_STORAGE_MODULES not set to \"true\"")
-			e.log.Error(err, "kernel modules check failed")
-			return err
+	} else {
+		for _, mod := range e.config.StorageModules {
+			if _, found := loadedModules[mod]; found {
+				err = fmt.Errorf("storage modules are loaded for current driver," +
+					"terminating prior driver reload failure due to UNLOAD_STORAGE_MODULES not set to \"true\"")
+				e.log.Error(err, "kernel modules check failed")
+				return err
+			}
 		}
 	}
+	if e.config.UnloadThirdPartyRdmaModules {
+		// third-party RDMA modules will be unloaded by the openibd restart, no need to check if they are loaded
+	} else {
+		for _, mod := range config.ThirdPartyRDMAModules {
+			if _, found := loadedModules[mod]; found {
+				err = fmt.Errorf("third-party RDMA modules are loaded for current driver," +
+					"terminating prior driver reload failure due to " +
+					"UNLOAD_THIRD_PARTY_RDMA_MODULES not set to \"true\"")
+				e.log.Error(err, "kernel modules check failed")
+				return err
+			}
+		}
+	}
+
 	return nil
 }
 
