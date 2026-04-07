@@ -56,6 +56,7 @@ RUN if [[ "${D_OS}" == *"rhel9"* ]] ; then \
 RUN set -x && \
 # Perform distro update and install prerequirements
     MAJOR_VER=$(echo ${D_OS} | sed 's/rhel\([0-9]*\).*/\1/') && \
+    rpm --import https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-${MAJOR_VER} && \
     dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${MAJOR_VER}.noarch.rpm && \
     dnf -y update && \
     dnf -y install perl \
