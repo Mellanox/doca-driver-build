@@ -778,7 +778,7 @@ func (d *driverMgr) generateOfedModulesBlacklist(ctx context.Context) error {
 		if module == "" {
 			continue
 		}
-		content.WriteString(fmt.Sprintf("blacklist %s\n", module))
+		content.WriteString(fmt.Sprintf("blacklist %s\n", module)) //nolint:staticcheck
 		log.V(2).Info("Added module to blacklist", "module", module)
 	}
 
@@ -999,7 +999,7 @@ func (d *driverMgr) buildDriverFromSource(ctx context.Context, driverPath, kerne
 
 	// Construct install.pl command
 	installScript := filepath.Join(driverPath, "install.pl")
-	args := []string{
+	args := []string{ //nolint:prealloc
 		installScript,
 		"--without-depcheck",
 		"--kernel", kernelVersion,
@@ -1837,7 +1837,7 @@ func (d *driverMgr) installRedHatDependencies(ctx context.Context, versionInfo *
 		"hostname",
 	}
 
-	args := []string{"dnf", "-q", "-y", "--releasever=" + versionInfo.FullVersion, "install"}
+	args := []string{"dnf", "-q", "-y", "--releasever=" + versionInfo.FullVersion, "install"} //nolint:prealloc
 	args = append(args, packages...)
 
 	_, _, err := d.cmd.RunCommand(ctx, args[0], args[1:]...)

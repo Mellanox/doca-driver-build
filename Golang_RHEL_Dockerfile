@@ -20,7 +20,7 @@ ARG D_FINAL_BASE_IMAGE=registry.access.redhat.com/ubi9/ubi:latest
 
 ##################################################################
 # Stage: build go binary for entrypoint
-FROM golang:1.24 AS go_builder
+FROM golang:1.25 AS go_builder
 
 # Set GOPROXY if provided
 ARG GOPROXY
