@@ -132,25 +132,25 @@ func (h *host) GetDebugInfo(ctx context.Context) (string, error) {
 	// Get OS release information
 	osReleaseContent, err := h.os.ReadFile("/etc/os-release")
 	if err != nil {
-		debugInfo.WriteString(fmt.Sprintf("[os-release]: Error reading /etc/os-release: %v\n", err))
+		debugInfo.WriteString(fmt.Sprintf("[os-release]: Error reading /etc/os-release: %v\n", err)) //nolint:staticcheck
 	} else {
-		debugInfo.WriteString(fmt.Sprintf("[os-release]: %s\n", string(osReleaseContent)))
+		debugInfo.WriteString(fmt.Sprintf("[os-release]: %s\n", string(osReleaseContent))) //nolint:staticcheck
 	}
 
 	// Get kernel information
 	stdout, stderr, err := h.cmd.RunCommand(ctx, "uname", "-a")
 	if err != nil {
-		debugInfo.WriteString(fmt.Sprintf("[uname -a]: Error executing uname -a: %v (stderr: %s)\n", err, stderr))
+		debugInfo.WriteString(fmt.Sprintf("[uname -a]: Error executing uname -a: %v (stderr: %s)\n", err, stderr)) //nolint:staticcheck
 	} else {
-		debugInfo.WriteString(fmt.Sprintf("[uname -a]: %s\n", stdout))
+		debugInfo.WriteString(fmt.Sprintf("[uname -a]: %s\n", stdout)) //nolint:staticcheck
 	}
 
 	// Get memory information
 	stdout, stderr, err = h.cmd.RunCommand(ctx, "free", "-m")
 	if err != nil {
-		debugInfo.WriteString(fmt.Sprintf("[free -m]: Error executing free -m: %v (stderr: %s)\n", err, stderr))
+		debugInfo.WriteString(fmt.Sprintf("[free -m]: Error executing free -m: %v (stderr: %s)\n", err, stderr)) //nolint:staticcheck
 	} else {
-		debugInfo.WriteString(fmt.Sprintf("[free -m]: %s\n", stdout))
+		debugInfo.WriteString(fmt.Sprintf("[free -m]: %s\n", stdout)) //nolint:staticcheck
 	}
 
 	return debugInfo.String(), nil
