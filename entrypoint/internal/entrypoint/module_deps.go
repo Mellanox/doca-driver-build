@@ -185,7 +185,7 @@ func ResolveUnloadOrder(targets []string, modules map[string]ModuleInfo) ([]stri
 		}
 
 		if len(ready) == 0 {
-			var stuck []string
+			stuck := make([]string, 0, len(remaining))
 			for t := range remaining {
 				stuck = append(stuck, t)
 			}

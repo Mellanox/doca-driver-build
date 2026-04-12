@@ -97,8 +97,10 @@ func main() {
 
 		if err := dtk.RunBuild(ctx, log, cfg, cmd.New()); err != nil {
 			log.Error(err, "DTK Build failed")
+			cancel()
 			os.Exit(1)
 		}
+		cancel()
 		return
 	}
 

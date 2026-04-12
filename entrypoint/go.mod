@@ -1,6 +1,6 @@
 module github.com/Mellanox/doca-driver-build/entrypoint
 
-go 1.24.11
+go 1.25
 
 require (
 	github.com/go-logr/logr v1.4.3

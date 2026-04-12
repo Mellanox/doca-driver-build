@@ -22,7 +22,7 @@ ARG D_PYTHON="python${D_PYTHON_VERSION}"
 
 ##################################################################
 # Stage: build go binary for entrypoint
-FROM golang:1.24 AS go_builder
+FROM golang:1.25 AS go_builder
 
 # Set GOPROXY if provided
 ARG GOPROXY

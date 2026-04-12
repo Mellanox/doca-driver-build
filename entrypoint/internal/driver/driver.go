@@ -800,14 +800,14 @@ func (d *driverMgr) generateOfedModulesBlacklist(ctx context.Context) error {
 		if module == "" {
 			continue
 		}
-		content.WriteString(fmt.Sprintf("blacklist %s\n", module))
+		fmt.Fprintf(&content, "blacklist %s\n", module)
 		log.V(2).Info("Added module to blacklist", "module", module)
 	}
 
 	if d.cfg.UnloadThirdPartyRdmaModules {
 		content.WriteString("\n# blacklist third-party RDMA modules to prevent reload conflicts\n")
 		for _, module := range config.ThirdPartyRDMAModules {
-			content.WriteString(fmt.Sprintf("blacklist %s\n", module))
+			fmt.Fprintf(&content, "blacklist %s\n", module)
 			log.V(2).Info("Added third-party RDMA module to blacklist", "module", module)
 		}
 	}
@@ -1895,7 +1895,8 @@ func (d *driverMgr) installRedHatDependencies(ctx context.Context, versionInfo *
 		"hostname",
 	}
 
-	args := []string{"dnf", "-q", "-y", "--releasever=" + versionInfo.FullVersion, "install"}
+	args := make([]string, 0, 5+len(packages))
+	args = append(args, "dnf", "-q", "-y", "--releasever="+versionInfo.FullVersion, "install")
 	args = append(args, packages...)
 
 	_, _, err := d.cmd.RunCommand(ctx, args[0], args[1:]...)
