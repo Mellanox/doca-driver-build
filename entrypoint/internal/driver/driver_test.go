@@ -2221,6 +2221,12 @@ var _ = Describe("Driver", func() {
 			// Mock loadNfsRdma
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "rpcrdma").Return("", "", nil)
 
+			// Mock installNfsUserspace - all binaries already present on host
+			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs").Return(nil, nil)
+			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs4").Return(nil, nil)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs").Return(nil, nil)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs4").Return(nil, nil)
+
 			// Mock printLoadedDriverVersion
 			hostMock.EXPECT().LsMod(ctx).Return(map[string]host.LoadedModule{
 				"mlx5_core": {Name: "mlx5_core", RefCount: 1, UsedBy: []string{}},
@@ -2333,6 +2339,12 @@ var _ = Describe("Driver", func() {
 
 			// Mock loadNfsRdma failure (should not cause Load to fail)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "rpcrdma").Return("", "", errors.New("rpcrdma load failed"))
+
+			// Mock installNfsUserspace - all binaries already present on host
+			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs").Return(nil, nil)
+			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs4").Return(nil, nil)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs").Return(nil, nil)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs4").Return(nil, nil)
 
 			// Mock printLoadedDriverVersion
 			hostMock.EXPECT().LsMod(ctx).Return(map[string]host.LoadedModule{
@@ -2739,27 +2751,31 @@ var _ = Describe("Driver", func() {
 			cfg.EnableNfsRdma = false
 			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
 
-			err := dm.installNfsUserspace(ctx)
-			Expect(err).NotTo(HaveOccurred())
+			dm.installNfsUserspace(ctx)
 		})
 
-		It("should skip when mount.nfs already exists on host", func() {
+		It("should skip binaries already present on host", func() {
 			cfg.EnableNfsRdma = true
 			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
 
-			// mount.nfs already exists on host
+			// All binaries already exist on host
 			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs").Return(nil, nil)
+			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs4").Return(nil, nil)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs").Return(nil, nil)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs4").Return(nil, nil)
 
-			err := dm.installNfsUserspace(ctx)
-			Expect(err).NotTo(HaveOccurred())
+			dm.installNfsUserspace(ctx)
 		})
 
 		It("should copy NFS binaries from /usr/sbin/ to host", func() {
 			cfg.EnableNfsRdma = true
 			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
 
-			// mount.nfs does not exist on host
+			// No binaries exist on host
 			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs4").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs4").Return(nil, os.ErrNotExist)
 
 			// All binaries found in /usr/sbin/
 			osMock.EXPECT().Stat("/usr/sbin/mount.nfs").Return(nil, nil)
@@ -2772,16 +2788,18 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "cp", "/usr/sbin/umount.nfs", "/host/usr/sbin/umount.nfs").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "cp", "/usr/sbin/umount.nfs4", "/host/usr/sbin/umount.nfs4").Return("", "", nil)
 
-			err := dm.installNfsUserspace(ctx)
-			Expect(err).NotTo(HaveOccurred())
+			dm.installNfsUserspace(ctx)
 		})
 
 		It("should fallback to /sbin/ when /usr/sbin/ binary not found", func() {
 			cfg.EnableNfsRdma = true
 			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
 
-			// mount.nfs does not exist on host
+			// No binaries on host
 			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs4").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs4").Return(nil, os.ErrNotExist)
 
 			// mount.nfs not in /usr/sbin/ but in /sbin/
 			osMock.EXPECT().Stat("/usr/sbin/mount.nfs").Return(nil, os.ErrNotExist)
@@ -2798,26 +2816,33 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "cp", "/sbin/mount.nfs", "/host/usr/sbin/mount.nfs").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "cp", "/usr/sbin/umount.nfs", "/host/usr/sbin/umount.nfs").Return("", "", nil)
 
-			err := dm.installNfsUserspace(ctx)
-			Expect(err).NotTo(HaveOccurred())
+			dm.installNfsUserspace(ctx)
 		})
 
-		It("should return error when cp fails", func() {
+		It("should continue when cp fails for a binary", func() {
 			cfg.EnableNfsRdma = true
 			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
 
-			// mount.nfs does not exist on host
+			// No binaries on host
 			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs4").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs4").Return(nil, os.ErrNotExist)
 
-			// Binary found
+			// All binaries found in /usr/sbin/
 			osMock.EXPECT().Stat("/usr/sbin/mount.nfs").Return(nil, nil)
+			osMock.EXPECT().Stat("/usr/sbin/mount.nfs4").Return(nil, nil)
+			osMock.EXPECT().Stat("/usr/sbin/umount.nfs").Return(nil, nil)
+			osMock.EXPECT().Stat("/usr/sbin/umount.nfs4").Return(nil, nil)
 
-			// cp fails
+			// cp fails for mount.nfs but succeeds for others
 			cmdMock.EXPECT().RunCommand(ctx, "cp", "/usr/sbin/mount.nfs", "/host/usr/sbin/mount.nfs").Return("", "", errors.New("permission denied"))
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "/usr/sbin/mount.nfs4", "/host/usr/sbin/mount.nfs4").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "/usr/sbin/umount.nfs", "/host/usr/sbin/umount.nfs").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "/usr/sbin/umount.nfs4", "/host/usr/sbin/umount.nfs4").Return("", "", nil)
 
-			err := dm.installNfsUserspace(ctx)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("failed to copy mount.nfs to host"))
+			// cp failure is non-fatal and must not panic
+			dm.installNfsUserspace(ctx)
 		})
 	})
 

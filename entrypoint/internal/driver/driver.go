@@ -339,12 +339,10 @@ func (d *driverMgr) Load(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("failed to mount rootfs: %w", err)
 	}
 
-	// Install NFS userspace tools on host if NFSRDMA is enabled
+	// Install NFS userspace tools on host if NFSRDMA is enabled.
+	// Failures are logged inside and are non-fatal.
 	if d.cfg.EnableNfsRdma {
-		if err := d.installNfsUserspace(ctx); err != nil {
-			log.V(1).Info("Failed to install NFS userspace tools on host", "error", err)
-			// Non-fatal error, continue
-		}
+		d.installNfsUserspace(ctx)
 	}
 
 	// Clean up old driver inventory to free disk space
@@ -2083,23 +2081,25 @@ func (d *driverMgr) loadNfsRdma(ctx context.Context) error {
 // installNfsUserspace copies NFS userspace tools (mount.nfs) from the container
 // to the host filesystem when ENABLE_NFSRDMA is true. This ensures the host has
 // the mount.nfs binary required for NFS mounts over RDMA.
-func (d *driverMgr) installNfsUserspace(ctx context.Context) error {
+// All failures are non-fatal: missing or uncopyable binaries are logged and skipped.
+func (d *driverMgr) installNfsUserspace(ctx context.Context) {
 	log := logr.FromContextOrDiscard(ctx)
 
 	if !d.cfg.EnableNfsRdma {
-		return nil
+		return
 	}
 
-	// Check if mount.nfs already exists on host
-	if _, err := d.os.Stat("/host/usr/sbin/mount.nfs"); err == nil {
-		log.Info("NFS userspace tools already present on host")
-		return nil
-	}
-
-	log.Info("Installing NFS userspace tools (mount.nfs) to host")
+	log.Info("Installing NFS userspace tools to host")
 
 	nfsBins := []string{"mount.nfs", "mount.nfs4", "umount.nfs", "umount.nfs4"}
 	for _, bin := range nfsBins {
+		// Skip if already present on host
+		dst := "/host/usr/sbin/" + bin
+		if _, err := d.os.Stat(dst); err == nil {
+			log.V(1).Info("NFS binary already present on host, skipping", "binary", bin)
+			continue
+		}
+
 		src := ""
 		if _, err := d.os.Stat("/usr/sbin/" + bin); err == nil {
 			src = "/usr/sbin/" + bin
@@ -2110,15 +2110,13 @@ func (d *driverMgr) installNfsUserspace(ctx context.Context) error {
 			log.V(1).Info("NFS binary not found in container, skipping", "binary", bin)
 			continue
 		}
-		dst := "/host/usr/sbin/" + bin
 		_, _, err := d.cmd.RunCommand(ctx, "cp", src, dst)
 		if err != nil {
-			return fmt.Errorf("failed to copy %s to host: %w", bin, err)
+			log.V(1).Info("WARNING: failed to copy NFS binary to host, skipping", "binary", bin, "error", err)
+			continue
 		}
 		log.Info("Copied NFS binary to host", "binary", bin, "destination", dst)
 	}
-
-	return nil
 }
 
 // printLoadedDriverVersion prints the currently loaded driver version
