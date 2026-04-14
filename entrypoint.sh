@@ -1140,6 +1140,37 @@ function load_nfsrdma() {
     fi
 }
 
+function install_nfs_userspace() {
+    debug_print "Function: ${FUNCNAME[0]}"
+
+    if [[ "${ENABLE_NFSRDMA}" != true ]]; then
+        return 0
+    fi
+
+    # Check if mount.nfs already exists on the host
+    if [[ -f /host/usr/sbin/mount.nfs ]]; then
+        timestamp_print "NFS userspace tools already present on host"
+        return 0
+    fi
+
+    timestamp_print "Installing NFS userspace tools (mount.nfs) to host"
+
+    # Copy mount.nfs and mount.nfs4 binaries from container to host
+    local nfs_bins="mount.nfs mount.nfs4 umount.nfs umount.nfs4"
+    for bin in ${nfs_bins}; do
+        local src=""
+        if [[ -f /usr/sbin/${bin} ]]; then
+            src="/usr/sbin/${bin}"
+        elif [[ -f /sbin/${bin} ]]; then
+            src="/sbin/${bin}"
+        fi
+        if [[ -n "${src}" ]]; then
+            exec_cmd "cp ${src} /host/usr/sbin/${bin}"
+            timestamp_print "Copied ${bin} to /host/usr/sbin/"
+        fi
+    done
+}
+
 # function check_loaded_kmod_srcver_vs_modinfo() returns 0 if all provided modules
 # srcversion from sysfs match information from modinfo
 function check_loaded_kmod_srcver_vs_modinfo() {
@@ -1731,6 +1762,8 @@ if ! ${build_precompiled}; then
 fi
 
 load_driver
+
+install_nfs_userspace
 
 ${reuse_driver_inventory} && cleanup_driver_inventory
 

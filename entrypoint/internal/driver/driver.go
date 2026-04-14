@@ -310,6 +310,14 @@ func (d *driverMgr) Load(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("failed to mount rootfs: %w", err)
 	}
 
+	// Install NFS userspace tools on host if NFSRDMA is enabled
+	if d.cfg.EnableNfsRdma {
+		if err := d.installNfsUserspace(ctx); err != nil {
+			log.V(1).Info("Failed to install NFS userspace tools on host", "error", err)
+			// Non-fatal error, continue
+		}
+	}
+
 	// Clean up old driver inventory to free disk space
 	if err := d.cleanupDriverInventory(ctx); err != nil {
 		log.V(1).Info("Failed to cleanup driver inventory", "error", err)
@@ -1743,6 +1751,47 @@ func (d *driverMgr) loadNfsRdma(ctx context.Context) error {
 	_, _, err := d.cmd.RunCommand(ctx, "modprobe", "rpcrdma")
 	if err != nil {
 		return fmt.Errorf("failed to load rpcrdma module: %w", err)
+	}
+
+	return nil
+}
+
+// installNfsUserspace copies NFS userspace tools (mount.nfs) from the container
+// to the host filesystem when ENABLE_NFSRDMA is true. This ensures the host has
+// the mount.nfs binary required for NFS mounts over RDMA.
+func (d *driverMgr) installNfsUserspace(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	if !d.cfg.EnableNfsRdma {
+		return nil
+	}
+
+	// Check if mount.nfs already exists on host
+	if _, err := d.os.Stat("/host/usr/sbin/mount.nfs"); err == nil {
+		log.Info("NFS userspace tools already present on host")
+		return nil
+	}
+
+	log.Info("Installing NFS userspace tools (mount.nfs) to host")
+
+	nfsBins := []string{"mount.nfs", "mount.nfs4", "umount.nfs", "umount.nfs4"}
+	for _, bin := range nfsBins {
+		src := ""
+		if _, err := d.os.Stat("/usr/sbin/" + bin); err == nil {
+			src = "/usr/sbin/" + bin
+		} else if _, err := d.os.Stat("/sbin/" + bin); err == nil {
+			src = "/sbin/" + bin
+		}
+		if src == "" {
+			log.V(1).Info("NFS binary not found in container, skipping", "binary", bin)
+			continue
+		}
+		dst := "/host/usr/sbin/" + bin
+		_, _, err := d.cmd.RunCommand(ctx, "cp", src, dst)
+		if err != nil {
+			return fmt.Errorf("failed to copy %s to host: %w", bin, err)
+		}
+		log.Info("Copied NFS binary to host", "binary", bin, "destination", dst)
 	}
 
 	return nil

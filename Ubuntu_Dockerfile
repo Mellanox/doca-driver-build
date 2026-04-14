@@ -56,7 +56,9 @@ RUN set -x && \
 # Driver build / install script requirements
     perl pciutils kmod lsof python3 dh-python \
 # Container functional requirements
-    jq iproute2 udev ethtool ca-certificates && \
+    jq iproute2 udev ethtool ca-certificates \
+# NFS userspace tools (mount.nfs) — copied to host at runtime when ENABLE_NFSRDMA=true
+    nfs-common && \
 # DKMS and kernel module build tools (always installed for driver build/install)
     DEBIAN_FRONTEND=noninteractive apt-get -yq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install dkms build-essential bison flex libelf-dev
 
