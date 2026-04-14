@@ -2391,6 +2391,97 @@ var _ = Describe("Driver", func() {
 		})
 	})
 
+	Context("installNfsUserspace", func() {
+		BeforeEach(func() {
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+		})
+
+		It("should skip when NFSRDMA is disabled", func() {
+			cfg.EnableNfsRdma = false
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			err := dm.installNfsUserspace(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should skip when mount.nfs already exists on host", func() {
+			cfg.EnableNfsRdma = true
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// mount.nfs already exists on host
+			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs").Return(nil, nil)
+
+			err := dm.installNfsUserspace(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should copy NFS binaries from /usr/sbin/ to host", func() {
+			cfg.EnableNfsRdma = true
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// mount.nfs does not exist on host
+			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs").Return(nil, os.ErrNotExist)
+
+			// All binaries found in /usr/sbin/
+			osMock.EXPECT().Stat("/usr/sbin/mount.nfs").Return(nil, nil)
+			osMock.EXPECT().Stat("/usr/sbin/mount.nfs4").Return(nil, nil)
+			osMock.EXPECT().Stat("/usr/sbin/umount.nfs").Return(nil, nil)
+			osMock.EXPECT().Stat("/usr/sbin/umount.nfs4").Return(nil, nil)
+
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "/usr/sbin/mount.nfs", "/host/usr/sbin/mount.nfs").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "/usr/sbin/mount.nfs4", "/host/usr/sbin/mount.nfs4").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "/usr/sbin/umount.nfs", "/host/usr/sbin/umount.nfs").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "/usr/sbin/umount.nfs4", "/host/usr/sbin/umount.nfs4").Return("", "", nil)
+
+			err := dm.installNfsUserspace(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should fallback to /sbin/ when /usr/sbin/ binary not found", func() {
+			cfg.EnableNfsRdma = true
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// mount.nfs does not exist on host
+			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs").Return(nil, os.ErrNotExist)
+
+			// mount.nfs not in /usr/sbin/ but in /sbin/
+			osMock.EXPECT().Stat("/usr/sbin/mount.nfs").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/sbin/mount.nfs").Return(nil, nil)
+			// mount.nfs4 not found anywhere
+			osMock.EXPECT().Stat("/usr/sbin/mount.nfs4").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/sbin/mount.nfs4").Return(nil, os.ErrNotExist)
+			// umount.nfs in /usr/sbin/
+			osMock.EXPECT().Stat("/usr/sbin/umount.nfs").Return(nil, nil)
+			// umount.nfs4 not found anywhere
+			osMock.EXPECT().Stat("/usr/sbin/umount.nfs4").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/sbin/umount.nfs4").Return(nil, os.ErrNotExist)
+
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "/sbin/mount.nfs", "/host/usr/sbin/mount.nfs").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "/usr/sbin/umount.nfs", "/host/usr/sbin/umount.nfs").Return("", "", nil)
+
+			err := dm.installNfsUserspace(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should return error when cp fails", func() {
+			cfg.EnableNfsRdma = true
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			// mount.nfs does not exist on host
+			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs").Return(nil, os.ErrNotExist)
+
+			// Binary found
+			osMock.EXPECT().Stat("/usr/sbin/mount.nfs").Return(nil, nil)
+
+			// cp fails
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "/usr/sbin/mount.nfs", "/host/usr/sbin/mount.nfs").Return("", "", errors.New("permission denied"))
+
+			err := dm.installNfsUserspace(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to copy mount.nfs to host"))
+		})
+	})
+
 	Context("printLoadedDriverVersion", func() {
 		BeforeEach(func() {
 			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)

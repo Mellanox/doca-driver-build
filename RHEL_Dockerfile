@@ -60,7 +60,9 @@ RUN set -x && \
     dnf -y update && \
     dnf -y install perl \
 # Container functional requirements
-    jq iproute kmod procps-ng udev
+    jq iproute kmod procps-ng udev \
+# NFS userspace tools (mount.nfs) — copied to host at runtime when ENABLE_NFSRDMA=true
+    nfs-utils
 
 COPY --from=go_builder /workspace/build/entrypoint /root/entrypoint
 WORKDIR /root
@@ -190,7 +192,9 @@ RUN set -x && \
 # MOFED functional requirements
     dnf install -y pciutils hostname udev ethtool \
 # Container functional requirements
-    jq iproute kmod procps-ng udev && \
+    jq iproute kmod procps-ng udev \
+# NFS userspace tools (mount.nfs) — copied to host at runtime when ENABLE_NFSRDMA=true
+    nfs-utils && \
 # DKMS and kernel module build tools when DKMS enabled (runtime dkms add/build/install)
     if [ "$D_ENABLE_DKMS" = "true" ]; then \
         MAJOR_VER=$(echo ${D_OS} | sed 's/rhel\([0-9]*\).*/\1/') && \
