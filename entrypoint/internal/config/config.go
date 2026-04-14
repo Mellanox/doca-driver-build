@@ -74,12 +74,14 @@ type Config struct {
 // ThirdPartyRDMAModules is the hardcoded list of known third-party RDMA kernel modules
 // (non-NVIDIA modules from the rdma-core ecosystem) that can block MOFED driver reload.
 // This list is used when UnloadThirdPartyRdmaModules is true.
+//
+// NOTE: Do NOT add core RDMA infrastructure modules (iw_cm, ib_cm, rdma_cm, etc.)
+// here — MOFED manages those in its own unload sequence. Do NOT add storage-over-RDMA
+// modules that are already handled by UNLOAD_STORAGE_MODULES (StorageModules).
 var ThirdPartyRDMAModules = []string{
 	"bnxt_re", "efa", "erdma", "iw_cxgb4", "hfi1", "hns_roce",
 	"ionic_rdma", "irdma", "ib_qib", "mana_ib", "ocrdma", "qedr",
 	"rdma_rxe", "siw", "vmw_pvrdma",
-	"ib_srp", "ib_iser", "iw_cm", "ib_isert",
-	"nvme_rdma", "nvmet_rdma", "rpcrdma", "xprtrdma",
 }
 
 // GetConfig parses environment variables and returns a Config struct.
