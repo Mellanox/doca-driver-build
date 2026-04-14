@@ -1814,16 +1814,17 @@ func (d *driverMgr) installNfsUserspace(ctx context.Context) error {
 		return nil
 	}
 
-	// Check if mount.nfs already exists on host
-	if _, err := d.os.Stat("/host/usr/sbin/mount.nfs"); err == nil {
-		log.Info("NFS userspace tools already present on host")
-		return nil
-	}
-
-	log.Info("Installing NFS userspace tools (mount.nfs) to host")
+	log.Info("Installing NFS userspace tools to host")
 
 	nfsBins := []string{"mount.nfs", "mount.nfs4", "umount.nfs", "umount.nfs4"}
 	for _, bin := range nfsBins {
+		// Skip if already present on host
+		dst := "/host/usr/sbin/" + bin
+		if _, err := d.os.Stat(dst); err == nil {
+			log.V(1).Info("NFS binary already present on host, skipping", "binary", bin)
+			continue
+		}
+
 		src := ""
 		if _, err := d.os.Stat("/usr/sbin/" + bin); err == nil {
 			src = "/usr/sbin/" + bin
@@ -1834,10 +1835,10 @@ func (d *driverMgr) installNfsUserspace(ctx context.Context) error {
 			log.V(1).Info("NFS binary not found in container, skipping", "binary", bin)
 			continue
 		}
-		dst := "/host/usr/sbin/" + bin
 		_, _, err := d.cmd.RunCommand(ctx, "cp", src, dst)
 		if err != nil {
-			return fmt.Errorf("failed to copy %s to host: %w", bin, err)
+			log.V(1).Info("WARNING: failed to copy NFS binary to host, skipping", "binary", bin, "error", err)
+			continue
 		}
 		log.Info("Copied NFS binary to host", "binary", bin, "destination", dst)
 	}

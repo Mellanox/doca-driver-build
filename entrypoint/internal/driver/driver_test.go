@@ -2404,12 +2404,15 @@ var _ = Describe("Driver", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should skip when mount.nfs already exists on host", func() {
+		It("should skip binaries already present on host", func() {
 			cfg.EnableNfsRdma = true
 			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
 
-			// mount.nfs already exists on host
+			// All binaries already exist on host
 			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs").Return(nil, nil)
+			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs4").Return(nil, nil)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs").Return(nil, nil)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs4").Return(nil, nil)
 
 			err := dm.installNfsUserspace(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -2419,8 +2422,11 @@ var _ = Describe("Driver", func() {
 			cfg.EnableNfsRdma = true
 			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
 
-			// mount.nfs does not exist on host
+			// No binaries exist on host
 			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs4").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs4").Return(nil, os.ErrNotExist)
 
 			// All binaries found in /usr/sbin/
 			osMock.EXPECT().Stat("/usr/sbin/mount.nfs").Return(nil, nil)
@@ -2441,8 +2447,11 @@ var _ = Describe("Driver", func() {
 			cfg.EnableNfsRdma = true
 			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
 
-			// mount.nfs does not exist on host
+			// No binaries on host
 			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs4").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs4").Return(nil, os.ErrNotExist)
 
 			// mount.nfs not in /usr/sbin/ but in /sbin/
 			osMock.EXPECT().Stat("/usr/sbin/mount.nfs").Return(nil, os.ErrNotExist)
@@ -2463,22 +2472,31 @@ var _ = Describe("Driver", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should return error when cp fails", func() {
+		It("should continue when cp fails for a binary", func() {
 			cfg.EnableNfsRdma = true
 			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
 
-			// mount.nfs does not exist on host
+			// No binaries on host
 			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/mount.nfs4").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/usr/sbin/umount.nfs4").Return(nil, os.ErrNotExist)
 
-			// Binary found
+			// All binaries found in /usr/sbin/
 			osMock.EXPECT().Stat("/usr/sbin/mount.nfs").Return(nil, nil)
+			osMock.EXPECT().Stat("/usr/sbin/mount.nfs4").Return(nil, nil)
+			osMock.EXPECT().Stat("/usr/sbin/umount.nfs").Return(nil, nil)
+			osMock.EXPECT().Stat("/usr/sbin/umount.nfs4").Return(nil, nil)
 
-			// cp fails
+			// cp fails for mount.nfs but succeeds for others
 			cmdMock.EXPECT().RunCommand(ctx, "cp", "/usr/sbin/mount.nfs", "/host/usr/sbin/mount.nfs").Return("", "", errors.New("permission denied"))
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "/usr/sbin/mount.nfs4", "/host/usr/sbin/mount.nfs4").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "/usr/sbin/umount.nfs", "/host/usr/sbin/umount.nfs").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "/usr/sbin/umount.nfs4", "/host/usr/sbin/umount.nfs4").Return("", "", nil)
 
+			// Should not return error — cp failure is non-fatal
 			err := dm.installNfsUserspace(ctx)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("failed to copy mount.nfs to host"))
+			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 

@@ -1151,17 +1151,16 @@ function install_nfs_userspace() {
         return 0
     fi
 
-    # Check if mount.nfs already exists on the host
-    if [[ -f /host/usr/sbin/mount.nfs ]]; then
-        timestamp_print "NFS userspace tools already present on host"
-        return 0
-    fi
+    timestamp_print "Installing NFS userspace tools to host"
 
-    timestamp_print "Installing NFS userspace tools (mount.nfs) to host"
-
-    # Copy mount.nfs and mount.nfs4 binaries from container to host
+    # Copy mount.nfs and related binaries from container to host
     local nfs_bins="mount.nfs mount.nfs4 umount.nfs umount.nfs4"
     for bin in ${nfs_bins}; do
+        # Skip if already present on host
+        if [[ -f /host/usr/sbin/${bin} ]]; then
+            debug_print "${bin} already present on host, skipping"
+            continue
+        fi
         local src=""
         if [[ -f /usr/sbin/${bin} ]]; then
             src="/usr/sbin/${bin}"
@@ -1169,8 +1168,11 @@ function install_nfs_userspace() {
             src="/sbin/${bin}"
         fi
         if [[ -n "${src}" ]]; then
-            exec_cmd "cp ${src} /host/usr/sbin/${bin}"
-            timestamp_print "Copied ${bin} to /host/usr/sbin/"
+            if cp "${src}" "/host/usr/sbin/${bin}"; then
+                timestamp_print "Copied ${bin} to /host/usr/sbin/"
+            else
+                timestamp_print "WARNING: Failed to copy ${bin} to /host/usr/sbin/, skipping"
+            fi
         fi
     done
 }
