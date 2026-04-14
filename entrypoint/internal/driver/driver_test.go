@@ -3776,8 +3776,7 @@ var _ = Describe("Driver OFED Blacklist", func() {
 			// Verify a few representative third-party modules
 			Expect(contentStr).To(ContainSubstring("blacklist bnxt_re"))
 			Expect(contentStr).To(ContainSubstring("blacklist qedr"))
-			Expect(contentStr).To(ContainSubstring("blacklist nvme_rdma"))
-			Expect(contentStr).To(ContainSubstring("blacklist xprtrdma"))
+			Expect(contentStr).To(ContainSubstring("blacklist siw"))
 
 			// Count blacklist lines - should be 2 OFED + len(ThirdPartyRDMAModules)
 			lines := strings.Split(contentStr, "\n")

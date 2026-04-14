@@ -57,7 +57,7 @@
 : ${UNLOAD_THIRD_PARTY_RDMA_MODULES:=false}
 
 # Hardcoded list of known third-party RDMA modules (non-NVIDIA, from rdma-core)
-THIRD_PARTY_RDMA_MODULES="bnxt_re efa erdma iw_cxgb4 hfi1 hns_roce ionic_rdma irdma ib_qib mana_ib ocrdma qedr rdma_rxe siw vmw_pvrdma ib_srp ib_iser iw_cm ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma"
+THIRD_PARTY_RDMA_MODULES="bnxt_re efa erdma iw_cxgb4 hfi1 hns_roce ionic_rdma irdma ib_qib mana_ib ocrdma qedr rdma_rxe siw vmw_pvrdma"
 
 : ${UBUNTU_PRO_TOKEN:=""}
 
