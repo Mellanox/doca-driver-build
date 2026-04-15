@@ -1219,6 +1219,15 @@ function calculate_driver_inventory_md5_checksum() {
     find "${driver_inventory_path}" -type f -exec md5sum {} + | md5sum | awk '{ print $1 }'
 }
 
+# Returns a canonical string of the build-affecting configuration.
+# Used to detect config drift that requires a cache rebuild even when the kernel
+# and driver versions are unchanged (e.g. ENABLE_NFSRDMA toggled).
+function calculate_build_config_fingerprint() {
+    echo "ENABLE_NFSRDMA=${ENABLE_NFSRDMA}
+USE_DKMS=${USE_DKMS}
+APPEND_DRIVER_BUILD_FLAGS=${APPEND_DRIVER_BUILD_FLAGS}"
+}
+
 function build_driver() {
     debug_print "Function: ${FUNCNAME[0]}"
 
@@ -1227,6 +1236,7 @@ function build_driver() {
     if ${reuse_driver_inventory}; then
         driver_inventory_path="${NVIDIA_NIC_DRIVERS_INVENTORY_PATH}/${FULL_KVER}/${NVIDIA_NIC_DRIVER_VER}"
         checksum_path="${NVIDIA_NIC_DRIVERS_INVENTORY_PATH}/${FULL_KVER}/${NVIDIA_NIC_DRIVER_VER}.checksum"
+        buildconfig_path="${NVIDIA_NIC_DRIVERS_INVENTORY_PATH}/${FULL_KVER}/${NVIDIA_NIC_DRIVER_VER}.buildconfig"
 
         if [ -d "${driver_inventory_path}" ]; then
             if [ -f "${checksum_path}" ]; then
@@ -1234,19 +1244,33 @@ function build_driver() {
                 current_checksum=$(calculate_driver_inventory_md5_checksum)
 
                 if [ "${stored_checksum}" == "${current_checksum}" ]; then
-                    timestamp_print "Skipping driver build, reusing previously built packages for kernel ${FULL_KVER}"
-                    # When DKMS is enabled, kernel headers are still needed for dkms build
-                    if [[ "${USE_DKMS}" = true ]] && ${build_src}; then
-                        timestamp_print "Installing kernel prerequisites for DKMS"
-                        if ${IS_OS_UBUNTU}; then
-                            ubuntu_install_prerequisites
-                        elif ${IS_OS_SLES}; then
-                            sles_install_prerequisites
+                    # Package checksums match; also verify the build config fingerprint to detect
+                    # configuration drift (e.g. ENABLE_NFSRDMA toggled) that requires a rebuild
+                    # even though the cached packages are intact.
+                    if [ ! -f "${buildconfig_path}" ]; then
+                        timestamp_print "No build config fingerprint found for existing artifacts, building the driver again"
+                    else
+                        stored_buildconfig=$(cat "${buildconfig_path}")
+                        current_buildconfig=$(calculate_build_config_fingerprint)
+
+                        if [ "${stored_buildconfig}" != "${current_buildconfig}" ]; then
+                            timestamp_print "Build config has changed since last build, invalidating cache and rebuilding"
                         else
-                            redhat_install_prerequisites
+                            timestamp_print "Skipping driver build, reusing previously built packages for kernel ${FULL_KVER}"
+                            # When DKMS is enabled, kernel headers are still needed for dkms build
+                            if [[ "${USE_DKMS}" = true ]] && ${build_src}; then
+                                timestamp_print "Installing kernel prerequisites for DKMS"
+                                if ${IS_OS_UBUNTU}; then
+                                    ubuntu_install_prerequisites
+                                elif ${IS_OS_SLES}; then
+                                    sles_install_prerequisites
+                                else
+                                    redhat_install_prerequisites
+                                fi
+                            fi
+                            return 0
                         fi
                     fi
-                    return 0
                 else
                     timestamp_print "Check sum of the existing artifacts does not match, building the driver again"
                 fi
@@ -1315,6 +1339,10 @@ function build_driver() {
         current_checksum=$(calculate_driver_inventory_md5_checksum)
         timestamp_print "Storing the check sum for build artifacts at ${checksum_path}, check sum: ${current_checksum}"
         echo ${current_checksum} > "${checksum_path}"
+
+        current_buildconfig=$(calculate_build_config_fingerprint)
+        timestamp_print "Storing build config fingerprint at ${buildconfig_path}"
+        echo "${current_buildconfig}" > "${buildconfig_path}"
     fi
 
     driver_build_incomplete=false
@@ -1338,7 +1366,7 @@ function cleanup_driver_inventory() {
         for driver_ver_item in ${driver_ver_items}; do
             found_driver_ver_items=$((${found_driver_ver_items}+1))
 
-            if [[ ${driver_ver_item} != "${NVIDIA_NIC_DRIVER_VER}" && ${driver_ver_item} != "${NVIDIA_NIC_DRIVER_VER}.checksum" ]]; then
+            if [[ ${driver_ver_item} != "${NVIDIA_NIC_DRIVER_VER}" && ${driver_ver_item} != "${NVIDIA_NIC_DRIVER_VER}.checksum" && ${driver_ver_item} != "${NVIDIA_NIC_DRIVER_VER}.buildconfig" ]]; then
                 exec_cmd "rm -rf ${NVIDIA_NIC_DRIVERS_INVENTORY_PATH}/${kernel_ver_dir}/${driver_ver_item}"
                 removed_driver_ver_items=$((${removed_driver_ver_items}+1))
             fi
