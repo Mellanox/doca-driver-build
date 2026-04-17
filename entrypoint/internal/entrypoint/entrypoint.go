@@ -91,7 +91,9 @@ func (e *entrypoint) run(signalCh chan os.Signal) error {
 	defer unlock()
 
 	startCtx, startCancel := context.WithCancel(context.Background())
+	defer startCancel()
 	stopCtx, stopCancel := context.WithCancel(context.Background())
+	defer stopCancel()
 	startCtx = logr.NewContext(startCtx, e.log)
 	stopCtx = logr.NewContext(stopCtx, e.log)
 	setupSignalHandler(signalCh, []ctxData{{Ctx: startCtx, Cancel: startCancel}, {Ctx: stopCtx, Cancel: stopCancel}})
