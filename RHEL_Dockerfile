@@ -98,7 +98,11 @@ ENV NVIDIA_NIC_CONTAINER_VER=${D_CONTAINER_VER}
 ENV NVIDIA_NIC_DRIVER_PATH="${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_VERSION}"
 
 WORKDIR /root
-RUN set -x && \
+# Mount RHEL subscription certificates so docker build can access subscription-gated repos.
+# Pass the host entitlement directory via: --build-context rhsm=/etc/pki/entitlement
+# (buildah inherits host entitlements automatically; docker requires explicit bind mount)
+RUN --mount=type=bind,from=rhsm,source=.,target=/etc/pki/entitlement-host \
+    set -x && \
 # Install prerequirements
     dnf install -y curl --allowerasing \
 # Driver build requirements
