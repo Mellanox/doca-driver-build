@@ -29,6 +29,9 @@
 # CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/module_unload_deps.sh"
+
 : ${UNLOAD_STORAGE_MODULES:=false}
 : ${CREATE_IFNAMES_UDEV:=false}
 : ${ENABLE_NFSRDMA:=false}
@@ -1161,6 +1164,22 @@ function check_loaded_kmod_srcver_vs_modinfo() {
 
 function load_driver() {
     debug_print "Function: ${FUNCNAME[0]}"
+    debug_print "Verifying loaded modules will not prevent future driver restart"
+
+    local unload_cmd_output=""
+    local unload_cmd_err=""
+    local unload_cmd_err_file="$(mktemp)"
+    if ! unload_cmd_output="$(modules_unload_command ib_core 2>"${unload_cmd_err_file}")"; then
+        unload_cmd_err="$(awk 'NF {print}' "${unload_cmd_err_file}" | tr '\n' '; ' | sed 's/[; ]*$//')"
+        if [[ -z "${unload_cmd_err}" ]]; then
+            unload_cmd_err="unknown dependency validation failure"
+        fi
+        timestamp_print "Cannot restart driver: ${unload_cmd_err}. Check ${unload_cmd_err_file} for details."
+        exit_entryp 1
+    fi
+
+    rm -f "${unload_cmd_err_file}"
+    debug_print "Planned unload command: ${unload_cmd_output}"
 
     # Setup DKMS if enabled. Must run before restart_driver so that
     # dkms build/install places .ko files in /lib/modules/ before modprobe tries to load them.
