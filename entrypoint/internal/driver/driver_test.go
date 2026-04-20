@@ -1370,6 +1370,34 @@ var _ = Describe("Driver", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
+		It("should not install kernel prerequisites for a DTK build", func() {
+			// Regression test: installPrerequisitesForOS must be skipped entirely for
+			// DTK builds. The DTK sidecar handles compilation; kernel headers are not
+			// needed and the container repos may not carry the kernel packages.
+			//
+			// No mock for GetRedHatVersionInfo is registered.  If
+			// installPrerequisitesForOS were called it would invoke GetRedHatVersionInfo,
+			// which the mock framework would report as an unexpected call — catching the
+			// regression immediately.
+			cfg.DtkOcpDriverBuild = true
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.14.0-570.78.1.el9_6.x86_64", nil)
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeOpenShift, nil)
+
+			// No NvidiaNicDriversInventoryPath set → checkDriverInventory returns
+			// shouldBuild=true immediately, without any Stat/ReadFile calls.
+
+			// DTK setup: done flag absent, then MkdirAll fails — keeps the mock surface
+			// minimal without having to wire up the entire DTK pipeline.
+			osMock.EXPECT().Stat(mock.Anything).Return(nil, os.ErrNotExist) // done flag not present
+			osMock.EXPECT().MkdirAll(mock.Anything, mock.Anything).Return(errors.New("mkdir failed"))
+
+			err := dm.Build(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to setup DTK build"))
+		})
+
 		It("should return error when createInventoryDirectory fails", func() {
 			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.4.0-42-generic", nil)
 			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)

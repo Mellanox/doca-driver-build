@@ -159,12 +159,15 @@ func (d *driverMgr) Build(ctx context.Context) error {
 		return fmt.Errorf("failed to get OS type: %w", err)
 	}
 
-	// Install OS-specific prerequisites (e.g. kernel headers).
-	// This must happen before the cache check because even when driver packages
-	// are cached, DKMS still needs kernel headers to build modules at runtime.
-	log.V(1).Info("About to install prerequisites", "os", osType, "kernel", kernelVersion)
-	if err := d.installPrerequisitesForOS(ctx, osType, kernelVersion); err != nil {
-		return fmt.Errorf("failed to install prerequisites: %w", err)
+	// For DTK builds the DTK sidecar handles compilation, so kernel headers are not
+	// needed in this container and package repos may not be reachable from it.
+	// For non-DTK builds, prerequisites must be installed before the cache check
+	// because DKMS still needs kernel headers even when driver packages are cached.
+	if !d.cfg.DtkOcpDriverBuild {
+		log.V(1).Info("About to install prerequisites", "os", osType, "kernel", kernelVersion)
+		if err := d.installPrerequisitesForOS(ctx, osType, kernelVersion); err != nil {
+			return fmt.Errorf("failed to install prerequisites: %w", err)
+		}
 	}
 
 	// Check driver inventory and validate checksums
