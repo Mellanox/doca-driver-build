@@ -19,6 +19,8 @@ package config
 
 import (
 	"github.com/caarlos0/env/v11"
+
+	"github.com/Mellanox/doca-driver-build/entrypoint/pkg/mofedmodules"
 )
 
 // Config contains configuration for the entrypoint.
@@ -51,7 +53,10 @@ type Config struct {
 
 	OfedBlacklistModulesFile string   `env:"OFED_BLACKLIST_MODULES_FILE" envDefault:"/host/etc/modprobe.d/blacklist-ofed-modules.conf"`
 	OfedBlacklistModules     []string `env:"OFED_BLACKLIST_MODULES"      envDefault:"mlx5_core:mlx5_ib:ib_umad:ib_uverbs:ib_ipoib:rdma_cm:rdma_ucm:ib_core:ib_cm" envSeparator:":"`
-	StorageModules           []string `env:"STORAGE_MODULES"             envDefault:"ib_isert:nvme_rdma:nvmet_rdma:rpcrdma:xprtrdma:ib_srpt"                      envSeparator:":"`
+	// StorageModules defaults to mofedmodules.DefaultStorageModules when unset; see GetConfig.
+	StorageModules []string `env:"STORAGE_MODULES" envSeparator:" "`
+	// ThirdPartyRDMAModules defaults to mofedmodules.DefaultThirdPartyRDMAModules when unset; see GetConfig.
+	ThirdPartyRDMAModules []string `env:"THIRD_PARTY_RDMA_MODULES" envSeparator:" "`
 
 	// DKMS settings
 	UseDKMS bool `env:"USE_DKMS" envDefault:"false"`
@@ -71,24 +76,19 @@ type Config struct {
 	BindDelaySec        int    `env:"BIND_DELAY_SEC"          envDefault:"4"`
 }
 
-// ThirdPartyRDMAModules is the hardcoded list of known third-party RDMA kernel modules
-// (non-NVIDIA modules from the rdma-core ecosystem) that can block MOFED driver reload.
-// This list is used when UnloadThirdPartyRdmaModules is true.
-//
-// NOTE: Do NOT add core RDMA infrastructure modules (iw_cm, ib_cm, rdma_cm, etc.)
-// here — MOFED manages those in its own unload sequence. Do NOT add storage-over-RDMA
-// modules that are already handled by UNLOAD_STORAGE_MODULES (StorageModules).
-var ThirdPartyRDMAModules = []string{
-	"bnxt_re", "efa", "erdma", "iw_cxgb4", "hfi1", "hns_roce",
-	"ionic_rdma", "irdma", "ib_qib", "mana_ib", "ocrdma", "qedr",
-	"rdma_rxe", "siw", "vmw_pvrdma",
-}
-
 // GetConfig parses environment variables and returns a Config struct.
+// When STORAGE_MODULES or THIRD_PARTY_RDMA_MODULES is unset, the corresponding
+// slice is populated from the canonical defaults in the mofedmodules package.
 func GetConfig() (Config, error) {
 	var cfg Config
 	if err := env.Parse(&cfg); err != nil {
 		return Config{}, err
+	}
+	if len(cfg.StorageModules) == 0 {
+		cfg.StorageModules = append(cfg.StorageModules, mofedmodules.DefaultStorageModules...)
+	}
+	if len(cfg.ThirdPartyRDMAModules) == 0 {
+		cfg.ThirdPartyRDMAModules = append(cfg.ThirdPartyRDMAModules, mofedmodules.DefaultThirdPartyRDMAModules...)
 	}
 	return cfg, nil
 }

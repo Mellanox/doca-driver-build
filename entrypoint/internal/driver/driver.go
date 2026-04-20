@@ -806,7 +806,7 @@ func (d *driverMgr) generateOfedModulesBlacklist(ctx context.Context) error {
 
 	if d.cfg.UnloadThirdPartyRdmaModules {
 		content.WriteString("\n# blacklist third-party RDMA modules to prevent reload conflicts\n")
-		for _, module := range config.ThirdPartyRDMAModules {
+		for _, module := range d.cfg.ThirdPartyRDMAModules {
 			fmt.Fprintf(&content, "blacklist %s\n", module)
 			log.V(2).Info("Added third-party RDMA module to blacklist", "module", module)
 		}
