@@ -32,6 +32,8 @@ var _ = Describe("Config", func() {
 	AfterEach(func() {
 		os.Unsetenv("NVIDIA_NIC_DRIVER_VER")
 		os.Unsetenv("UNLOAD_THIRD_PARTY_RDMA_MODULES")
+		os.Unsetenv("THIRD_PARTY_RDMA_MODULES")
+		os.Unsetenv("STORAGE_MODULES")
 	})
 
 	Context("UnloadThirdPartyRdmaModules", func() {
@@ -57,6 +59,44 @@ var _ = Describe("Config", func() {
 			cfg, err := GetConfig()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cfg.UnloadThirdPartyRdmaModules).To(BeFalse())
+		})
+	})
+
+	Context("StorageModules", func() {
+		It("should include ib_iser and ib_srp in the default list", func() {
+			os.Unsetenv("STORAGE_MODULES")
+
+			cfg, err := GetConfig()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.StorageModules).To(ContainElement("ib_iser"))
+			Expect(cfg.StorageModules).To(ContainElement("ib_srp"))
+			Expect(cfg.StorageModules).To(ContainElement("ib_isert"))
+			Expect(cfg.StorageModules).To(ContainElement("ib_srpt"))
+			Expect(cfg.StorageModules).To(ContainElement("nvme_rdma"))
+			Expect(cfg.StorageModules).To(ContainElement("nvmet_rdma"))
+			Expect(cfg.StorageModules).To(ContainElement("rpcrdma"))
+			Expect(cfg.StorageModules).To(ContainElement("xprtrdma"))
+		})
+	})
+
+	Context("ThirdPartyRDMAModules", func() {
+		It("should parse the default list when THIRD_PARTY_RDMA_MODULES is not set", func() {
+			os.Unsetenv("THIRD_PARTY_RDMA_MODULES")
+
+			cfg, err := GetConfig()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.ThirdPartyRDMAModules).To(ContainElement("bnxt_re"))
+			Expect(cfg.ThirdPartyRDMAModules).To(ContainElement("qedr"))
+			Expect(cfg.ThirdPartyRDMAModules).To(ContainElement("siw"))
+			Expect(cfg.ThirdPartyRDMAModules).To(HaveLen(15))
+		})
+
+		It("should parse a space-separated override correctly", func() {
+			os.Setenv("THIRD_PARTY_RDMA_MODULES", "foo_re bar_rdma baz_ib")
+
+			cfg, err := GetConfig()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.ThirdPartyRDMAModules).To(Equal([]string{"foo_re", "bar_rdma", "baz_ib"}))
 		})
 	})
 })

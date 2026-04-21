@@ -56,8 +56,9 @@
 # Example: UNLOAD_THIRD_PARTY_RDMA_MODULES=true
 : ${UNLOAD_THIRD_PARTY_RDMA_MODULES:=false}
 
-# Hardcoded list of known third-party RDMA modules (non-NVIDIA, from rdma-core)
-THIRD_PARTY_RDMA_MODULES="bnxt_re efa erdma iw_cxgb4 hfi1 hns_roce ionic_rdma irdma ib_qib mana_ib ocrdma qedr rdma_rxe siw vmw_pvrdma"
+# Known third-party RDMA modules (non-NVIDIA, from rdma-core). Override via env var if needed.
+# Space-separated to match the Go envSeparator and bash word-splitting — no translation needed.
+THIRD_PARTY_RDMA_MODULES="${THIRD_PARTY_RDMA_MODULES:-bnxt_re efa erdma iw_cxgb4 hfi1 hns_roce ionic_rdma irdma ib_qib mana_ib ocrdma qedr rdma_rxe siw vmw_pvrdma}"
 
 : ${UBUNTU_PRO_TOKEN:=""}
 
@@ -505,7 +506,9 @@ function unload_storage_modules() {
         unload_storage_script="/usr/share/mlnx_ofed/mod_load_funcs"
     fi
 
-    sed -i -e '/^[[:space:]]*UNLOAD_MODULES="[a-z]/a\    UNLOAD_MODULES="$UNLOAD_MODULES ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma ib_srpt"' ${unload_storage_script}
+    # STORAGE_MODULES is space-separated (matches Go config envSeparator and bash word-splitting).
+    storage_modules_list="${STORAGE_MODULES:-ib_iser ib_isert ib_srp ib_srpt nvme_rdma nvmet_rdma rpcrdma xprtrdma}"
+    sed -i -e "/^[[:space:]]*UNLOAD_MODULES=\"[a-z]/a\\    UNLOAD_MODULES=\"\$UNLOAD_MODULES ${storage_modules_list}\"" ${unload_storage_script}
 
     if [ `grep ib_isert ${unload_storage_script} -c` -lt 1 ]; then
         timestamp_print "Failed to inject storage modules for unload"
@@ -546,7 +549,8 @@ function generate_ofed_modules_blacklist(){
         echo "blacklist $component" >> ${OFED_BLACKLIST_MODULES_FILE}
     done
 
-    # Append third-party RDMA modules to blacklist if enabled
+    # Append third-party RDMA modules to blacklist if enabled. THIRD_PARTY_RDMA_MODULES is
+    # space-separated so default bash word-splitting iterates correctly.
     if ${UNLOAD_THIRD_PARTY_RDMA_MODULES}; then
         echo -e "\n# blacklist third-party RDMA modules to prevent reload conflicts" >> ${OFED_BLACKLIST_MODULES_FILE}
         for mod in ${THIRD_PARTY_RDMA_MODULES}; do

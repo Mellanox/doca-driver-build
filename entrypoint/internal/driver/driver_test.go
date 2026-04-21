@@ -3744,9 +3744,15 @@ var _ = Describe("Driver OFED Blacklist", func() {
 
 		It("should include third-party RDMA modules in blacklist when flag is true", func() {
 			blacklistFile := filepath.Join(tempDir, "third-party-rdma-blacklist.conf")
+			thirdPartyModules := []string{
+				"bnxt_re", "efa", "erdma", "iw_cxgb4", "hfi1", "hns_roce",
+				"ionic_rdma", "irdma", "ib_qib", "mana_ib", "ocrdma", "qedr",
+				"rdma_rxe", "siw", "vmw_pvrdma",
+			}
 			cfg := config.Config{
-				OfedBlacklistModulesFile:     blacklistFile,
-				OfedBlacklistModules:         []string{"mlx5_core", "mlx5_ib"},
+				OfedBlacklistModulesFile:    blacklistFile,
+				OfedBlacklistModules:        []string{"mlx5_core", "mlx5_ib"},
+				ThirdPartyRDMAModules:       thirdPartyModules,
 				UnloadThirdPartyRdmaModules: true,
 			}
 
@@ -3778,7 +3784,7 @@ var _ = Describe("Driver OFED Blacklist", func() {
 			Expect(contentStr).To(ContainSubstring("blacklist qedr"))
 			Expect(contentStr).To(ContainSubstring("blacklist siw"))
 
-			// Count blacklist lines - should be 2 OFED + len(ThirdPartyRDMAModules)
+			// Count blacklist lines - should be 2 OFED + len(thirdPartyModules)
 			lines := strings.Split(contentStr, "\n")
 			blacklistLines := 0
 			for _, line := range lines {
@@ -3786,7 +3792,7 @@ var _ = Describe("Driver OFED Blacklist", func() {
 					blacklistLines++
 				}
 			}
-			Expect(blacklistLines).To(Equal(2 + len(config.ThirdPartyRDMAModules)))
+			Expect(blacklistLines).To(Equal(2 + len(thirdPartyModules)))
 		})
 
 		It("should not include third-party RDMA modules section when flag is false", func() {

@@ -313,7 +313,7 @@ func (e *entrypoint) handleKernelModules(ctx context.Context) error {
 	if e.config.UnloadThirdPartyRdmaModules {
 		// third-party RDMA modules will be unloaded by the openibd restart, no need to check if they are loaded
 	} else {
-		for _, mod := range config.ThirdPartyRDMAModules {
+		for _, mod := range e.config.ThirdPartyRDMAModules {
 			if _, found := loadedModules[mod]; found {
 				err = fmt.Errorf("third-party RDMA modules are loaded for current driver," +
 					"terminating prior driver reload failure due to " +
