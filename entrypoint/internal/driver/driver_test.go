@@ -979,11 +979,16 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "apt-get", "update").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "apt-get", "-yq", "install", "pkg-config", "linux-headers-5.4.0-42-generic").Return("", "", nil)
 
-			// Mock checkDriverInventory to return false (skip build) - checksums match
+			// Mock checkDriverInventory to return false (skip build) - checksums and build config match
 			osMock.EXPECT().Stat(filepath.Join(inventoryDir, "5.4.0-42-generic", "test-version")).Return(nil, nil)          // inventory directory exists
 			osMock.EXPECT().Stat(filepath.Join(inventoryDir, "5.4.0-42-generic", "test-version.checksum")).Return(nil, nil) // checksum file exists
-			osMock.EXPECT().ReadFile(mock.Anything).Return([]byte("abc123def456"), nil)
+			// Stored package checksum
+			osMock.EXPECT().ReadFile(filepath.Join(inventoryDir, "5.4.0-42-generic", "test-version.checksum")).Return([]byte("abc123def456"), nil)
 			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", mock.Anything).Return("abc123def456", "", nil)
+			// Build config fingerprint: Stat confirms file exists, ReadFile returns matching fingerprint
+			osMock.EXPECT().Stat(filepath.Join(inventoryDir, "5.4.0-42-generic", "test-version.buildconfig")).Return(nil, nil)
+			osMock.EXPECT().ReadFile(filepath.Join(inventoryDir, "5.4.0-42-generic", "test-version.buildconfig")).
+				Return([]byte(dm.currentBuildConfigFingerprint()), nil)
 
 			// Mock installDriver calls (now always called even when skipping build)
 			// Mock kernel modules directory creation
@@ -1011,6 +1016,55 @@ var _ = Describe("Driver", func() {
 
 			err := dm.Build(ctx)
 			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should trigger rebuild when .buildconfig file is absent (backward-compat with old cache)", func() {
+			inventoryDir := filepath.Join(tempDir, "inventory")
+			Expect(os.MkdirAll(inventoryDir, 0755)).To(Succeed())
+			cfg.NvidiaNicDriversInventoryPath = inventoryDir
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			inventoryPath := filepath.Join(inventoryDir, "5.4.0-42-generic", "test-version")
+			checksumPath := inventoryPath + ".checksum"
+			buildConfigPath := inventoryPath + ".buildconfig"
+
+			osMock.EXPECT().Stat(inventoryPath).Return(nil, nil)                             // inventory dir exists
+			osMock.EXPECT().Stat(checksumPath).Return(nil, nil)                              // checksum file exists
+			osMock.EXPECT().ReadFile(checksumPath).Return([]byte("abc123"), nil)             // stored checksum
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", mock.Anything).Return("abc123", "", nil) // computed checksum matches
+			osMock.EXPECT().Stat(buildConfigPath).Return(nil, os.ErrNotExist)                // .buildconfig absent → old cache
+
+			shouldBuild, path, err := dm.checkDriverInventory(ctx, "5.4.0-42-generic")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(shouldBuild).To(BeTrue(), "expected rebuild when .buildconfig is absent")
+			Expect(path).To(Equal(inventoryPath))
+		})
+
+		It("should trigger rebuild when build config fingerprint has changed", func() {
+			inventoryDir := filepath.Join(tempDir, "inventory")
+			Expect(os.MkdirAll(inventoryDir, 0755)).To(Succeed())
+			// Enable NFS RDMA in the current config; the stored fingerprint will reflect the old config (ENABLE_NFSRDMA=false)
+			cfg.NvidiaNicDriversInventoryPath = inventoryDir
+			cfg.EnableNfsRdma = true
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			inventoryPath := filepath.Join(inventoryDir, "5.4.0-42-generic", "test-version")
+			checksumPath := inventoryPath + ".checksum"
+			buildConfigPath := inventoryPath + ".buildconfig"
+
+			staleConfig := "ENABLE_NFSRDMA=false\nUSE_DKMS=false\nAPPEND_DRIVER_BUILD_FLAGS="
+
+			osMock.EXPECT().Stat(inventoryPath).Return(nil, nil)                                  // inventory dir exists
+			osMock.EXPECT().Stat(checksumPath).Return(nil, nil)                                   // checksum file exists
+			osMock.EXPECT().ReadFile(checksumPath).Return([]byte("abc123"), nil)                  // stored checksum
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", mock.Anything).Return("abc123", "", nil) // computed checksum matches
+			osMock.EXPECT().Stat(buildConfigPath).Return(nil, nil)                                // .buildconfig exists
+			osMock.EXPECT().ReadFile(buildConfigPath).Return([]byte(staleConfig), nil)            // but reflects old flags
+
+			shouldBuild, path, err := dm.checkDriverInventory(ctx, "5.4.0-42-generic")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(shouldBuild).To(BeTrue(), "expected rebuild when ENABLE_NFSRDMA changed from false to true")
+			Expect(path).To(Equal(inventoryPath))
 		})
 
 		It("should build driver successfully for Ubuntu", func() {
@@ -1314,6 +1368,34 @@ var _ = Describe("Driver", func() {
 
 			err := dm.Build(ctx)
 			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should not install kernel prerequisites for a DTK build", func() {
+			// Regression test: installPrerequisitesForOS must be skipped entirely for
+			// DTK builds. The DTK sidecar handles compilation; kernel headers are not
+			// needed and the container repos may not carry the kernel packages.
+			//
+			// No mock for GetRedHatVersionInfo is registered.  If
+			// installPrerequisitesForOS were called it would invoke GetRedHatVersionInfo,
+			// which the mock framework would report as an unexpected call — catching the
+			// regression immediately.
+			cfg.DtkOcpDriverBuild = true
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("5.14.0-570.78.1.el9_6.x86_64", nil)
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeOpenShift, nil)
+
+			// No NvidiaNicDriversInventoryPath set → checkDriverInventory returns
+			// shouldBuild=true immediately, without any Stat/ReadFile calls.
+
+			// DTK setup: done flag absent, then MkdirAll fails — keeps the mock surface
+			// minimal without having to wire up the entire DTK pipeline.
+			osMock.EXPECT().Stat(mock.Anything).Return(nil, os.ErrNotExist) // done flag not present
+			osMock.EXPECT().MkdirAll(mock.Anything, mock.Anything).Return(errors.New("mkdir failed"))
+
+			err := dm.Build(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to setup DTK build"))
 		})
 
 		It("should return error when createInventoryDirectory fails", func() {

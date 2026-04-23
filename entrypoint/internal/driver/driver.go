@@ -159,12 +159,15 @@ func (d *driverMgr) Build(ctx context.Context) error {
 		return fmt.Errorf("failed to get OS type: %w", err)
 	}
 
-	// Install OS-specific prerequisites (e.g. kernel headers).
-	// This must happen before the cache check because even when driver packages
-	// are cached, DKMS still needs kernel headers to build modules at runtime.
-	log.V(1).Info("About to install prerequisites", "os", osType, "kernel", kernelVersion)
-	if err := d.installPrerequisitesForOS(ctx, osType, kernelVersion); err != nil {
-		return fmt.Errorf("failed to install prerequisites: %w", err)
+	// For DTK builds the DTK sidecar handles compilation, so kernel headers are not
+	// needed in this container and package repos may not be reachable from it.
+	// For non-DTK builds, prerequisites must be installed before the cache check
+	// because DKMS still needs kernel headers even when driver packages are cached.
+	if !d.cfg.DtkOcpDriverBuild {
+		log.V(1).Info("About to install prerequisites", "os", osType, "kernel", kernelVersion)
+		if err := d.installPrerequisitesForOS(ctx, osType, kernelVersion); err != nil {
+			return fmt.Errorf("failed to install prerequisites: %w", err)
+		}
 	}
 
 	// Check driver inventory and validate checksums
@@ -542,8 +545,10 @@ func (d *driverMgr) cleanupDriverInventory(ctx context.Context) error {
 			foundItems++
 			driverVerItem := driverVerEntry.Name()
 
-			// Keep the current driver version and its checksum file
-			if driverVerItem == d.cfg.NvidiaNicDriverVer || driverVerItem == d.cfg.NvidiaNicDriverVer+".checksum" {
+			// Keep the current driver version directory, its checksum, and its build config fingerprint
+			if driverVerItem == d.cfg.NvidiaNicDriverVer ||
+				driverVerItem == d.cfg.NvidiaNicDriverVer+".checksum" ||
+				driverVerItem == d.cfg.NvidiaNicDriverVer+".buildconfig" {
 				continue
 			}
 
@@ -845,6 +850,14 @@ func (d *driverMgr) removeOfedModulesBlacklist(ctx context.Context) error {
 	return nil
 }
 
+// currentBuildConfigFingerprint returns a canonical string representing the build-affecting
+// configuration. If any of these values change between builds, the cached inventory must be
+// discarded so that the driver is rebuilt with the new flags.
+func (d *driverMgr) currentBuildConfigFingerprint() string {
+	return fmt.Sprintf("ENABLE_NFSRDMA=%v\nUSE_DKMS=%v\nAPPEND_DRIVER_BUILD_FLAGS=%s",
+		d.cfg.EnableNfsRdma, d.cfg.UseDKMS, d.cfg.AppendDriverBuildFlags)
+}
+
 // checkDriverInventory checks if driver inventory exists and validates checksums
 func (d *driverMgr) checkDriverInventory(ctx context.Context, kernelVersion string) (bool, string, error) {
 	log := logr.FromContextOrDiscard(ctx)
@@ -858,6 +871,7 @@ func (d *driverMgr) checkDriverInventory(ctx context.Context, kernelVersion stri
 	// Check if inventory directory exists
 	inventoryPath := filepath.Join(d.cfg.NvidiaNicDriversInventoryPath, kernelVersion, d.cfg.NvidiaNicDriverVer)
 	checksumPath := filepath.Join(d.cfg.NvidiaNicDriversInventoryPath, kernelVersion, d.cfg.NvidiaNicDriverVer+".checksum")
+	buildConfigPath := filepath.Join(d.cfg.NvidiaNicDriversInventoryPath, kernelVersion, d.cfg.NvidiaNicDriverVer+".buildconfig")
 
 	// Check if inventory directory exists
 	if _, err := d.os.Stat(inventoryPath); os.IsNotExist(err) {
@@ -889,14 +903,42 @@ func (d *driverMgr) checkDriverInventory(ctx context.Context, kernelVersion stri
 		return true, inventoryPath, nil
 	}
 
-	// Compare checksums
-	if strings.TrimSpace(string(storedChecksum)) == currentChecksum {
-		log.V(1).Info("Checksums match, skipping build", "checksum", currentChecksum)
-		return false, inventoryPath, nil
+	// Compare package checksums
+	if strings.TrimSpace(string(storedChecksum)) != currentChecksum {
+		log.V(1).Info("Checksums do not match, will rebuild", "stored", strings.TrimSpace(string(storedChecksum)), "current", currentChecksum)
+		return true, inventoryPath, nil
 	}
 
-	log.V(1).Info("Checksums do not match, will rebuild", "stored", strings.TrimSpace(string(storedChecksum)), "current", currentChecksum)
-	return true, inventoryPath, nil
+	// Package checksums match; now verify the build config fingerprint to detect
+	// configuration drift (e.g. ENABLE_NFSRDMA toggled) that requires a rebuild
+	// even though the cached packages are intact.
+	if _, err := d.os.Stat(buildConfigPath); os.IsNotExist(err) {
+		// No .buildconfig file means the cache was created by an older version of
+		// this entrypoint that did not record build flags. Treat as a cache miss so
+		// that the driver is rebuilt with the current, known-correct flags.
+		log.V(1).Info("No build config fingerprint found, will rebuild to ensure config correctness",
+			"path", buildConfigPath)
+		return true, inventoryPath, nil
+	} else if err != nil {
+		return false, "", fmt.Errorf("failed to check build config file: %w", err)
+	}
+
+	storedConfig, err := d.os.ReadFile(buildConfigPath)
+	if err != nil {
+		log.V(1).Info("Failed to read build config fingerprint, will rebuild", "error", err)
+		return true, inventoryPath, nil
+	}
+
+	currentConfig := d.currentBuildConfigFingerprint()
+	if strings.TrimSpace(string(storedConfig)) != currentConfig {
+		log.Info("Build config has changed since last build, invalidating cache and rebuilding",
+			"stored", strings.TrimSpace(string(storedConfig)),
+			"current", currentConfig)
+		return true, inventoryPath, nil
+	}
+
+	log.V(1).Info("Checksums and build config match, skipping build", "checksum", currentChecksum)
+	return false, inventoryPath, nil
 }
 
 // createInventoryDirectory creates the inventory directory
@@ -1193,25 +1235,31 @@ func (d *driverMgr) calculateDriverInventoryChecksum(ctx context.Context, invent
 	return parts[0], nil
 }
 
-// storeBuildChecksum stores the build checksum
+// storeBuildChecksum stores the build checksum and build config fingerprint so that
+// future startups can detect both file corruption and configuration drift.
 func (d *driverMgr) storeBuildChecksum(ctx context.Context, inventoryPath, kernelVersion string) error {
 	log := logr.FromContextOrDiscard(ctx)
 
 	checksumPath := filepath.Join(d.cfg.NvidiaNicDriversInventoryPath, kernelVersion, d.cfg.NvidiaNicDriverVer+".checksum")
+	buildConfigPath := filepath.Join(d.cfg.NvidiaNicDriversInventoryPath, kernelVersion, d.cfg.NvidiaNicDriverVer+".buildconfig")
 
-	// Calculate current checksum
+	// Calculate and store package checksum
 	checksum, err := d.calculateDriverInventoryChecksum(ctx, inventoryPath)
 	if err != nil {
 		return fmt.Errorf("failed to calculate checksum: %w", err)
 	}
-
-	// Write checksum to file
-	err = d.os.WriteFile(checksumPath, []byte(checksum), 0o644)
-	if err != nil {
+	if err := d.os.WriteFile(checksumPath, []byte(checksum), 0o644); err != nil {
 		return fmt.Errorf("failed to write checksum file: %w", err)
 	}
-
 	log.V(1).Info("Stored build checksum", "path", checksumPath, "checksum", checksum)
+
+	// Store the build config fingerprint so cache invalidation can detect config drift
+	buildConfig := d.currentBuildConfigFingerprint()
+	if err := d.os.WriteFile(buildConfigPath, []byte(buildConfig), 0o644); err != nil {
+		return fmt.Errorf("failed to write build config file: %w", err)
+	}
+	log.V(1).Info("Stored build config fingerprint", "path", buildConfigPath)
+
 	return nil
 }
 
