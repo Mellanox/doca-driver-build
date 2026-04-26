@@ -1144,6 +1144,39 @@ function load_nfsrdma() {
     fi
 }
 
+function install_nfs_userspace() {
+    debug_print "Function: ${FUNCNAME[0]}"
+
+    if [[ "${ENABLE_NFSRDMA}" != true ]]; then
+        return 0
+    fi
+
+    timestamp_print "Installing NFS userspace tools to host"
+
+    # Copy mount.nfs and related binaries from container to host
+    local nfs_bins="mount.nfs mount.nfs4 umount.nfs umount.nfs4"
+    for bin in ${nfs_bins}; do
+        # Skip if already present on host
+        if [[ -f /host/usr/sbin/${bin} ]]; then
+            debug_print "${bin} already present on host, skipping"
+            continue
+        fi
+        local src=""
+        if [[ -f /usr/sbin/${bin} ]]; then
+            src="/usr/sbin/${bin}"
+        elif [[ -f /sbin/${bin} ]]; then
+            src="/sbin/${bin}"
+        fi
+        if [[ -n "${src}" ]]; then
+            if cp "${src}" "/host/usr/sbin/${bin}"; then
+                timestamp_print "Copied ${bin} to /host/usr/sbin/"
+            else
+                timestamp_print "WARNING: Failed to copy ${bin} to /host/usr/sbin/, skipping"
+            fi
+        fi
+    done
+}
+
 # function check_loaded_kmod_srcver_vs_modinfo() returns 0 if all provided modules
 # srcversion from sysfs match information from modinfo
 function check_loaded_kmod_srcver_vs_modinfo() {
@@ -1762,6 +1795,8 @@ if ! ${build_precompiled}; then
 fi
 
 load_driver
+
+install_nfs_userspace
 
 ${reuse_driver_inventory} && cleanup_driver_inventory
 
