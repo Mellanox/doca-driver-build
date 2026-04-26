@@ -41,7 +41,6 @@ ARG D_OFED_VERSION
 ARG D_CONTAINER_VER
 ARG D_OFED_SRC_DOWNLOAD_PATH
 ARG STIG_COMPLIANT
-ARG D_ENABLE_DKMS
 
 ENV NVIDIA_NIC_DRIVER_VER=${D_OFED_VERSION}
 ENV NVIDIA_NIC_CONTAINER_VER=${D_CONTAINER_VER}
@@ -56,9 +55,7 @@ RUN set -x && \
 # Driver build / install script requirements
     perl pciutils kmod lsof python3 dh-python \
 # Container functional requirements
-    jq iproute2 udev ethtool ca-certificates && \
-# DKMS and kernel module build tools (always installed for driver build/install)
-    DEBIAN_FRONTEND=noninteractive apt-get -yq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install dkms build-essential bison flex libelf-dev
+    jq iproute2 udev ethtool ca-certificates
 
 COPY --from=go_builder /workspace/build/entrypoint /root/entrypoint
 ADD ./entrypoint.sh /root/entrypoint.sh
@@ -102,7 +99,8 @@ RUN set -x && \
     echo $D_OS | grep "ubuntu20.04" || GCC_VER="-12" && \
 # Install prerequirements \
     DEBIAN_FRONTEND=noninteractive apt-get -yq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install curl \
-    dkms make autoconf autotools-dev chrpath automake hostname debhelper gcc$GCC_VER quilt libc6-dev build-essential pkg-config ubuntu-advantage-tools && \
+    dkms make autoconf autotools-dev chrpath automake hostname debhelper gcc$GCC_VER quilt libc6-dev build-essential pkg-config ubuntu-advantage-tools \
+    bison flex libelf-dev && \
 # Cleanup \
     apt-get clean autoclean && apt install --reinstall -y ca-certificates && \
     rm -rf /var/lib/apt/lists/* && update-ca-certificates

@@ -72,7 +72,6 @@ ARG D_OS
 ARG D_DOCA_VERSION
 ARG D_OFED_VERSION
 ARG D_OFED_SRC_DOWNLOAD_PATH
-ARG D_ENABLE_DKMS
 
 # Stage args
 ARG D_OFED_BASE_URL="https://linux.mellanox.com/public/repo/doca/${D_DOCA_VERSION}/SOURCES/mlnx_ofed"
@@ -85,6 +84,9 @@ ENV NVIDIA_NIC_DRIVER_PATH="${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_V
 
 WORKDIR /root
 
+# DKMS is always installed in the dynamic (sources) flow - install.pl runs at container
+# runtime and may build DKMS-enabled packages. DKMS is not in default SLES repos, so it's
+# fetched from openSUSE Backports.
 RUN set -x && \
     for source in ${D_ZYPPER_REMOVE}; do rm -f /etc/zypp/repos.d/${source}.repo; done && \
 # Perform distro update and install prerequirements
@@ -92,18 +94,15 @@ RUN set -x && \
     zypper --non-interactive update && \
     zypper --non-interactive install --no-recommends \
     make autoconf chrpath automake hostname gcc quilt dracut rpm-build sysvinit-tools && \
-# Install DKMS when enabled - fetch from openSUSE Backports since DKMS is not in default SLES repos
-    if [ "$D_ENABLE_DKMS" = "true" ]; then \
-        SP_NUM=$(echo ${D_OS} | sed 's/.*sp//') && \
-        zypper --gpg-auto-import-keys addrepo \
-            https://download.opensuse.org/repositories/openSUSE:Backports:SLE-15-SP${SP_NUM}/standard/openSUSE:Backports:SLE-15-SP${SP_NUM}.repo && \
-        zypper --gpg-auto-import-keys ref && \
-        zypper --gpg-auto-import-keys --non-interactive install --no-recommends dkms && \
-        if [ -f /etc/modprobe.d/10-unsupported-modules.conf ]; then \
-            sed -i 's/allow_unsupported_modules 0/allow_unsupported_modules 1/' /etc/modprobe.d/10-unsupported-modules.conf; \
-        else \
-            echo 'allow_unsupported_modules 1' > /etc/modprobe.d/10-unsupported-modules.conf; \
-        fi; \
+    SP_NUM=$(echo ${D_OS} | sed 's/.*sp//') && \
+    zypper --gpg-auto-import-keys addrepo \
+        https://download.opensuse.org/repositories/openSUSE:Backports:SLE-15-SP${SP_NUM}/standard/openSUSE:Backports:SLE-15-SP${SP_NUM}.repo && \
+    zypper --gpg-auto-import-keys ref && \
+    zypper --gpg-auto-import-keys --non-interactive install --no-recommends dkms && \
+    if [ -f /etc/modprobe.d/10-unsupported-modules.conf ]; then \
+        sed -i 's/allow_unsupported_modules 0/allow_unsupported_modules 1/' /etc/modprobe.d/10-unsupported-modules.conf; \
+    else \
+        echo 'allow_unsupported_modules 1' > /etc/modprobe.d/10-unsupported-modules.conf; \
     fi
 
 # Download NVIDIA NIC driver
