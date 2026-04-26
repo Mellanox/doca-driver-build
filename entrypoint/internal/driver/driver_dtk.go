@@ -157,8 +157,10 @@ func (d *driverMgr) dtkWaitForBuild(ctx context.Context, doneFlagPath string) er
 	log := logr.FromContextOrDiscard(ctx)
 	log.Info("Waiting for DTK build to complete", "doneFlag", doneFlagPath)
 
-	sleepSec := 300
-	totalRetries := 10
+	// Poll every 30s (air-gapped builds from local RPM repos typically finish in ~180s).
+	// Max total timeout: sleepSec * totalRetries = 30 * 30 = 900s.
+	sleepSec := 30
+	totalRetries := 30
 	totalSleepSec := 0
 
 	for totalRetries > 0 {
@@ -176,9 +178,6 @@ func (d *driverMgr) dtkWaitForBuild(ctx context.Context, doneFlagPath string) er
 		}
 
 		totalSleepSec += sleepSec
-		if sleepSec > 10 {
-			sleepSec /= 2
-		}
 		totalRetries--
 	}
 

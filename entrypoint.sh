@@ -1302,16 +1302,15 @@ function build_driver() {
             dtk_ocp_setup_driver_build
 
             # Await driver build completion
-            sleep_sec=300
-            total_retries=10
+            # Poll every 30s (air-gapped builds from local RPM repos typically finish in ~180s).
+            # Max total timeout: sleep_sec * total_retries = 30 * 30 = 900s.
+            sleep_sec=30
+            total_retries=30
             total_sleep_sec=0
             while [ ! -f "${DTK_OCP_DONE_COMPILE_FLAG}" ] && [ ${total_retries} -gt 0 ]; do
                 timestamp_print "Awaiting openshift driver toolkit to complete NIC driver build, next query in ${sleep_sec} sec"
                 sleep ${sleep_sec}
                 let total_sleep_sec+=sleep_sec
-                if [ $sleep_sec -gt 10 ]; then
-                    sleep_sec=$((sleep_sec/2))
-                fi
                 total_retries=$((total_retries-1))
             done
             if [ ${total_retries} -eq 0 ]; then
