@@ -94,7 +94,7 @@ RUN set -x && \
     zypper --non-interactive update && \
     zypper --non-interactive install --no-recommends \
     make autoconf chrpath automake hostname gcc quilt dracut rpm-build sysvinit-tools && \
-    SP_NUM=$(echo ${D_OS} | sed 's/.*sp//') && \
+    SP_NUM=$(echo ${D_OS} | sed 's/.*[sp.]//') && \
     zypper --gpg-auto-import-keys addrepo \
         https://download.opensuse.org/repositories/openSUSE:Backports:SLE-15-SP${SP_NUM}/standard/openSUSE:Backports:SLE-15-SP${SP_NUM}.repo && \
     zypper --gpg-auto-import-keys ref && \
@@ -195,7 +195,7 @@ RUN set -x && \
     jq kmod procps && \
 # DKMS and kernel module build tools when DKMS enabled (runtime dkms add/build/install)
     if [ "$D_ENABLE_DKMS" = "true" ]; then \
-        SP_NUM=$(echo ${D_OS} | sed 's/.*sp//') && \
+        SP_NUM=$(echo ${D_OS} | sed 's/.*[sp.]//') && \
         zypper --gpg-auto-import-keys addrepo \
             https://download.opensuse.org/repositories/openSUSE:Backports:SLE-15-SP${SP_NUM}/standard/openSUSE:Backports:SLE-15-SP${SP_NUM}.repo && \
         zypper --gpg-auto-import-keys ref && \
