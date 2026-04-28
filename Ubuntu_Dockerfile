@@ -101,6 +101,13 @@ RUN set -x && \
     DEBIAN_FRONTEND=noninteractive apt-get -yq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install curl \
     dkms make autoconf autotools-dev chrpath automake hostname debhelper gcc$GCC_VER quilt libc6-dev build-essential pkg-config ubuntu-advantage-tools \
     bison flex libelf-dev && \
+# On Ubuntu 24.04+ dkms is >= 3.0; the dh_dkms helper moved out of the dkms package into a
+# standalone dh-dkms package. mlnx-ofed-kernel's Build-Depends is "dh-dkms | dkms (<< 3.0)",
+# so dpkg-buildpackage fails on Noble+ unless dh-dkms is installed. Older Ubuntu releases
+# don't ship dh-dkms (and don't need it), so guard the install on the distro. \
+    if echo "$D_OS" | grep -qE "ubuntu(2[4-9]|[3-9][0-9])"; then \
+        DEBIAN_FRONTEND=noninteractive apt-get -yq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install dh-dkms; \
+    fi && \
 # Cleanup \
     apt-get clean autoclean && apt install --reinstall -y ca-certificates && \
     rm -rf /var/lib/apt/lists/* && update-ca-certificates
