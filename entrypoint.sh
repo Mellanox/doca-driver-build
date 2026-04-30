@@ -1286,6 +1286,9 @@ function build_driver() {
         driver_inventory_path=/tmp/nvidia_nic_driver_$(date +"%d-%m-%Y_%H-%M-%S")
     fi
 
+    # Wipe any stale inventory directory before rebuilding to prevent RPM file
+    # conflicts when build config changes between runs (e.g. USE_DKMS toggled).
+    exec_cmd "rm -rf ${driver_inventory_path}"
     exec_cmd "mkdir -p ${driver_inventory_path}"
     debug_print "Driver modules dest path: ${driver_inventory_path}"
 
@@ -1302,10 +1305,11 @@ function build_driver() {
             dtk_ocp_setup_driver_build
 
             # Await driver build completion
-            # Poll every 30s (air-gapped builds from local RPM repos typically finish in ~180s).
-            # Max total timeout: sleep_sec * total_retries = 30 * 30 = 900s.
+            # Poll every 30s. Air-gapped builds from local RPM repos typically finish in ~180s,
+            # but full first-time DTK compilations on slower nodes can exceed 15 min.
+            # Max total timeout: sleep_sec * total_retries = 30 * 120 = 3600s (60 min).
             sleep_sec=30
-            total_retries=30
+            total_retries=120
             total_sleep_sec=0
             while [ ! -f "${DTK_OCP_DONE_COMPILE_FLAG}" ] && [ ${total_retries} -gt 0 ]; do
                 timestamp_print "Awaiting openshift driver toolkit to complete NIC driver build, next query in ${sleep_sec} sec"
@@ -1511,10 +1515,20 @@ function setup_dkms() {
     # Step 3: Add module to DKMS
     dkms_add
 
-    # Step 4: Build module for current kernel
+    # Step 4: In the DTK/OCP path the DTK sidecar compiled the driver and produced
+    # pre-compiled kmod binary packages that installDriver already placed at the correct
+    # /lib/modules/<kernel>/ path.  The main container does NOT have kernel headers so
+    # dkms build would fail.  Skip dkms build and dkms install: the modules are already
+    # in place via the kmod RPMs.
+    if [[ "${DTK_OCP_DRIVER_BUILD}" == "true" ]]; then
+        timestamp_print "DTK build path: skipping dkms build/install (kmod packages already placed modules)"
+        return 0
+    fi
+
+    # Step 5: Build module for current kernel
     dkms_build
 
-    # Step 5: Install module
+    # Step 6: Install module
     dkms_install
 
     timestamp_print "DKMS setup completed successfully"
@@ -1526,21 +1540,27 @@ function discover_dkms_module_info() {
     DKMS_MODULE_NAME=""
     DKMS_MODULE_VERSION=""
 
-    # Prioritize mlnx-ofa_kernel — it's the primary DKMS module for the NIC driver
+    # Prioritize mlnx-ofa_kernel — it's the primary DKMS module for the NIC driver.
+    # Check both the top-level dir and a nested source/ subdirectory: newer OFED packages
+    # (e.g. OFED 26.04) place dkms.conf under <dir>/source/ rather than directly under
+    # <dir>. The directory entry may also be a symlink, so use -L || -d to handle both.
     for dir in /usr/src/mlnx-ofa_kernel-* /usr/src/*; do
-        if [ -d "${dir}" ] && [ -f "${dir}/dkms.conf" ]; then
-            debug_print "Found dkms.conf in ${dir}"
+        [ -L "${dir}" ] || [ -d "${dir}" ] || continue
+        for dkms_conf in "${dir}/dkms.conf" "${dir}/source/dkms.conf"; do
+            if [ -f "${dkms_conf}" ]; then
+                debug_print "Found dkms.conf at ${dkms_conf}"
 
-            local name=$(grep "^PACKAGE_NAME=" "${dir}/dkms.conf" | sed "s/^PACKAGE_NAME=//;s/[\"']//g")
-            local version=$(grep "^PACKAGE_VERSION=" "${dir}/dkms.conf" | sed "s/^PACKAGE_VERSION=//;s/[\"']//g")
+                local name=$(grep "^PACKAGE_NAME=" "${dkms_conf}" | sed "s/^PACKAGE_NAME=//;s/[\"']//g")
+                local version=$(grep "^PACKAGE_VERSION=" "${dkms_conf}" | sed "s/^PACKAGE_VERSION=//;s/[\"']//g")
 
-            if [ -n "${name}" ] && [ -n "${version}" ]; then
-                DKMS_MODULE_NAME="${name}"
-                DKMS_MODULE_VERSION="${version}"
-                debug_print "Found DKMS module: ${DKMS_MODULE_NAME}/${DKMS_MODULE_VERSION}"
-                return 0
+                if [ -n "${name}" ] && [ -n "${version}" ]; then
+                    DKMS_MODULE_NAME="${name}"
+                    DKMS_MODULE_VERSION="${version}"
+                    debug_print "Found DKMS module: ${DKMS_MODULE_NAME}/${DKMS_MODULE_VERSION}"
+                    return 0
+                fi
             fi
-        fi
+        done
     done
 
     return 1

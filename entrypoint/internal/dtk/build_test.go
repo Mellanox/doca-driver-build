@@ -32,6 +32,7 @@ import (
 	cmdMockPkg "github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/cmd/mocks"
 )
 
+
 func TestRunBuild(t *testing.T) {
 	log := logr.Discard()
 	tempDir := t.TempDir()
@@ -71,7 +72,10 @@ func TestRunBuild(t *testing.T) {
 		assert.Contains(t, err.Error(), "failed to install build dependencies")
 	})
 
-	t.Run("should wait for start flag and run build", func(t *testing.T) {
+	t.Run("should wait for start flag and run build without dkms", func(t *testing.T) {
+		cfgNoDKMS := cfg
+		cfgNoDKMS.UseDKMS = false
+
 		cmdMock := cmdMockPkg.NewInterface(t)
 		cmdMock.EXPECT().RunCommand(mock.Anything, "dnf", "install", "-y", "perl").Return("", "", nil)
 		cmdMock.EXPECT().RunCommand(mock.Anything, "dnf", "install", "-y", "ethtool", "autoconf", "pciutils", "automake", "libtool", "python3-devel").Return("", "", nil)
@@ -85,36 +89,81 @@ func TestRunBuild(t *testing.T) {
 		}()
 
 		expectedInstallScript := filepath.Join(tempDir, "MLNX_OFED_SRC-1.0.0", "install.pl")
+		// --without-dkms must be present when UseDKMS is false
 		cmdMock.EXPECT().RunCommand(mock.Anything, expectedInstallScript,
 			"--build-only", "--kernel-only", "--without-knem", "--without-iser", "--without-isert",
 			"--without-srp", "--with-mlnx-tools", "--with-ofed-scripts", "--copy-ifnames-udev",
 			"--disable-kmp", "--without-dkms").Return("", "", nil)
 
-		// Create a context that we can cancel to simulate end of execution
 		ctx, cancel := context.WithCancel(context.Background())
-		
-		// Run in a goroutine so we can cancel it
 		errCh := make(chan error)
 		go func() {
-			errCh <- RunBuild(ctx, log, cfg, cmdMock)
+			errCh <- RunBuild(ctx, log, cfgNoDKMS, cmdMock)
 		}()
 
-		// Wait for done flag to be created
-		// Increased timeout to account for retryDelay in RunBuild
 		assert.Eventually(t, func() bool {
 			_, err := os.Stat(doneFlag)
 			return err == nil
 		}, 5*time.Second, 100*time.Millisecond)
 
-		// Wait for start flag to be removed
 		assert.Eventually(t, func() bool {
 			_, err := os.Stat(startFlag)
 			return os.IsNotExist(err)
 		}, 5*time.Second, 100*time.Millisecond)
 
-		// Cancel context to stop the infinite loop
 		cancel()
-		
+		err := <-errCh
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+
+	t.Run("should not pass --without-dkms or --disable-kmp when UseDKMS is true", func(t *testing.T) {
+		cfgDKMS := cfg
+		cfgDKMS.UseDKMS = true
+
+		// Use a fresh set of flag files to avoid state from the previous sub-test.
+		startFlagDKMS := filepath.Join(tempDir, "dtk_start_compile_dkms")
+		doneFlagDKMS := filepath.Join(tempDir, "dtk_done_compile_dkms")
+		cfgDKMS.DtkOcpStartCompileFlag = startFlagDKMS
+		cfgDKMS.DtkOcpDoneCompileFlag = doneFlagDKMS
+
+		cmdMock := cmdMockPkg.NewInterface(t)
+		cmdMock.EXPECT().RunCommand(mock.Anything, "dnf", "install", "-y", "perl").Return("", "", nil)
+		cmdMock.EXPECT().RunCommand(mock.Anything, "dnf", "install", "-y", "ethtool", "autoconf", "pciutils", "automake", "libtool", "python3-devel").Return("", "", nil)
+
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			f, err := os.Create(startFlagDKMS)
+			assert.NoError(t, err)
+			f.Close()
+		}()
+
+		expectedInstallScript := filepath.Join(tempDir, "MLNX_OFED_SRC-1.0.0", "install.pl")
+		// When UseDKMS=true, neither --without-dkms nor --disable-kmp should be passed.
+		// This causes install.pl to produce both a DKMS source package (for dkms add
+		// registration in the main container) and pre-compiled kmod binary packages
+		// (which place .ko files without needing kernel headers in the main container).
+		cmdMock.EXPECT().RunCommand(mock.Anything, expectedInstallScript,
+			"--build-only", "--kernel-only", "--without-knem", "--without-iser", "--without-isert",
+			"--without-srp", "--with-mlnx-tools", "--with-ofed-scripts", "--copy-ifnames-udev").
+			Return("", "", nil)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		errCh := make(chan error)
+		go func() {
+			errCh <- RunBuild(ctx, log, cfgDKMS, cmdMock)
+		}()
+
+		assert.Eventually(t, func() bool {
+			_, err := os.Stat(doneFlagDKMS)
+			return err == nil
+		}, 5*time.Second, 100*time.Millisecond)
+
+		assert.Eventually(t, func() bool {
+			_, err := os.Stat(startFlagDKMS)
+			return os.IsNotExist(err)
+		}, 5*time.Second, 100*time.Millisecond)
+
+		cancel()
 		err := <-errCh
 		assert.ErrorIs(t, err, context.Canceled)
 	})

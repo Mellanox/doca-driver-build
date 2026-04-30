@@ -72,12 +72,17 @@ done
 
 timestamp_print "Starting compilation of driver version ${DTK_OCP_COMPILED_DRIVER_VER}"
 
-COMMON_BUILD_FLAGS="--build-only --kernel-only --without-knem --without-iser --without-isert --without-srp --with-mlnx-tools --with-ofed-scripts --copy-ifnames-udev --disable-kmp --without-xpmem --without-xpmem-modules"
+COMMON_BUILD_FLAGS="--build-only --kernel-only --without-knem --without-iser --without-isert --without-srp --with-mlnx-tools --with-ofed-scripts --copy-ifnames-udev --without-xpmem --without-xpmem-modules"
 
 if [[ "${USE_DKMS}" = true ]]; then
+    # DKMS path: omit --disable-kmp so that install.pl produces both the DKMS source
+    # package (for dkms add registration) and pre-compiled kmod binary packages (which
+    # place .ko files without requiring kernel headers in the main container).
     exec_cmd "${DTK_OCP_NIC_SHARED_DIR}/MLNX_OFED_SRC-${DTK_OCP_COMPILED_DRIVER_VER}/install.pl ${COMMON_BUILD_FLAGS} --without-xpmem-dkms ${append_driver_build_flags}"
 else
-    exec_cmd "${DTK_OCP_NIC_SHARED_DIR}/MLNX_OFED_SRC-${DTK_OCP_COMPILED_DRIVER_VER}/install.pl ${COMMON_BUILD_FLAGS} --without-dkms ${append_driver_build_flags}"
+    # Non-DKMS path: suppress DKMS source packages and kmod binary packages; produce
+    # only static kernel module packages.
+    exec_cmd "${DTK_OCP_NIC_SHARED_DIR}/MLNX_OFED_SRC-${DTK_OCP_COMPILED_DRIVER_VER}/install.pl ${COMMON_BUILD_FLAGS} --disable-kmp --without-dkms ${append_driver_build_flags}"
 fi
 
 exec_cmd "touch ${DTK_OCP_DONE_COMPILE_FLAG}"
