@@ -37,6 +37,6 @@ require (
 	github.com/caarlos0/env/v11 v11.4.1
 	github.com/go-logr/zapr v1.3.0
 	github.com/onsi/ginkgo/v2 v2.28.2
-	github.com/onsi/gomega v1.39.1
+	github.com/onsi/gomega v1.40.0
 	golang.org/x/sys v0.40.0 // indirect
 )
