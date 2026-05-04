@@ -96,9 +96,17 @@ func RunBuild(ctx context.Context, log logr.Logger, cfg config.Config, cmdHelper
 		"--with-mlnx-tools",
 		"--with-ofed-scripts",
 		"--copy-ifnames-udev",
-		"--disable-kmp",
-		"--without-dkms",
 	}
+
+	if !cfg.UseDKMS {
+		// Non-DKMS path: suppress DKMS source packages and produce only static
+		// kernel module packages (kmod-*).
+		installArgs = append(installArgs, "--disable-kmp", "--without-dkms")
+	}
+	// DKMS path (UseDKMS=true): neither --without-dkms nor --disable-kmp so that
+	// install.pl produces both the DKMS source package (for dkms add registration in
+	// the main container) and pre-compiled kmod binary packages (which the main
+	// container installs to place .ko files without needing kernel headers).
 
 	if cfg.AppendDriverBuildFlags != "" {
 		// Use shell-style parsing to handle quoted arguments correctly

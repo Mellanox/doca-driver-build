@@ -182,6 +182,13 @@ func (d *driverMgr) Build(ctx context.Context) error {
 		// Mark build as incomplete at the start
 		d.driverBuildIncomplete = true
 
+		// Wipe any stale inventory directory before rebuilding to prevent RPM file
+		// conflicts when build config changes between runs (e.g. USE_DKMS toggled).
+		// RemoveAll is a no-op when the path does not exist.
+		if err := d.os.RemoveAll(inventoryPath); err != nil {
+			return fmt.Errorf("failed to clean inventory directory: %w", err)
+		}
+
 		// Check if DTK OCP driver build is enabled
 		if d.cfg.DtkOcpDriverBuild {
 			if err := d.buildDriverDTK(ctx, kernelVersion, inventoryPath); err != nil {
@@ -2115,12 +2122,23 @@ func (d *driverMgr) setupDKMS(ctx context.Context, kernelVersion string) error {
 		return fmt.Errorf("failed to add DKMS module: %w", err)
 	}
 
-	// Step 4: Build module for current kernel
+	// Step 4: In the DTK/OCP path the DTK sidecar compiled the driver using its
+	// kernel headers and produced pre-compiled kmod binary packages that installDriver
+	// already placed at the correct /lib/modules/<kernel>/ path.  The main driver
+	// container does NOT have kernel headers, so dkms build would fail.  Skip
+	// dkms build and dkms install: the modules are already in place via the kmod RPMs.
+	if d.cfg.DtkOcpDriverBuild {
+		log.Info("DTK build path: skipping dkms build/install (kmod packages already placed modules)",
+			"module", moduleName, "version", moduleVersion, "kernel", kernelVersion)
+		return nil
+	}
+
+	// Step 5: Build module for current kernel
 	if err := d.dkmsBuild(ctx, moduleName, moduleVersion, kernelVersion); err != nil {
 		return fmt.Errorf("failed to build DKMS module: %w", err)
 	}
 
-	// Step 5: Install module
+	// Step 6: Install module
 	if err := d.dkmsInstall(ctx, moduleName, moduleVersion, kernelVersion); err != nil {
 		return fmt.Errorf("failed to install DKMS module: %w", err)
 	}
@@ -2134,17 +2152,33 @@ func (d *driverMgr) setupDKMS(ctx context.Context, kernelVersion string) error {
 // is the primary NIC driver DKMS module, then falls back to any other directory with dkms.conf.
 // Returns the module name, module version, and an error if no valid DKMS module is found.
 func (d *driverMgr) discoverDKMSModule(ctx context.Context) (string, string, error) {
+	return d.discoverDKMSModuleIn(ctx, "/usr/src/")
+}
+
+// discoverDKMSModuleIn is the testable implementation of discoverDKMSModule that accepts a
+// configurable base directory instead of the hardcoded /usr/src.
+func (d *driverMgr) discoverDKMSModuleIn(ctx context.Context, srcBaseDir string) (string, string, error) {
 	log := logr.FromContextOrDiscard(ctx)
 
-	entries, err := d.os.ReadDir("/usr/src/")
+	entries, err := d.os.ReadDir(srcBaseDir)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to read /usr/src/: %w", err)
+		return "", "", fmt.Errorf("failed to read %s: %w", srcBaseDir, err)
 	}
 
 	// Two-pass scan: first mlnx-ofa_kernel-* directories, then everything else
 	for pass := range 2 {
 		for _, entry := range entries {
-			if !entry.IsDir() {
+			entryPath := filepath.Join(srcBaseDir, entry.Name())
+
+			// entry.IsDir() returns false for symlinks even when pointing at a directory;
+			// use Stat (which follows symlinks) to correctly identify directory entries.
+			isDir := entry.IsDir()
+			if !isDir {
+				if fi, statErr := d.os.Stat(entryPath); statErr == nil {
+					isDir = fi.IsDir()
+				}
+			}
+			if !isDir {
 				continue
 			}
 
@@ -2155,24 +2189,36 @@ func (d *driverMgr) discoverDKMSModule(ctx context.Context) (string, string, err
 				continue
 			}
 
-			dkmsConfPath := filepath.Join("/usr/src", dirName, "dkms.conf")
+			// Check both the top-level dir and a nested source/ subdirectory.
+			// Newer OFED packages (e.g. mlnx-ofa_kernel-source in OFED 26.04) place
+			// dkms.conf under <dir>/source/ rather than directly under <dir>. The
+			// mlnx-ofa_kernel-<ver> directory may also be a symlink pointing at the
+			// ofa_kernel-<ver>/source directory, which os.ReadDir reports as a non-dir
+			// entry (IsDir() == false for symlinks), hence the Stat() follow above.
+			candidatePaths := []string{
+				filepath.Join(entryPath, "dkms.conf"),
+				filepath.Join(entryPath, "source", "dkms.conf"),
+			}
 
-			if _, err := d.os.Stat(dkmsConfPath); err == nil {
-				moduleName, moduleVersion, err := d.parseDKMSConf(dkmsConfPath)
-				if err != nil {
-					log.V(1).Info("Failed to parse dkms.conf", "path", dkmsConfPath, "error", err)
-					continue
+			for _, dkmsConfPath := range candidatePaths {
+				if _, err := d.os.Stat(dkmsConfPath); err == nil {
+					moduleName, moduleVersion, err := d.parseDKMSConf(dkmsConfPath)
+					if err != nil {
+						log.V(1).Info("Failed to parse dkms.conf", "path", dkmsConfPath, "error", err)
+						continue
+					}
+
+					log.V(1).Info("Found DKMS module", "dir", dirName, "name", moduleName, "version", moduleVersion)
+					return moduleName, moduleVersion, nil
 				}
-
-				log.V(1).Info("Found DKMS module", "dir", dirName, "name", moduleName, "version", moduleVersion)
-				return moduleName, moduleVersion, nil
 			}
 		}
 	}
 
 	return "", "", fmt.Errorf(
-		"no DKMS module found in /usr/src/. This may indicate that install.pl did not create DKMS-enabled packages. " +
-			"Verify that install.pl was run without --without-dkms flag and that the packages were installed correctly")
+		"no DKMS module found in %s. This may indicate that install.pl did not create DKMS-enabled packages. "+
+			"Verify that install.pl was run without --without-dkms flag and that the packages were installed correctly",
+		srcBaseDir)
 }
 
 // parseDKMSConf reads the dkms.conf at dkmsConfPath and extracts PACKAGE_NAME and PACKAGE_VERSION.

@@ -127,7 +127,8 @@ export DTK_OCP_DONE_COMPILE_FLAG="%s"
 export APPEND_DRIVER_BUILD_FLAGS="%s"
 export USE_NEW_ENTRYPOINT="true"
 export NVIDIA_NIC_DRIVER_VER="%s"
-`, sharedDir, d.cfg.NvidiaNicDriverVer, startFlagPath, doneFlagPath, appendFlagsStr, d.cfg.NvidiaNicDriverVer)
+export USE_DKMS="%v"
+`, sharedDir, d.cfg.NvidiaNicDriverVer, startFlagPath, doneFlagPath, appendFlagsStr, d.cfg.NvidiaNicDriverVer, d.cfg.UseDKMS)
 
 	envPath := filepath.Join(sharedDir, "dtk.env")
 	if err := d.os.WriteFile(envPath, []byte(envContent), 0o644); err != nil {
@@ -157,10 +158,11 @@ func (d *driverMgr) dtkWaitForBuild(ctx context.Context, doneFlagPath string) er
 	log := logr.FromContextOrDiscard(ctx)
 	log.Info("Waiting for DTK build to complete", "doneFlag", doneFlagPath)
 
-	// Poll every 30s (air-gapped builds from local RPM repos typically finish in ~180s).
-	// Max total timeout: sleepSec * totalRetries = 30 * 30 = 900s.
+	// Poll every 30s. Air-gapped builds from local RPM repos typically finish in ~180s,
+	// but full first-time DTK compilations on slower nodes can exceed 15 min.
+	// Max total timeout: sleepSec * totalRetries = 30 * 80 = 2400s (40 min).
 	sleepSec := 30
-	totalRetries := 30
+	totalRetries := 80
 	totalSleepSec := 0
 
 	for totalRetries > 0 {
