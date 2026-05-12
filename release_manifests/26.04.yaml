@@ -1,4 +1,4 @@
-driver_version: 26.04-0.6.8.0-0
+driver_version: 26.04-0.7.1.0-0
 doca_version: 3.4.0
 precompiled:
 - os: ubuntu24.04
