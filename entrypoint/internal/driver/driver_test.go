@@ -4432,3 +4432,161 @@ PACKAGE_VERSION="1.0"
 		Expect(err.Error()).To(ContainSubstring("no DKMS module found"))
 	})
 })
+
+var _ = Describe("Unload", func() {
+	const (
+		kernelVersion = "5.4.0-42-generic"
+		moduleName    = "mlnx-ofa_kernel"
+		moduleVersion = "5.9.0.0.1.1.0"
+	)
+
+	var (
+		dm      *driverMgr
+		cmdMock *cmdMockPkg.Interface
+		hostMock *hostMockPkg.Interface
+		osMock  *wrappersMockPkg.OSWrapper
+		ctx     context.Context
+		cfg     config.Config
+	)
+
+	BeforeEach(func() {
+		cmdMock = cmdMockPkg.NewInterface(GinkgoT())
+		hostMock = hostMockPkg.NewInterface(GinkgoT())
+		osMock = wrappersMockPkg.NewOSWrapper(GinkgoT())
+		ctx = context.Background()
+		cfg = config.Config{}
+	})
+
+	// helper that sets up the standard discoverDKMSModule mocks via osMock
+	setupDiscoverDKMS := func() {
+		mockEntry := mockDirEntry{name: "mlnx-ofa_kernel-5.9-" + moduleVersion, isDir: true}
+		osMock.EXPECT().ReadDir("/usr/src/").Return([]os.DirEntry{mockEntry}, nil)
+		osMock.EXPECT().Stat("/usr/src/mlnx-ofa_kernel-5.9-" + moduleVersion + "/dkms.conf").Return(nil, nil)
+		osMock.EXPECT().ReadFile("/usr/src/mlnx-ofa_kernel-5.9-" + moduleVersion + "/dkms.conf").
+			Return([]byte("PACKAGE_NAME=\""+moduleName+"\"\nPACKAGE_VERSION=\""+moduleVersion+"\"\n"), nil)
+	}
+
+	// helper that sets up printLoadedDriverVersion mocks
+	setupPrintLoadedDriverVersion := func() {
+		hostMock.EXPECT().LsMod(ctx).Return(map[string]host.LoadedModule{
+			"mlx5_core": {Name: "mlx5_core", RefCount: 1, UsedBy: []string{}},
+		}, nil)
+		cmdMock.EXPECT().RunCommand(ctx, "ls", "/sys/class/net/").Return("", "", nil)
+	}
+
+	Context("when newDriverLoaded is false", func() {
+		It("returns (false, nil) without any side-effects", func() {
+			dm = &driverMgr{cfg: cfg, cmd: cmdMock, host: hostMock, os: osMock}
+			dm.newDriverLoaded = false
+
+			result, err := dm.Unload(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeFalse())
+		})
+	})
+
+	Context("when newDriverLoaded is true but mlnxofedctl is absent", func() {
+		It("returns (false, nil) without running mlnxofedctl", func() {
+			dm = &driverMgr{cfg: cfg, cmd: cmdMock, host: hostMock, os: osMock}
+			dm.newDriverLoaded = true
+
+			osMock.EXPECT().Stat("/usr/sbin/mlnxofedctl").Return(nil, errors.New("not found"))
+
+			result, err := dm.Unload(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeFalse())
+		})
+	})
+
+	Context("when newDriverLoaded is true and mlnxofedctl is present", func() {
+		BeforeEach(func() {
+			osMock.EXPECT().Stat("/usr/sbin/mlnxofedctl").Return(nil, nil)
+		})
+
+		It("skips dkmsRemove and runs mlnxofedctl when UseDKMS is false", func() {
+			cfg.UseDKMS = false
+			dm = &driverMgr{cfg: cfg, cmd: cmdMock, host: hostMock, os: osMock}
+			dm.newDriverLoaded = true
+
+			cmdMock.EXPECT().RunCommand(ctx, "/usr/sbin/mlnxofedctl", "--alt-mods", "force-restart").
+				Return("", "", nil)
+			setupPrintLoadedDriverVersion()
+
+			result, err := dm.Unload(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeTrue())
+		})
+
+		It("runs dkmsRemove then mlnxofedctl when UseDKMS is true", func() {
+			cfg.UseDKMS = true
+			dm = &driverMgr{cfg: cfg, cmd: cmdMock, host: hostMock, os: osMock}
+			dm.newDriverLoaded = true
+
+			hostMock.EXPECT().GetKernelVersion(ctx).Return(kernelVersion, nil)
+			setupDiscoverDKMS()
+			cmdMock.EXPECT().RunCommand(ctx, "dkms", "remove",
+				"-m", moduleName, "-v", moduleVersion, "-k", kernelVersion).
+				Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "depmod", kernelVersion).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "/usr/sbin/mlnxofedctl", "--alt-mods", "force-restart").
+				Return("", "", nil)
+			setupPrintLoadedDriverVersion()
+
+			result, err := dm.Unload(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeTrue())
+		})
+
+		It("continues (non-fatal) when dkms remove returns non-zero", func() {
+			cfg.UseDKMS = true
+			dm = &driverMgr{cfg: cfg, cmd: cmdMock, host: hostMock, os: osMock}
+			dm.newDriverLoaded = true
+
+			hostMock.EXPECT().GetKernelVersion(ctx).Return(kernelVersion, nil)
+			setupDiscoverDKMS()
+			cmdMock.EXPECT().RunCommand(ctx, "dkms", "remove",
+				"-m", moduleName, "-v", moduleVersion, "-k", kernelVersion).
+				Return("", "module not found", errors.New("exit status 6"))
+			cmdMock.EXPECT().RunCommand(ctx, "depmod", kernelVersion).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "/usr/sbin/mlnxofedctl", "--alt-mods", "force-restart").
+				Return("", "", nil)
+			setupPrintLoadedDriverVersion()
+
+			result, err := dm.Unload(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeTrue())
+		})
+
+		It("skips dkms deregistration (non-fatal) when DKMS module discovery fails", func() {
+			cfg.UseDKMS = true
+			dm = &driverMgr{cfg: cfg, cmd: cmdMock, host: hostMock, os: osMock}
+			dm.newDriverLoaded = true
+
+			hostMock.EXPECT().GetKernelVersion(ctx).Return(kernelVersion, nil)
+			// discoverDKMSModule finds nothing under /usr/src/
+			osMock.EXPECT().ReadDir("/usr/src/").Return([]os.DirEntry{}, nil)
+
+			// No dkms remove or depmod — but mlnxofedctl still runs
+			cmdMock.EXPECT().RunCommand(ctx, "/usr/sbin/mlnxofedctl", "--alt-mods", "force-restart").
+				Return("", "", nil)
+			setupPrintLoadedDriverVersion()
+
+			result, err := dm.Unload(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeTrue())
+		})
+
+		It("returns error when GetKernelVersion fails during DKMS teardown", func() {
+			cfg.UseDKMS = true
+			dm = &driverMgr{cfg: cfg, cmd: cmdMock, host: hostMock, os: osMock}
+			dm.newDriverLoaded = true
+
+			hostMock.EXPECT().GetKernelVersion(ctx).Return("", errors.New("uname failed"))
+
+			result, err := dm.Unload(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to get kernel version for DKMS teardown"))
+			Expect(result).To(BeFalse())
+		})
+	})
+})

@@ -339,6 +339,21 @@ func (d *driverMgr) Unload(ctx context.Context) (bool, error) {
 		if _, err := d.os.Stat("/usr/sbin/mlnxofedctl"); err == nil {
 			log.Info("Restoring Mellanox OFED Driver from host...")
 
+			// When USE_DKMS=true the OFED modules were installed by DKMS into
+			// /lib/modules/<kernel>/updates/dkms/, which has higher modprobe priority
+			// than the inbox kernel path.  mlnxofedctl --alt-mods cannot reach the inbox
+			// modules while the DKMS entry is still registered, so we must deregister it
+			// and refresh depmod before invoking the restore.
+			if d.cfg.UseDKMS {
+				kernelVersion, err := d.host.GetKernelVersion(ctx)
+				if err != nil {
+					return false, fmt.Errorf("failed to get kernel version for DKMS teardown: %w", err)
+				}
+				if err := d.dkmsRemove(ctx, kernelVersion); err != nil {
+					return false, fmt.Errorf("failed to remove DKMS module before inbox restore: %w", err)
+				}
+			}
+
 			// Execute mlnxofedctl --alt-mods force-restart
 			_, _, err := d.cmd.RunCommand(ctx, "/usr/sbin/mlnxofedctl", "--alt-mods", "force-restart")
 			if err != nil {
@@ -2328,6 +2343,44 @@ func (d *driverMgr) dkmsInstall(ctx context.Context, moduleName, moduleVersion, 
 	}
 
 	log.Info("DKMS module installed successfully", "name", moduleName, "version", moduleVersion, "kernel", kernelVersion)
+	return nil
+}
+
+// dkmsRemove deregisters and removes the DKMS-installed module files for the given
+// kernel.  It is called during inbox-driver restore so that the module database
+// (depmod) resolves mlx5_core to the inbox module rather than the DKMS-installed OFED
+// one.  A non-zero exit from "dkms remove" is treated as non-fatal because the module
+// may already be unregistered; the subsequent depmod call is always required.
+func (d *driverMgr) dkmsRemove(ctx context.Context, kernelVersion string) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	moduleName, moduleVersion, err := d.discoverDKMSModule(ctx)
+	if err != nil {
+		// Non-fatal: if the source packages are gone the DKMS entry is likely absent too.
+		// Match bash dkms_remove() which uses 'return 0' on discovery failure.
+		log.Info("Failed to discover DKMS module for removal, skipping DKMS deregistration", "error", err)
+		return nil
+	}
+
+	log.Info("Removing DKMS module to restore inbox driver priority",
+		"name", moduleName, "version", moduleVersion, "kernel", kernelVersion)
+
+	_, stderr, err := d.cmd.RunCommand(ctx, "dkms", "remove",
+		"-m", moduleName, "-v", moduleVersion, "-k", kernelVersion)
+	if err != nil {
+		// Not fatal: module may not be registered for this kernel yet.
+		log.Info("dkms remove returned non-zero (module may not be registered), continuing",
+			"name", moduleName, "version", moduleVersion, "kernel", kernelVersion,
+			"stderr", stderr, "error", err)
+	}
+
+	// Refresh the module database so modprobe now resolves mlx5_core to the inbox module.
+	if _, _, err := d.cmd.RunCommand(ctx, "depmod", kernelVersion); err != nil {
+		return fmt.Errorf("failed to run depmod after DKMS removal: %w", err)
+	}
+
+	log.Info("DKMS module removed and module database refreshed",
+		"name", moduleName, "version", moduleVersion, "kernel", kernelVersion)
 	return nil
 }
 
