@@ -57,7 +57,7 @@ RUN set -x && \
     MAJOR_VER=$(echo ${D_OS} | sed 's/rhel\([0-9]*\).*/\1/') && \
     rpm --import https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-${MAJOR_VER} && \
     dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${MAJOR_VER}.noarch.rpm && \
-    dnf -y update && \
+    dnf -y update --exclude=redhat-release && \
     dnf -y install perl \
 # Container functional requirements
     jq iproute kmod procps-ng udev
