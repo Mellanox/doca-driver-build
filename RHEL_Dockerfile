@@ -55,12 +55,23 @@ RUN if [[ "${D_OS}" == *"rhel9"* ]] ; then \
 RUN set -x && \
 # Perform distro update and install prerequirements
     MAJOR_VER=$(echo ${D_OS} | sed 's/rhel\([0-9]*\).*/\1/') && \
+    RELEASE_VER=$(echo ${D_OS} | sed 's/rhel//') && \
     rpm --import https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-${MAJOR_VER} && \
     dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${MAJOR_VER}.noarch.rpm && \
-    dnf -y update --exclude=redhat-release && \
+# UBI10 ships stale GPG keys (RHEL #7136991); bootstrap rpm first (old RSA sigs),
+# then import PQC release key 4 — old rpm cannot parse ML-DSA keys (import fails)
+    if [[ "${MAJOR_VER}" -ge 10 ]] ; then \
+        dnf -y update rpm rpm-libs rpm-build-libs rpm-sign-libs rpm-sequoia \
+            python3-rpm \
+            crypto-policies crypto-policies-scripts openssl-libs gnutls \
+            --exclude=redhat-release --releasever=${RELEASE_VER} && \
+        rpm --import https://security.access.redhat.com/data/6afedf8f.txt && \
+        dnf clean all ; \
+    fi && \
+    dnf -y update --exclude=redhat-release --releasever=${RELEASE_VER} && \
     dnf -y install perl \
 # Container functional requirements
-    jq iproute kmod procps-ng udev
+    jq iproute kmod procps-ng udev --releasever=${RELEASE_VER}
 
 COPY --from=go_builder /workspace/build/entrypoint /root/entrypoint
 WORKDIR /root
@@ -80,6 +91,7 @@ ARG D_OFED_VERSION
 ARG D_CONTAINER_VER
 ARG D_OFED_SRC_DOWNLOAD_PATH
 ARG STIG_COMPLIANT
+ARG D_OS
 
 # Stage args
 ARG D_OFED_BASE_URL="https://linux.mellanox.com/public/repo/doca/${D_DOCA_VERSION}/SOURCES/mlnx_ofed"
@@ -98,8 +110,9 @@ WORKDIR /root
 # (buildah inherits host entitlements automatically; docker requires explicit bind mount)
 RUN --mount=type=bind,from=rhsm,source=.,target=/etc/pki/entitlement-host \
     set -x && \
+    RELEASE_VER=$(echo ${D_OS} | sed 's/rhel//') && \
 # Install prerequirements
-    dnf install -y curl --allowerasing \
+    dnf install -y curl --allowerasing --releasever=${RELEASE_VER} \
 # Driver build requirements
     autoconf python3-devel ethtool automake pciutils libtool hostname dracut \
 # Build tools needed by install.pl at runtime (avoids subscription-gated dnf at container start)
@@ -187,15 +200,16 @@ COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/RPMS/redhat-release-*/${D_ARCH}
 RUN rpm -ivh --nodeps /root/*.rpm
 
 RUN set -x && \
+    RELEASE_VER=$(echo ${D_OS} | sed 's/rhel//') && \
 # MOFED functional requirements
     dnf install -y pciutils hostname udev ethtool \
 # Container functional requirements
-    jq iproute kmod procps-ng udev && \
+    jq iproute kmod procps-ng udev --releasever=${RELEASE_VER} && \
 # DKMS and kernel module build tools when DKMS enabled (runtime dkms add/build/install)
     if [ "$D_ENABLE_DKMS" = "true" ]; then \
         MAJOR_VER=$(echo ${D_OS} | sed 's/rhel\([0-9]*\).*/\1/') && \
         dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${MAJOR_VER}.noarch.rpm && \
-        dnf install -y dkms gcc make bison flex elfutils-libelf-devel; \
+        dnf install -y dkms gcc make bison flex elfutils-libelf-devel --releasever=${RELEASE_VER}; \
     fi
 
 # Prevent modprobe from giving a WARNING about missing files
