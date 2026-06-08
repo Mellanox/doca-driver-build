@@ -87,6 +87,14 @@ type driverMgr struct {
 func (d *driverMgr) PreStart(ctx context.Context) error {
 	log := logr.FromContextOrDiscard(ctx)
 
+	// When DKMS is enabled, dkms and the OFED package post-install scriptlets invoke
+	// `systemctl`, which is noisy in this non-systemd container. Install a no-op stub on
+	// PATH before the build/install (Build) and load (Load) steps so those calls succeed
+	// quietly. PreStart runs before both, so this covers the whole flow.
+	if d.cfg.UseDKMS {
+		d.installSystemctlStub(ctx)
+	}
+
 	// Update CA certificates at the very beginning
 	if err := d.updateCACertificates(ctx); err != nil {
 		log.V(1).Info("Failed to update CA certificates", "error", err)
@@ -2091,6 +2099,43 @@ func (d *driverMgr) enableFIPSIfRequired(ctx context.Context) error {
 
 	log.Info("FIPS mode enabled successfully")
 	return nil
+}
+
+// installSystemctlStub shadows `systemctl` with a no-op stub placed earlier on PATH.
+// dkms and the OFED package post-install scriptlets call `systemctl`, which fails noisily
+// in this container because there is no systemd as PID 1 / no system D-Bus ("System has
+// not been booted with systemd...", "Failed to connect to system scope bus..."). Those
+// calls are non-essential here, so the stub only removes cosmetic log noise without
+// changing behavior. Child processes spawned via cmd inherit this process's environment,
+// so updating PATH here propagates to dkms and the package scriptlets. Failure to create
+// the stub is non-fatal; we simply keep the systemd warnings in the logs.
+func (d *driverMgr) installSystemctlStub(ctx context.Context) {
+	log := logr.FromContextOrDiscard(ctx)
+
+	const stubDir = "/usr/local/bin"
+	const stubPath = stubDir + "/systemctl"
+
+	if err := d.os.MkdirAll(stubDir, 0o755); err != nil {
+		log.V(1).Info("failed to create dir for systemctl stub, continuing with systemd warnings in logs",
+			"dir", stubDir, "error", err)
+		return
+	}
+	if err := d.os.WriteFile(stubPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		log.V(1).Info("failed to create systemctl stub, continuing with systemd warnings in logs",
+			"path", stubPath, "error", err)
+		return
+	}
+
+	// Ensure the stub takes precedence over the real systemctl (usually /usr/bin/systemctl).
+	path := os.Getenv("PATH")
+	if !strings.Contains(":"+path+":", ":"+stubDir+":") {
+		if err := os.Setenv("PATH", stubDir+":"+path); err != nil {
+			log.V(1).Info("failed to prepend systemctl stub dir to PATH", "error", err)
+			return
+		}
+	}
+
+	log.V(1).Info("installed no-op systemctl stub", "path", stubPath)
 }
 
 // setupDKMS handles DKMS registration, build, and install for the current kernel
