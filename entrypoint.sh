@@ -141,6 +141,16 @@ function termination_handler() {
     if [[ "${RESTORE_DRIVER_ON_POD_TERMINATION}" != false  && "${new_driver_loaded}" == true ]]; then
         if [ -e /usr/sbin/mlnxofedctl ]; then
             timestamp_print "Restoring Mellanox OFED Driver from host..."
+
+            # When USE_DKMS=true the OFED modules were installed by DKMS into
+            # /lib/modules/<kernel>/updates/dkms/, which has higher modprobe priority
+            # than the inbox kernel path. mlnxofedctl --alt-mods cannot reach the inbox
+            # modules while the DKMS entry is still registered, so deregister it and
+            # refresh depmod before invoking the restore.
+            if [[ "${USE_DKMS}" = true ]]; then
+                dkms_remove
+            fi
+
             /usr/sbin/mlnxofedctl --alt-mods force-restart
 
             print_loaded_drv_ver_str
@@ -1604,6 +1614,28 @@ function dkms_install() {
 
     timestamp_print "Installing DKMS module: ${DKMS_MODULE_NAME}/${DKMS_MODULE_VERSION} for kernel ${FULL_KVER}"
     exec_cmd "dkms install -m ${DKMS_MODULE_NAME} -v ${DKMS_MODULE_VERSION} -k ${FULL_KVER}"
+}
+
+function dkms_remove() {
+    debug_print "Function: ${FUNCNAME[0]}"
+
+    # Deregister the DKMS-installed module so that depmod resolves mlx5_core to the
+    # inbox module rather than the DKMS-installed OFED one during inbox-driver restore.
+    discover_dkms_module_info
+    if [ -z "${DKMS_MODULE_NAME}" ] || [ -z "${DKMS_MODULE_VERSION}" ]; then
+        timestamp_print "Failed to discover DKMS module for removal, skipping"
+        return 0
+    fi
+
+    timestamp_print "Removing DKMS module to restore inbox driver priority: ${DKMS_MODULE_NAME}/${DKMS_MODULE_VERSION} for kernel ${FULL_KVER}"
+    # Non-fatal: module may not be registered for this kernel yet.
+    dkms remove -m ${DKMS_MODULE_NAME} -v ${DKMS_MODULE_VERSION} -k ${FULL_KVER} 2>/dev/null || \
+        debug_print "dkms remove returned non-zero (module may not be registered), continuing"
+
+    # Refresh the module database so modprobe now resolves mlx5_core to the inbox module.
+    exec_cmd "depmod ${FULL_KVER}"
+
+    timestamp_print "DKMS module removed and module database refreshed"
 }
 
 function dkms_status() {
