@@ -1654,6 +1654,35 @@ function dkms_status() {
     return 1
 }
 
+# dkms and the OFED package post-install scriptlets call `systemctl`, which fails
+# noisily in this container because there is no systemd as PID 1 / no system D-Bus
+# ("System has not been booted with systemd...", "Failed to connect to system scope
+# bus..."). The calls are non-essential here, so shadow `systemctl` with a no-op stub
+# placed earlier on PATH. Nothing in this container legitimately drives systemd, so
+# this only removes cosmetic log noise without changing behavior.
+function install_systemctl_stub() {
+    debug_print "Function: ${FUNCNAME[0]}"
+
+    local stub_dir="/usr/local/bin"
+    local stub_path="${stub_dir}/systemctl"
+
+    mkdir -p "${stub_dir}" 2>/dev/null
+    printf '#!/bin/sh\nexit 0\n' > "${stub_path}" 2>/dev/null
+    chmod 0755 "${stub_path}" 2>/dev/null
+    if [ ! -x "${stub_path}" ]; then
+        timestamp_print "[WARN] Failed to create executable systemctl stub at ${stub_path}; continuing with systemd warnings in logs"
+        return 0
+    fi
+
+    # Ensure the stub takes precedence over the real systemctl (usually /usr/bin/systemctl).
+    case ":${PATH}:" in
+        *":${stub_dir}:"*) ;;
+        *) export PATH="${stub_dir}:${PATH}" ;;
+    esac
+
+    debug_print "Installed no-op systemctl stub (resolves to: $(command -v systemctl))"
+}
+
 function update_ca_certificates() {
     if ${IS_OS_UBUNTU}; then
         timestamp_print "Updating system CA certificates (Ubuntu)..."
@@ -1804,6 +1833,11 @@ store_devices_conf
 
 # Any command execution FAILURE from this point will terminate the container
 trap "terminate_event" SIGSTOP SIGINT SIGTERM EXIT
+
+# When DKMS is enabled, dkms and the OFED package scriptlets invoke `systemctl`,
+# which is noisy in this non-systemd container. Install a no-op stub before the
+# install/load steps so those calls succeed quietly.
+[[ "${USE_DKMS}" = true ]] && install_systemctl_stub
 
 if ! ${build_precompiled}; then
     build_driver
