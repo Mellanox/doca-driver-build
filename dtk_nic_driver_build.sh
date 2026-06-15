@@ -6,7 +6,7 @@ if [ -f "$(dirname "$0")/dtk.env" ]; then
     source "$(dirname "$0")/dtk.env"
 fi
 
-: ${USE_NEW_ENTRYPOINT:=false}
+: ${USE_NEW_ENTRYPOINT:=true}
 
 if [ "$USE_NEW_ENTRYPOINT" = "true" ]; then
     echo "Using Go entrypoint for DTK build"

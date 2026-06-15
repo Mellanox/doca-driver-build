@@ -16,9 +16,9 @@
 
 
 # The script selects the entrypoint script(binary) based on the value of USE_NEW_ENTRYPOINT environment variable.
-# By default, it uses the old bash-based implementation.
+# By default, it uses the new binary-based implementation.
 
-: "${USE_NEW_ENTRYPOINT:=false}"
+: "${USE_NEW_ENTRYPOINT:=true}"
 
 if ${USE_NEW_ENTRYPOINT}; then
     exec ./entrypoint "$@"
