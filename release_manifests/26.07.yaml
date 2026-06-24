@@ -22,6 +22,10 @@ precompiled:
   - 6.8.0-1055-nvidia
   - 6.8.0-1057-aws
 dynamically_compiled:
+- os: ubuntu26.04
+  archs:
+  - amd64
+  - arm64
 - os: ubuntu24.04-stig
   archs:
   - amd64
