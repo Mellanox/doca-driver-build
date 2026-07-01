@@ -38,6 +38,8 @@ import (
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/version"
 )
 
+const stderrOutput = "stderr"
+
 type ctxData struct {
 	//nolint:containedctx
 	Ctx    context.Context
@@ -129,8 +131,8 @@ func getLogger(cfg config.Config) logr.Logger {
 		Encoding:          "console",
 		DisableStacktrace: true,
 		EncoderConfig:     zap.NewDevelopmentEncoderConfig(),
-		OutputPaths:       []string{"stderr"},
-		ErrorOutputPaths:  []string{"stderr"},
+		OutputPaths:       []string{stderrOutput},
+		ErrorOutputPaths:  []string{stderrOutput},
 	}
 
 	if cfg.EntrypointDebug {

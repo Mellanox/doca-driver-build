@@ -39,6 +39,11 @@ const (
 	kernelTypeStandard = "standard"
 	kernelTypeRT       = "rt"
 	kernelType64k      = "64k"
+
+	flagDisableKMP = "--disable-kmp"
+	dnfCmd         = "dnf"
+	dnfFlagQuiet   = "-q"
+	dnfFlagYes     = "-y"
 )
 
 // New creates a new instance of the driver manager
@@ -728,12 +733,12 @@ func (d *driverMgr) installGCCRedHat(ctx context.Context, majorVersion int) (str
 	log.V(1).Info("Checking for gcc-toolset availability", "package", toolsetPackage)
 
 	// Check if gcc-toolset is available
-	_, _, err := d.cmd.RunCommand(ctx, "dnf", "list", "available", toolsetPackage)
+	_, _, err := d.cmd.RunCommand(ctx, dnfCmd, "list", "available", toolsetPackage)
 	if err == nil {
 		// gcc-toolset version is available
 		kernelGCCVer := fmt.Sprintf("gcc-toolset-%d-gcc", majorVersion)
 		log.V(1).Info("Installing gcc-toolset for RedHat", "package", toolsetPackage)
-		_, _, err = d.cmd.RunCommand(ctx, "dnf", "-q", "-y", "install", toolsetPackage)
+		_, _, err = d.cmd.RunCommand(ctx, dnfCmd, dnfFlagQuiet, dnfFlagYes, "install", toolsetPackage)
 		if err != nil {
 			return "", "", fmt.Errorf("failed to install %s: %w", toolsetPackage, err)
 		}
@@ -744,7 +749,7 @@ func (d *driverMgr) installGCCRedHat(ctx context.Context, majorVersion int) (str
 	// Fall back to default gcc package
 	log.V(1).Info("gcc-toolset not available, using default gcc package")
 	kernelGCCVer := "gcc"
-	_, _, err = d.cmd.RunCommand(ctx, "dnf", "-q", "-y", "install", "gcc")
+	_, _, err = d.cmd.RunCommand(ctx, dnfCmd, dnfFlagQuiet, dnfFlagYes, "install", "gcc")
 	if err != nil {
 		return "", "", fmt.Errorf("failed to install gcc: %w", err)
 	}
@@ -1143,7 +1148,7 @@ func (d *driverMgr) buildDriverFromSource(ctx context.Context, driverPath, kerne
 func (d *driverMgr) getBuildFlagsForOS(osType, kernelVersion string) []string {
 	switch osType {
 	case constants.OSTypeUbuntu:
-		flags := []string{"--disable-kmp"}
+		flags := []string{flagDisableKMP}
 		// Conditionally add --without-dkms based on config
 		// If UseDKMS is true, we want install.pl to create DKMS packages
 		if !d.cfg.UseDKMS {
@@ -1152,7 +1157,7 @@ func (d *driverMgr) getBuildFlagsForOS(osType, kernelVersion string) []string {
 		return flags
 	case constants.OSTypeSLES:
 		flags := []string{
-			"--disable-kmp",
+			flagDisableKMP,
 		}
 		// Conditionally add --without-dkms based on config (must come before --kernel-sources)
 		if !d.cfg.UseDKMS {
@@ -1163,7 +1168,7 @@ func (d *driverMgr) getBuildFlagsForOS(osType, kernelVersion string) []string {
 		)
 		return flags
 	case constants.OSTypeRedHat:
-		flags := []string{"--disable-kmp"}
+		flags := []string{flagDisableKMP}
 		// Conditionally add --without-dkms based on config
 		if !d.cfg.UseDKMS {
 			flags = append(flags, "--without-dkms")
@@ -1508,16 +1513,16 @@ func (d *driverMgr) setupOpenShiftRepositories(ctx context.Context, versionInfo 
 
 	// Enable RHOCP repository
 	repoName := fmt.Sprintf("rhocp-%s-for-rhel-%d-%s-rpms", versionInfo.OpenShiftVersion, versionInfo.MajorVersion, arch)
-	_, _, err := d.cmd.RunCommand(ctx, "dnf", "config-manager", "--set-enabled", repoName)
+	_, _, err := d.cmd.RunCommand(ctx, dnfCmd, "config-manager", "--set-enabled", repoName)
 	if err != nil {
 		log.V(1).Info("Failed to enable RHOCP repository, continuing", "repo", repoName, "error", err)
 	}
 
 	// Test if makecache works
-	_, _, err = d.cmd.RunCommand(ctx, "dnf", "makecache", "--releasever="+versionInfo.FullVersion)
+	_, _, err = d.cmd.RunCommand(ctx, dnfCmd, "makecache", "--releasever="+versionInfo.FullVersion)
 	if err != nil {
 		log.V(1).Info("Makecache failed, disabling RHOCP repository", "error", err)
-		_, _, _ = d.cmd.RunCommand(ctx, "dnf", "config-manager", "--set-disabled", repoName)
+		_, _, _ = d.cmd.RunCommand(ctx, dnfCmd, "config-manager", "--set-disabled", repoName)
 	}
 }
 
@@ -1533,7 +1538,7 @@ func (d *driverMgr) setupEUSRepositories(ctx context.Context, versionInfo *host.
 		if versionInfo.FullVersion == version {
 			log.V(1).Info("Enabling EUS repository", "version", version, "arch", arch)
 			repoName := fmt.Sprintf("rhel-%d-for-%s-baseos-eus-rpms", versionInfo.MajorVersion, arch)
-			_, _, err := d.cmd.RunCommand(ctx, "dnf", "config-manager", "--set-enabled", repoName)
+			_, _, err := d.cmd.RunCommand(ctx, dnfCmd, "config-manager", "--set-enabled", repoName)
 			if err != nil {
 				log.V(1).Info("Failed to enable EUS repository", "repo", repoName, "error", err)
 			}
@@ -1573,7 +1578,7 @@ func (d *driverMgr) installKernelPackages(ctx context.Context, kernelVersion str
 		}
 
 		for _, pkg := range packages {
-			args := []string{"dnf", "-q", "-y"}
+			args := []string{dnfCmd, dnfFlagQuiet, dnfFlagYes}
 			if releaseverStr != "" {
 				args = append(args, releaseverStr)
 			}
@@ -1586,7 +1591,7 @@ func (d *driverMgr) installKernelPackages(ctx context.Context, kernelVersion str
 		}
 
 		// Install kernel-devel with --allowerasing flag
-		args := []string{"dnf", "-q", "-y"}
+		args := []string{dnfCmd, dnfFlagQuiet, dnfFlagYes}
 		if releaseverStr != "" {
 			args = append(args, releaseverStr)
 		}
@@ -1599,7 +1604,7 @@ func (d *driverMgr) installKernelPackages(ctx context.Context, kernelVersion str
 	}
 
 	// Install kernel development and modules packages
-	args := []string{"dnf", "-q", "-y"}
+	args := []string{dnfCmd, dnfFlagQuiet, dnfFlagYes}
 	if releaseverStr != "" {
 		args = append(args, releaseverStr)
 	}
@@ -1974,7 +1979,7 @@ func (d *driverMgr) installRedHatDependencies(ctx context.Context, versionInfo *
 	}
 
 	args := make([]string, 0, 5+len(packages))
-	args = append(args, "dnf", "-q", "-y", "--releasever="+versionInfo.FullVersion, "install")
+	args = append(args, dnfCmd, dnfFlagQuiet, dnfFlagYes, "--releasever="+versionInfo.FullVersion, "install")
 	args = append(args, packages...)
 
 	_, _, err := d.cmd.RunCommand(ctx, args[0], args[1:]...)
@@ -1983,12 +1988,12 @@ func (d *driverMgr) installRedHatDependencies(ctx context.Context, versionInfo *
 	}
 
 	// Test makecache and disable EUS if it fails
-	_, _, err = d.cmd.RunCommand(ctx, "dnf", "makecache", "--releasever="+versionInfo.FullVersion)
+	_, _, err = d.cmd.RunCommand(ctx, dnfCmd, "makecache", "--releasever="+versionInfo.FullVersion)
 	if err != nil {
 		log.V(1).Info("Makecache failed, disabling EUS repository", "error", err)
 		arch := d.getArchitecture(ctx)
 		repoName := fmt.Sprintf("rhel-%d-for-%s-baseos-eus-rpms", versionInfo.MajorVersion, arch)
-		_, _, _ = d.cmd.RunCommand(ctx, "dnf", "config-manager", "--set-disabled", repoName)
+		_, _, _ = d.cmd.RunCommand(ctx, dnfCmd, "config-manager", "--set-disabled", repoName)
 	}
 
 	return nil
