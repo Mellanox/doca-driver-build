@@ -202,7 +202,18 @@ function mount_rootfs() {
     exec_cmd mount --make-runbindable /sys
     exec_cmd mount --make-private /sys
 
-    (mount -l | grep mellanox | grep -v tmpfs -q) && debug_print "Mount ${MLX_DRIVERS_MOUNT} exists" && return
+    # A mount at MLX_DRIVERS_MOUNT may already be present from a previous container
+    # instance that terminated without running termination_handler (e.g. killed
+    # rather than gracefully stopped). Such a mount is bound to that old container's
+    # filesystem snapshot, not the driver this process just (re)built, so it must
+    # never be trusted as-is: unmount it (best effort) and always recreate it fresh
+    # below, rather than skipping the mount when one is merely present.
+    if mount -l | grep mellanox | grep -v tmpfs -q; then
+        debug_print "Found existing mount ${MLX_DRIVERS_MOUNT}, unmounting before remount to avoid stale content"
+        if ! umount_output=$(umount -l -R ${MLX_DRIVERS_MOUNT}${SHARED_KERNEL_HEADERS_DIR} 2>&1); then
+            debug_print "Failed to unmount existing mount ${MLX_DRIVERS_MOUNT}${SHARED_KERNEL_HEADERS_DIR}, proceeding to remount anyway: ${umount_output}"
+        fi
+    fi
 
     exec_cmd mkdir -p ${MLX_DRIVERS_MOUNT}${SHARED_KERNEL_HEADERS_DIR}
     exec_cmd mount --rbind ${SHARED_KERNEL_HEADERS_DIR} ${MLX_DRIVERS_MOUNT}${SHARED_KERNEL_HEADERS_DIR}

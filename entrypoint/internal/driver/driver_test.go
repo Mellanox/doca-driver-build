@@ -1726,6 +1726,12 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("should return true when modules match and no restart is needed", func() {
+			// This test exercises the real OS wrapper for mountRootfs's MkdirAll call,
+			// so point the mount config at a real (temp) directory rather than the
+			// zero-value paths used elsewhere in this context.
+			dm.cfg.MlxDriversMount = tempDir
+			dm.cfg.SharedKernelHeadersDir = "/mnt-src/"
+
 			// Mock checkLoadedKmodSrcverVsModinfo to return true (modules match)
 			hostMock.EXPECT().LsMod(ctx).Return(map[string]host.LoadedModule{
 				"mlx5_core": {Name: "mlx5_core", RefCount: 1, UsedBy: []string{}},
@@ -1750,9 +1756,12 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "ethtool", "--driver", "eth0").Return("version: 5.0-1.0.0", "", nil)
 
 			// Mock mountRootfs (mount already exists scenario)
+			mountPath := filepath.Join(tempDir, "mnt-src")
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return("/usr/src/ on /run/mellanox/drivers/usr/src/ type none", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "umount", "-l", "-R", mountPath).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--rbind", "/mnt-src/", mountPath).Return("", "", nil)
 
 			result, err := dm.Load(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -1816,6 +1825,9 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return("/usr/src/ on /run/mellanox/drivers/usr/src/ type none", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "umount", "-l", "-R", "").Return("", "", nil)
+			osMock.EXPECT().MkdirAll("", os.FileMode(0o755)).Return(nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--rbind", "", "").Return("", "", nil)
 
 			result, err := dm.Load(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -1879,6 +1891,9 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return("/usr/src/ on /run/mellanox/drivers/usr/src/ type none", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "umount", "-l", "-R", "").Return("", "", nil)
+			osMock.EXPECT().MkdirAll("", os.FileMode(0o755)).Return(nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--rbind", "", "").Return("", "", nil)
 
 			result, err := dm.Load(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -1943,6 +1958,9 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return("/usr/src/ on /run/mellanox/drivers/usr/src/ type none", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "umount", "-l", "-R", "").Return("", "", nil)
+			osMock.EXPECT().MkdirAll("", os.FileMode(0o755)).Return(nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--rbind", "", "").Return("", "", nil)
 
 			result, err := dm.Load(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -1996,6 +2014,9 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return("/usr/src/ on /run/mellanox/drivers/usr/src/ type none", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "umount", "-l", "-R", "").Return("", "", nil)
+			osMock.EXPECT().MkdirAll("", os.FileMode(0o755)).Return(nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--rbind", "", "").Return("", "", nil)
 
 			result, err := dm.Load(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -2056,6 +2077,9 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return("/usr/src/ on /run/mellanox/drivers/usr/src/ type none", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "umount", "-l", "-R", "").Return("", "", nil)
+			osMock.EXPECT().MkdirAll("", os.FileMode(0o755)).Return(nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--rbind", "", "").Return("", "", nil)
 
 			result, err := dm.Load(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -2167,6 +2191,9 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return("/usr/src/ on /run/mellanox/drivers/usr/src/ type none", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "umount", "-l", "-R", "").Return("", "", nil)
+			osMock.EXPECT().MkdirAll("", os.FileMode(0o755)).Return(nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--rbind", "", "").Return("", "", nil)
 
 			result, err := dm.Load(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -3082,7 +3109,7 @@ var _ = Describe("Driver", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("should skip mount when mellanox mount already exists", func() {
+		It("should unmount stale mount and remount when mellanox mount already exists", func() {
 			cfg.MlxDriversMount = "/run/mellanox/drivers"
 			cfg.SharedKernelHeadersDir = "/usr/src/"
 			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
@@ -3093,11 +3120,39 @@ var _ = Describe("Driver", func() {
 			// Mock mount --make-private /sys
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
 
-			// Mock mount -l to check if mount exists (returns existing mellanox mount)
+			// Mock mount -l to check if mount exists (returns existing mellanox mount,
+			// which may be stale leftover from a previous, non-gracefully-terminated container)
 			mountOutput := "/dev/sda1 on / type ext4 (rw,relatime)\n/usr/src/ on /run/mellanox/drivers/usr/src/ type none (rw,relatime)\n"
 			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return(mountOutput, "", nil)
 
-			// Should not call mkdir or mount --rbind when mount exists
+			// Should unmount the existing (possibly stale) mount before recreating it
+			cmdMock.EXPECT().RunCommand(ctx, "umount", "-l", "-R", "/run/mellanox/drivers/usr/src").Return("", "", nil)
+
+			// Should still (re)create the mount directory and rbind mount fresh
+			osMock.EXPECT().MkdirAll("/run/mellanox/drivers/usr/src", os.FileMode(0o755)).Return(nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--rbind", "/usr/src/", "/run/mellanox/drivers/usr/src").Return("", "", nil)
+
+			err := dm.mountRootfs(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should proceed with remount even when unmounting the stale mount fails", func() {
+			cfg.MlxDriversMount = "/run/mellanox/drivers"
+			cfg.SharedKernelHeadersDir = "/usr/src/"
+			dm = New(constants.DriverContainerModePrecompiled, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-runbindable", "/sys").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--make-private", "/sys").Return("", "", nil)
+
+			mountOutput := "/dev/sda1 on / type ext4 (rw,relatime)\n/usr/src/ on /run/mellanox/drivers/usr/src/ type none (rw,relatime)\n"
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "-l").Return(mountOutput, "", nil)
+
+			// Unmount failure should be logged and not block the remount
+			cmdMock.EXPECT().RunCommand(ctx, "umount", "-l", "-R", "/run/mellanox/drivers/usr/src").
+				Return("", "target is busy", errors.New("umount failed"))
+
+			osMock.EXPECT().MkdirAll("/run/mellanox/drivers/usr/src", os.FileMode(0o755)).Return(nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mount", "--rbind", "/usr/src/", "/run/mellanox/drivers/usr/src").Return("", "", nil)
 
 			err := dm.mountRootfs(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -4441,12 +4496,12 @@ var _ = Describe("Unload", func() {
 	)
 
 	var (
-		dm      *driverMgr
-		cmdMock *cmdMockPkg.Interface
+		dm       *driverMgr
+		cmdMock  *cmdMockPkg.Interface
 		hostMock *hostMockPkg.Interface
-		osMock  *wrappersMockPkg.OSWrapper
-		ctx     context.Context
-		cfg     config.Config
+		osMock   *wrappersMockPkg.OSWrapper
+		ctx      context.Context
+		cfg      config.Config
 	)
 
 	BeforeEach(func() {
@@ -4461,8 +4516,8 @@ var _ = Describe("Unload", func() {
 	setupDiscoverDKMS := func() {
 		mockEntry := mockDirEntry{name: "mlnx-ofa_kernel-5.9-" + moduleVersion, isDir: true}
 		osMock.EXPECT().ReadDir("/usr/src/").Return([]os.DirEntry{mockEntry}, nil)
-		osMock.EXPECT().Stat("/usr/src/mlnx-ofa_kernel-5.9-" + moduleVersion + "/dkms.conf").Return(nil, nil)
-		osMock.EXPECT().ReadFile("/usr/src/mlnx-ofa_kernel-5.9-" + moduleVersion + "/dkms.conf").
+		osMock.EXPECT().Stat("/usr/src/mlnx-ofa_kernel-5.9-"+moduleVersion+"/dkms.conf").Return(nil, nil)
+		osMock.EXPECT().ReadFile("/usr/src/mlnx-ofa_kernel-5.9-"+moduleVersion+"/dkms.conf").
 			Return([]byte("PACKAGE_NAME=\""+moduleName+"\"\nPACKAGE_VERSION=\""+moduleVersion+"\"\n"), nil)
 	}
 

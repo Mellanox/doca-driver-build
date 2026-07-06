@@ -446,21 +446,32 @@ func (d *driverMgr) mountRootfs(ctx context.Context) error {
 		return fmt.Errorf("failed to make /sys private: %w, stderr: %s", err, stderr)
 	}
 
-	// Check if mount already exists
+	mountPath := filepath.Join(d.cfg.MlxDriversMount, d.cfg.SharedKernelHeadersDir)
+
+	// A mount at mountPath may already be present from a previous container instance
+	// that terminated without running its cleanup handler (e.g. killed rather than
+	// gracefully stopped). Such a mount is bound to that old container's filesystem
+	// snapshot, not the driver this process just (re)built, so it must never be
+	// trusted as-is: unmount it (best effort) and always recreate it fresh below,
+	// rather than skipping the mount when one is merely present.
 	stdout, _, err := d.cmd.RunCommand(ctx, "mount", "-l")
 	if err == nil {
 		// Check if mellanox mount exists (excluding tmpfs)
 		lines := strings.Split(stdout, "\n")
 		for _, line := range lines {
 			if strings.Contains(line, "mellanox") && !strings.Contains(line, "tmpfs") {
-				log.V(1).Info("Mount already exists", "mount", d.cfg.MlxDriversMount)
-				return nil
+				log.V(1).Info("Found existing mount, unmounting before remount to avoid stale content",
+					"mount", d.cfg.MlxDriversMount)
+				if _, umountStderr, umountErr := d.cmd.RunCommand(ctx, "umount", "-l", "-R", mountPath); umountErr != nil {
+					log.V(1).Info("Failed to unmount existing mount, proceeding to remount anyway",
+						"error", umountErr, "stderr", umountStderr)
+				}
+				break
 			}
 		}
 	}
 
 	// Create mount directory
-	mountPath := filepath.Join(d.cfg.MlxDriversMount, d.cfg.SharedKernelHeadersDir)
 	if err := d.os.MkdirAll(mountPath, 0o755); err != nil {
 		return fmt.Errorf("failed to create mount directory %s: %w", mountPath, err)
 	}
