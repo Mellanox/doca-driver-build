@@ -639,6 +639,161 @@ var _ = Describe("Driver", func() {
 		})
 	})
 
+	Context("getDistroFlagsForOS", func() {
+		BeforeEach(func() {
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+		})
+
+		It("should pass explicit distro for RedHat", func() {
+			versionInfo := &host.RedhatVersionInfo{
+				MajorVersion:     9,
+				FullVersion:      "9.8",
+				OpenShiftVersion: "",
+			}
+			hostMock.EXPECT().GetRedHatVersionInfo(ctx).Return(versionInfo, nil)
+
+			flags, err := dm.getDistroFlagsForOS(ctx, constants.OSTypeRedHat)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(flags).To(Equal([]string{"--distro", "rhel9.8"}))
+		})
+
+		It("should not pass explicit distro for OpenShift", func() {
+			flags, err := dm.getDistroFlagsForOS(ctx, constants.OSTypeOpenShift)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(flags).To(BeEmpty())
+		})
+
+		It("should return RedHat version errors", func() {
+			expectedError := errors.New("failed to parse version")
+			hostMock.EXPECT().GetRedHatVersionInfo(ctx).Return(nil, expectedError)
+
+			flags, err := dm.getDistroFlagsForOS(ctx, constants.OSTypeRedHat)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to get RedHat version info for driver build"))
+			Expect(flags).To(BeNil())
+		})
+	})
+
+	Context("ensureRedHatHostModuleTree", func() {
+		const kernelVersion = "5.14.0-687.5.3.el9_8.x86_64"
+
+		var (
+			ofedTree       string
+			hostModulesDir string
+			hostExtraDir   string
+			hostOfedTree   string
+		)
+
+		BeforeEach(func() {
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+			ofedTree = filepath.Join("/lib/modules", kernelVersion, "extra", "mlnx-ofa_kernel")
+			hostModulesDir = filepath.Join("/host/lib/modules", kernelVersion)
+			hostExtraDir = filepath.Join(hostModulesDir, "extra")
+			hostOfedTree = filepath.Join(hostExtraDir, "mlnx-ofa_kernel")
+		})
+
+		It("should skip non-RedHat systems", func() {
+			err := dm.ensureRedHatHostModuleTree(ctx, kernelVersion, constants.OSTypeOpenShift)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should skip when the container OFED tree is missing", func() {
+			osMock.EXPECT().Stat(ofedTree).Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat(hostOfedTree).Return(nil, os.ErrNotExist)
+
+			err := dm.ensureRedHatHostModuleTree(ctx, kernelVersion, constants.OSTypeRedHat)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should restore the symlink when the container OFED tree is missing but the host tree exists", func() {
+			tmpOfedTree := ofedTree + ".tmp"
+			osMock.EXPECT().Stat(ofedTree).Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat(hostOfedTree).Return(nil, nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mkdir", "-p", filepath.Dir(ofedTree)).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "rm", "-rf", tmpOfedTree).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "ln", "-s", hostOfedTree, tmpOfedTree).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "rm", "-rf", ofedTree).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mv", "-T", tmpOfedTree, ofedTree).Return("", "", nil)
+
+			err := dm.ensureRedHatHostModuleTree(ctx, kernelVersion, constants.OSTypeRedHat)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should skip when the host module tree is missing", func() {
+			osMock.EXPECT().Stat(ofedTree).Return(nil, nil)
+			osMock.EXPECT().Stat(hostModulesDir).Return(nil, os.ErrNotExist)
+
+			err := dm.ensureRedHatHostModuleTree(ctx, kernelVersion, constants.OSTypeRedHat)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should skip when the OFED tree already resolves to the host tree", func() {
+			osMock.EXPECT().Stat(ofedTree).Return(nil, nil)
+			osMock.EXPECT().Stat(hostModulesDir).Return(nil, nil)
+			cmdMock.EXPECT().RunCommand(ctx, "readlink", "-f", ofedTree).Return(hostOfedTree+"\n", "", nil)
+
+			err := dm.ensureRedHatHostModuleTree(ctx, kernelVersion, constants.OSTypeRedHat)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should copy, relabel, and link the OFED tree through the host module tree", func() {
+			tmpOfedTree := ofedTree + ".tmp"
+			osMock.EXPECT().Stat(ofedTree).Return(nil, nil)
+			osMock.EXPECT().Stat(hostModulesDir).Return(nil, nil)
+			cmdMock.EXPECT().RunCommand(ctx, "readlink", "-f", ofedTree).Return(ofedTree+"\n", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mkdir", "-p", hostExtraDir).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "rm", "-rf", hostOfedTree).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "-a", ofedTree, hostExtraDir+"/").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "chcon", "-R", "-t", "modules_object_t", hostOfedTree).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "depmod", "-b", "/host", kernelVersion).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mkdir", "-p", filepath.Dir(ofedTree)).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "rm", "-rf", tmpOfedTree).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "ln", "-s", hostOfedTree, tmpOfedTree).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "rm", "-rf", ofedTree).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mv", "-T", tmpOfedTree, ofedTree).Return("", "", nil)
+
+			err := dm.ensureRedHatHostModuleTree(ctx, kernelVersion, constants.OSTypeRedHat)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should continue when relabeling fails", func() {
+			tmpOfedTree := ofedTree + ".tmp"
+			expectedError := errors.New("chcon failed")
+			osMock.EXPECT().Stat(ofedTree).Return(nil, nil)
+			osMock.EXPECT().Stat(hostModulesDir).Return(nil, nil)
+			cmdMock.EXPECT().RunCommand(ctx, "readlink", "-f", ofedTree).Return(ofedTree+"\n", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mkdir", "-p", hostExtraDir).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "rm", "-rf", hostOfedTree).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "-a", ofedTree, hostExtraDir+"/").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "chcon", "-R", "-t", "modules_object_t", hostOfedTree).Return("", "", expectedError)
+			cmdMock.EXPECT().RunCommand(ctx, "depmod", "-b", "/host", kernelVersion).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mkdir", "-p", filepath.Dir(ofedTree)).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "rm", "-rf", tmpOfedTree).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "ln", "-s", hostOfedTree, tmpOfedTree).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "rm", "-rf", ofedTree).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mv", "-T", tmpOfedTree, ofedTree).Return("", "", nil)
+
+			err := dm.ensureRedHatHostModuleTree(ctx, kernelVersion, constants.OSTypeRedHat)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should return an error when host depmod fails", func() {
+			expectedError := errors.New("depmod failed")
+			osMock.EXPECT().Stat(ofedTree).Return(nil, nil)
+			osMock.EXPECT().Stat(hostModulesDir).Return(nil, nil)
+			cmdMock.EXPECT().RunCommand(ctx, "readlink", "-f", ofedTree).Return(ofedTree+"\n", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mkdir", "-p", hostExtraDir).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "rm", "-rf", hostOfedTree).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "-a", ofedTree, hostExtraDir+"/").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "chcon", "-R", "-t", "modules_object_t", hostOfedTree).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "depmod", "-b", "/host", kernelVersion).Return("", "", expectedError)
+
+			err := dm.ensureRedHatHostModuleTree(ctx, kernelVersion, constants.OSTypeRedHat)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to run host depmod"))
+		})
+	})
+
 	Context("getAppendDriverBuildFlags", func() {
 		BeforeEach(func() {
 			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
@@ -1254,7 +1409,7 @@ var _ = Describe("Driver", func() {
 				FullVersion:      "8.4",
 				OpenShiftVersion: "",
 			}
-			hostMock.EXPECT().GetRedHatVersionInfo(ctx).Return(versionInfo, nil)
+			hostMock.EXPECT().GetRedHatVersionInfo(ctx).Return(versionInfo, nil).Twice()
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "dnf", "config-manager", "--set-enabled", "rhel-8-for-x86_64-baseos-eus-rpms").Return("", "", nil)
 			osMock.EXPECT().Stat("/lib/modules/5.4.0-42/build").Return(nil, os.ErrNotExist)
@@ -1273,6 +1428,7 @@ var _ = Describe("Driver", func() {
 				"--with-mlnx-tools", "--without-knem", "--without-iser",
 				"--without-isert", "--without-srp", "--without-kernel-mft",
 				"--without-mlnx-rdma-rxe", "--disable-kmp", "--without-dkms",
+				"--distro", "rhel8.4",
 				"--without-xpmem", "--without-xpmem-modules",
 				"--without-mlnx-nfsrdma",
 				"--without-mlnx-nvme").Return("", "", nil)
@@ -1299,6 +1455,8 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "touch", "/lib/modules/5.4.0-42/modules.builtin").Return("", "", nil)
 			// Mock RedHat driver installation
 			cmdMock.EXPECT().RunCommand(ctx, "rpm", "-ivh", "--replacepkgs", "--nodeps", mock.Anything).Return("", "", nil)
+			osMock.EXPECT().Stat("/lib/modules/5.4.0-42/extra/mlnx-ofa_kernel").Return(nil, os.ErrNotExist)
+			osMock.EXPECT().Stat("/host/lib/modules/5.4.0-42/extra/mlnx-ofa_kernel").Return(nil, os.ErrNotExist)
 			cmdMock.EXPECT().RunCommand(ctx, "depmod", "5.4.0-42").Return("", "", nil)
 
 			err := dm.Build(ctx)
@@ -2349,6 +2507,31 @@ var _ = Describe("Driver", func() {
 			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("macsec", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "macsec").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_vdpa").Return("", "", errors.New("not found"))
+
+			err := dm.restartDriver(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should preload host inbox dependencies when mlx5_ib is not loaded yet", func() {
+			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx_compat 12288 0 - Live 0xffff\n"), nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx_compat").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("mlx5_core,mlx_compat,ib_core,ib_uverbs,macsec", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-b", "/host", "-n", "mlx5_core").Return("/host/lib/modules/6.12.0-211.31.1.el10_2.x86_64/extra/mlnx-ofa_kernel/drivers/net/ethernet/mellanox/mlx5/core/mlx5_core.ko", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-b", "/host", "-n", "mlx_compat").Return("/host/lib/modules/6.12.0-211.31.1.el10_2.x86_64/extra/mlnx-ofa_kernel/compat/mlx_compat.ko", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-b", "/host", "-n", "ib_core").Return("/host/lib/modules/6.12.0-211.31.1.el10_2.x86_64/extra/mlnx-ofa_kernel/drivers/infiniband/core/ib_core.ko", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-b", "/host", "-n", "ib_uverbs").Return("/host/lib/modules/6.12.0-211.31.1.el10_2.x86_64/extra/mlnx-ofa_kernel/drivers/infiniband/core/ib_uverbs.ko", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-b", "/host", "-n", "macsec").Return("/host/lib/modules/6.12.0-211.31.1.el10_2.x86_64/kernel/drivers/net/macsec.ko.xz", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "macsec").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_core").Return("tls,mlx_compat", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-b", "/host", "-n", "tls").Return("/host/lib/modules/6.12.0-211.31.1.el10_2.x86_64/kernel/net/tls/tls.ko.xz", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "tls").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-b", "/host", "-n", "mlx_compat").Return("/host/lib/modules/6.12.0-211.31.1.el10_2.x86_64/extra/mlnx-ofa_kernel/compat/mlx_compat.ko", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "ib_core").Return("mlx_compat", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-b", "/host", "-n", "mlx_compat").Return("/host/lib/modules/6.12.0-211.31.1.el10_2.x86_64/extra/mlnx-ofa_kernel/compat/mlx_compat.ko", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
