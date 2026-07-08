@@ -43,6 +43,9 @@ type RedhatVersionInfo struct {
 	MajorVersion int
 	// FullVersion is the complete version string (e.g., "8.4", "9.2")
 	FullVersion string
+	// RHELVersion is the underlying RHEL version when it is distinct from
+	// FullVersion, such as RHCOS hosts where FullVersion is OpenShift 4.x.
+	RHELVersion string
 	// OpenShiftVersion is the OpenShift version if running on RHCOS (e.g., "4.9")
 	// If empty, this is not RHCOS
 	OpenShiftVersion string
@@ -290,6 +293,7 @@ func (h *host) buildRedHatVersionCache() {
 			versionInfo.OpenShiftVersion = constants.DefaultOpenShiftVersion
 		}
 		versionInfo.FullVersion = versionInfo.OpenShiftVersion
+		versionInfo.RHELVersion = rhelVersion
 	} else {
 		// For RHEL and other RedHat-based distros (CentOS, Fedora, etc.)
 		versionInfo.FullVersion = rhelVersion
@@ -304,6 +308,7 @@ func (h *host) buildRedHatVersionCache() {
 		if openshiftVersion != "" {
 			versionInfo.OpenShiftVersion = openshiftVersion
 		}
+		versionInfo.RHELVersion = versionInfo.FullVersion
 	}
 
 	// Extract major version from full version
