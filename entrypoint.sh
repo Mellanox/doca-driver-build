@@ -398,6 +398,7 @@ function build_driver_from_src() {
     os_str="redhat"
     package_type="rpm"
     append_driver_build_flags="$append_driver_build_flags --disable-kmp"
+    local distro_flags=""
 
     # Conditionally add --without-dkms based on USE_DKMS
     if [[ "${USE_DKMS}" != true ]]; then
@@ -420,12 +421,14 @@ function build_driver_from_src() {
         package_type="rpm"
         append_driver_build_flags="$append_driver_build_flags --disable-kmp"
         append_driver_build_flags="$append_driver_build_flags --kernel-sources /lib/modules/${FULL_KVER}/build"
+    elif [[ -z "${OPENSHIFT_VERSION}" ]]; then
+        distro_flags="--distro rhel${RHEL_VERSION}"
     fi
 
     append_driver_build_flags="$append_driver_build_flags $xpmem_flags"
 
     timestamp_print "Starting driver build"
-    exec_cmd "${NVIDIA_NIC_DRIVER_PATH}/install.pl --without-depcheck --kernel ${FULL_KVER} --kernel-only --build-only --with-mlnx-tools --without-knem${pkg_suffix} --without-iser${pkg_suffix} --without-isert${pkg_suffix} --without-srp${pkg_suffix} --without-kernel-mft${pkg_suffix} --without-mlnx-rdma-rxe${pkg_suffix} ${append_driver_build_flags}"
+    exec_cmd "${NVIDIA_NIC_DRIVER_PATH}/install.pl --without-depcheck --kernel ${FULL_KVER} --kernel-only --build-only --with-mlnx-tools --without-knem${pkg_suffix} --without-iser${pkg_suffix} --without-isert${pkg_suffix} --without-srp${pkg_suffix} --without-kernel-mft${pkg_suffix} --without-mlnx-rdma-rxe${pkg_suffix} ${append_driver_build_flags} ${distro_flags}"
 
     # If build from src triggered driver was not previously built for current kernel
     if [ ${reuse_driver_inventory} ]; then
@@ -577,6 +580,22 @@ function load_host_dependencies() {
             exec_cmd "modprobe -d /host $dep 2>/dev/null || true"
         done
     done
+
+    # openibd later invokes plain modprobe. Preload host inbox dependencies for
+    # OFED entry modules so dependencies such as macsec resolve from /host
+    # instead of the container-labeled /lib/modules bind.
+    if ! lsmod | awk 'NR>1 {print $1}' | grep -qx "mlx5_ib"; then
+        for mod in mlx5_ib mlx5_core ib_core; do
+            deps=$(modinfo -F depends "$mod" 2>/dev/null | tr ',' ' ')
+            for dep in $deps; do
+                dep_path=$(modinfo -b /host -n "$dep" 2>/dev/null || true)
+                if [[ -n "$dep_path" && "$dep_path" != *"/extra/mlnx-ofa_kernel/"* ]]; then
+                    debug_print "Loading host inbox dependency for $mod: $dep ($dep_path)"
+                    exec_cmd "modprobe -d /host $dep 2>/dev/null || true"
+                fi
+            done
+        done
+    fi
 }
 
 function restart_driver() {
@@ -1198,6 +1217,67 @@ function load_driver() {
     set_driver_readiness 1
 }
 
+function link_redhat_host_module_tree() {
+    local ofed_tree="$1"
+    local host_ofed_tree="$2"
+    local ofed_parent_dir="${ofed_tree%/*}"
+    local tmp_ofed_tree="${ofed_tree}.tmp"
+
+    exec_cmd "mkdir -p ${ofed_parent_dir}"
+    exec_cmd "rm -rf ${tmp_ofed_tree}"
+    exec_cmd "ln -s ${host_ofed_tree} ${tmp_ofed_tree}"
+    exec_cmd "rm -rf ${ofed_tree}"
+    exec_cmd "mv -T ${tmp_ofed_tree} ${ofed_tree}"
+}
+
+function ensure_redhat_host_module_tree() {
+    debug_print "Function: ${FUNCNAME[0]}"
+
+    # This path is only needed for plain RHEL hosts. SLES and OpenShift also
+    # use RPMs, but do not use this RHEL host module/SELinux layout here.
+    if ${IS_OS_UBUNTU} || ${IS_OS_SLES} || [[ ! -z "${OPENSHIFT_VERSION}" ]]; then
+        return
+    fi
+
+    local ofed_tree="/lib/modules/${FULL_KVER}/extra/mlnx-ofa_kernel"
+    local host_modules_dir="/host/lib/modules/${FULL_KVER}"
+    local host_extra_dir="${host_modules_dir}/extra"
+    local host_ofed_tree="${host_extra_dir}/mlnx-ofa_kernel"
+
+    if [[ ! -d "${ofed_tree}" ]]; then
+        if [[ -d "${host_ofed_tree}" ]]; then
+            debug_print "Container OFED module tree missing, restoring host module tree symlink: ${ofed_tree} -> ${host_ofed_tree}"
+            link_redhat_host_module_tree "${ofed_tree}" "${host_ofed_tree}"
+            return
+        fi
+        debug_print "OFED module tree not found, skipping host module tree setup: ${ofed_tree}"
+        return
+    fi
+
+    if [[ ! -d "${host_modules_dir}" ]]; then
+        debug_print "Host kernel module directory not found, skipping host module tree setup: ${host_modules_dir}"
+        return
+    fi
+
+    if [[ "$(readlink -f "${ofed_tree}" 2>/dev/null)" == "${host_ofed_tree}" ]]; then
+        debug_print "OFED module tree already points to host module tree: ${host_ofed_tree}"
+        return
+    fi
+
+    debug_print "Preparing host OFED module tree: ${ofed_tree} -> ${host_ofed_tree}"
+    exec_cmd "mkdir -p ${host_extra_dir}"
+    exec_cmd "rm -rf ${host_ofed_tree}"
+    exec_cmd "cp -a ${ofed_tree} ${host_extra_dir}/"
+
+    if ! chcon -R -t modules_object_t "${host_ofed_tree}"; then
+        debug_print "Failed to label host OFED module tree, continuing: ${host_ofed_tree}"
+    fi
+
+    exec_cmd "depmod -b /host ${FULL_KVER}"
+
+    link_redhat_host_module_tree "${ofed_tree}" "${host_ofed_tree}"
+}
+
 function install_driver() {
     debug_print "Function: ${FUNCNAME[0]}"
 
@@ -1213,6 +1293,7 @@ function install_driver() {
         exec_cmd "apt-get install -y ${driver_inventory_path}/*.deb"
     else
         exec_cmd "rpm -ivh --replacepkgs --nodeps ${driver_inventory_path}/*.rpm"
+        ensure_redhat_host_module_tree
     fi
 
     # Introduce installed kernel modules
