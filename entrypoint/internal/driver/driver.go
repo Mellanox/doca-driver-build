@@ -44,6 +44,10 @@ const (
 	dnfCmd         = "dnf"
 	dnfFlagQuiet   = "-q"
 	dnfFlagYes     = "-y"
+
+	moduleIBCore   = "ib_core"
+	moduleMlx5Core = "mlx5_core"
+	moduleMlx5IB   = "mlx5_ib"
 )
 
 // New creates a new instance of the driver manager
@@ -274,7 +278,7 @@ func (d *driverMgr) Load(ctx context.Context) (bool, error) {
 	log.V(1).Info("Loading driver modules")
 
 	// Define modules to check
-	modulesToCheck := []string{"mlx5_core", "mlx5_ib", "ib_core"}
+	modulesToCheck := []string{moduleMlx5Core, moduleMlx5IB, moduleIBCore}
 
 	// Add NFS RDMA modules if enabled
 	if d.cfg.EnableNfsRdma {
@@ -1136,6 +1140,12 @@ func (d *driverMgr) buildDriverFromSource(ctx context.Context, driverPath, kerne
 	// Add OS-specific flags
 	args = append(args, buildFlags...)
 
+	distroFlags, err := d.getDistroFlagsForOS(ctx, osType)
+	if err != nil {
+		return err
+	}
+	args = append(args, distroFlags...)
+
 	// Exclude xpmem for all OSes; when DKMS is enabled, explicitly exclude xpmem-dkms
 	args = append(args, "--without-xpmem", "--without-xpmem-modules")
 	if d.cfg.UseDKMS {
@@ -1146,7 +1156,7 @@ func (d *driverMgr) buildDriverFromSource(ctx context.Context, driverPath, kerne
 	args = append(args, appendFlags...)
 
 	// Execute the build
-	_, _, err := d.cmd.RunCommand(ctx, args[0], args[1:]...)
+	_, _, err = d.cmd.RunCommand(ctx, args[0], args[1:]...)
 	if err != nil {
 		return fmt.Errorf("failed to build driver from source: %w", err)
 	}
@@ -1188,6 +1198,21 @@ func (d *driverMgr) getBuildFlagsForOS(osType, kernelVersion string) []string {
 	default:
 		return []string{}
 	}
+}
+
+// getDistroFlagsForOS returns explicit install.pl distro flags when runtime
+// auto-detection is known to be less reliable than host OS metadata.
+func (d *driverMgr) getDistroFlagsForOS(ctx context.Context, osType string) ([]string, error) {
+	if osType != constants.OSTypeRedHat {
+		return []string{}, nil
+	}
+
+	versionInfo, err := d.host.GetRedHatVersionInfo(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get RedHat version info for driver build: %w", err)
+	}
+
+	return []string{"--distro", "rhel" + versionInfo.FullVersion}, nil
 }
 
 // copyBuildArtifacts copies build artifacts to inventory directory
@@ -1389,7 +1414,7 @@ func (d *driverMgr) installDriver(ctx context.Context, inventoryPath, kernelVers
 	case constants.OSTypeUbuntu:
 		return d.installUbuntuDriver(ctx, inventoryPath, kernelVersion)
 	case constants.OSTypeSLES, constants.OSTypeRedHat, constants.OSTypeOpenShift:
-		return d.installRedHatDriver(ctx, inventoryPath, kernelVersion)
+		return d.installRedHatDriver(ctx, inventoryPath, kernelVersion, osType)
 	default:
 		return fmt.Errorf("unsupported OS type for driver installation: %s", osType)
 	}
@@ -1437,7 +1462,7 @@ func (d *driverMgr) installUbuntuDriver(ctx context.Context, inventoryPath, kern
 }
 
 // installRedHatDriver installs driver packages on RedHat-based systems
-func (d *driverMgr) installRedHatDriver(ctx context.Context, inventoryPath, kernelVersion string) error {
+func (d *driverMgr) installRedHatDriver(ctx context.Context, inventoryPath, kernelVersion, osType string) error {
 	log := logr.FromContextOrDiscard(ctx)
 
 	log.V(1).Info("Installing RedHat driver packages", "path", inventoryPath)
@@ -1448,6 +1473,10 @@ func (d *driverMgr) installRedHatDriver(ctx context.Context, inventoryPath, kern
 		return fmt.Errorf("failed to install RedHat driver packages: %w", err)
 	}
 
+	if err := d.ensureRedHatHostModuleTree(ctx, kernelVersion, osType); err != nil {
+		return err
+	}
+
 	// Run depmod to introduce installed kernel modules
 	_, _, err = d.cmd.RunCommand(ctx, "depmod", kernelVersion)
 	if err != nil {
@@ -1455,6 +1484,96 @@ func (d *driverMgr) installRedHatDriver(ctx context.Context, inventoryPath, kern
 	}
 
 	log.V(1).Info("RedHat driver packages installed successfully")
+	return nil
+}
+
+// ensureRedHatHostModuleTree moves OFED kernel modules to the host module tree
+// on RHEL nodes. Kernel modules are host state, and resolving the OFED tree
+// through /host also gives SELinux-enforcing nodes a labelable module path.
+func (d *driverMgr) ensureRedHatHostModuleTree(ctx context.Context, kernelVersion, osType string) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	if osType != constants.OSTypeRedHat {
+		return nil
+	}
+
+	ofedTree := filepath.Join("/lib/modules", kernelVersion, "extra", "mlnx-ofa_kernel")
+	hostModulesDir := filepath.Join("/host/lib/modules", kernelVersion)
+	hostExtraDir := filepath.Join(hostModulesDir, "extra")
+	hostOfedTree := filepath.Join(hostExtraDir, "mlnx-ofa_kernel")
+
+	if _, err := d.os.Stat(ofedTree); err != nil {
+		if _, hostErr := d.os.Stat(hostOfedTree); hostErr == nil {
+			log.V(1).Info("Container OFED module tree missing, restoring host module tree symlink", "path", ofedTree, "target", hostOfedTree)
+			return d.linkContainerOFEDTree(ctx, ofedTree, hostOfedTree)
+		}
+		log.V(1).Info("OFED module tree not found, skipping host module tree setup", "path", ofedTree, "error", err)
+		return nil
+	}
+
+	if _, err := d.os.Stat(hostModulesDir); err != nil {
+		log.V(1).Info("Host kernel module directory not found, skipping host module tree setup", "path", hostModulesDir, "error", err)
+		return nil
+	}
+
+	stdout, _, err := d.cmd.RunCommand(ctx, "readlink", "-f", ofedTree)
+	if err == nil && strings.TrimSpace(stdout) == hostOfedTree {
+		log.V(1).Info("OFED module tree already points to host module tree", "path", ofedTree, "target", hostOfedTree)
+		return nil
+	}
+
+	log.V(1).Info("Preparing host OFED module tree for SELinux module loading", "from", ofedTree, "to", hostOfedTree)
+
+	if _, _, err := d.cmd.RunCommand(ctx, "mkdir", "-p", hostExtraDir); err != nil {
+		return fmt.Errorf("failed to create host module extra directory: %w", err)
+	}
+
+	if _, _, err := d.cmd.RunCommand(ctx, "rm", "-rf", hostOfedTree); err != nil {
+		return fmt.Errorf("failed to remove old host OFED module tree: %w", err)
+	}
+
+	if _, _, err := d.cmd.RunCommand(ctx, "cp", "-a", ofedTree, hostExtraDir+"/"); err != nil {
+		return fmt.Errorf("failed to copy OFED module tree to host: %w", err)
+	}
+
+	if _, _, err := d.cmd.RunCommand(ctx, "chcon", "-R", "-t", "modules_object_t", hostOfedTree); err != nil {
+		log.V(1).Info("Failed to label host OFED module tree, continuing", "path", hostOfedTree, "error", err)
+	}
+
+	if _, _, err := d.cmd.RunCommand(ctx, "depmod", "-b", "/host", kernelVersion); err != nil {
+		return fmt.Errorf("failed to run host depmod: %w", err)
+	}
+
+	if err := d.linkContainerOFEDTree(ctx, ofedTree, hostOfedTree); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (d *driverMgr) linkContainerOFEDTree(ctx context.Context, ofedTree, hostOfedTree string) error {
+	tmpOfedTree := ofedTree + ".tmp"
+
+	if _, _, err := d.cmd.RunCommand(ctx, "mkdir", "-p", filepath.Dir(ofedTree)); err != nil {
+		return fmt.Errorf("failed to create container OFED module parent directory: %w", err)
+	}
+
+	if _, _, err := d.cmd.RunCommand(ctx, "rm", "-rf", tmpOfedTree); err != nil {
+		return fmt.Errorf("failed to remove stale container OFED module tree symlink: %w", err)
+	}
+
+	if _, _, err := d.cmd.RunCommand(ctx, "ln", "-s", hostOfedTree, tmpOfedTree); err != nil {
+		return fmt.Errorf("failed to create temporary container OFED module tree symlink: %w", err)
+	}
+
+	if _, _, err := d.cmd.RunCommand(ctx, "rm", "-rf", ofedTree); err != nil {
+		return fmt.Errorf("failed to remove container OFED module tree: %w", err)
+	}
+
+	if _, _, err := d.cmd.RunCommand(ctx, "mv", "-T", tmpOfedTree, ofedTree); err != nil {
+		return fmt.Errorf("failed to link container OFED module tree to host: %w", err)
+	}
+
 	return nil
 }
 
@@ -1740,9 +1859,18 @@ func (d *driverMgr) loadHostDependencies(ctx context.Context) error {
 		return fmt.Errorf("failed to read /proc/modules: %w", err)
 	}
 
+	loadedModules := make(map[string]struct{})
 	for _, line := range strings.Split(string(content), "\n") {
 		if fields := strings.Fields(line); len(fields) > 0 {
-			d.loadModuleDependencies(ctx, fields[0])
+			module := fields[0]
+			loadedModules[module] = struct{}{}
+			d.loadModuleDependencies(ctx, module)
+		}
+	}
+
+	if _, loaded := loadedModules[moduleMlx5IB]; !loaded {
+		for _, module := range []string{moduleMlx5IB, moduleMlx5Core, moduleIBCore} {
+			d.loadModuleHostInboxDependencies(ctx, module)
 		}
 	}
 	return nil
@@ -1760,6 +1888,37 @@ func (d *driverMgr) loadModuleDependencies(ctx context.Context, modName string) 
 			logr.FromContextOrDiscard(ctx).V(1).Info("Loading dependency", "dependency", dep)
 			_, _, _ = d.cmd.RunCommand(ctx, "modprobe", "-d", "/host", dep)
 		}
+	}
+}
+
+// loadModuleHostInboxDependencies preloads non-OFED dependencies through the
+// host module tree. This prevents plain modprobe calls in openibd from resolving
+// host inbox dependencies through the container-labeled /lib/modules bind.
+func (d *driverMgr) loadModuleHostInboxDependencies(ctx context.Context, modName string) {
+	log := logr.FromContextOrDiscard(ctx)
+
+	output, _, err := d.cmd.RunCommand(ctx, "modinfo", "-F", "depends", modName)
+	if err != nil {
+		return
+	}
+
+	for _, dep := range strings.Split(output, ",") {
+		dep = strings.TrimSpace(dep)
+		if dep == "" {
+			continue
+		}
+
+		hostPath, _, err := d.cmd.RunCommand(ctx, "modinfo", "-b", "/host", "-n", dep)
+		if err != nil {
+			continue
+		}
+		hostPath = strings.TrimSpace(hostPath)
+		if hostPath == "" || strings.Contains(hostPath, "/extra/mlnx-ofa_kernel/") {
+			continue
+		}
+
+		log.V(1).Info("Loading host inbox dependency", "module", modName, "dependency", dep, "path", hostPath)
+		_, _, _ = d.cmd.RunCommand(ctx, "modprobe", "-d", "/host", dep)
 	}
 }
 
@@ -1853,7 +2012,7 @@ func (d *driverMgr) printLoadedDriverVersion(ctx context.Context) error {
 	}
 
 	// Check if mlx5_core is loaded
-	if _, exists := loadedModules["mlx5_core"]; !exists {
+	if _, exists := loadedModules[moduleMlx5Core]; !exists {
 		log.V(1).Info("mlx5_core module not loaded")
 		return nil
 	}
