@@ -44,6 +44,14 @@ dynamically_compiled:
   archs:
   - amd64
   - arm64
+- os: rhel10.2
+  archs:
+  - amd64
+  - arm64
+- os: rhel9.8
+  archs:
+  - amd64
+  - arm64
 - os: rhel10.0
   archs:
   - amd64
