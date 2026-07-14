@@ -18,6 +18,8 @@
 package config
 
 import (
+	"os"
+
 	"github.com/caarlos0/env/v11"
 
 	"github.com/Mellanox/doca-driver-build/entrypoint/pkg/mofedmodules"
@@ -53,6 +55,7 @@ type Config struct {
 
 	OfedBlacklistModulesFile string   `env:"OFED_BLACKLIST_MODULES_FILE" envDefault:"/host/etc/modprobe.d/blacklist-ofed-modules.conf"`
 	OfedBlacklistModules     []string `env:"OFED_BLACKLIST_MODULES"      envDefault:"mlx5_core:mlx5_ib:ib_umad:ib_uverbs:ib_ipoib:rdma_cm:rdma_ucm:ib_core:ib_cm" envSeparator:":"`
+	Mlx5AuxiliaryModules     []string `env:"MLX5_AUXILIARY_MODULES"      envSeparator:" "`
 	// StorageModules defaults to mofedmodules.DefaultStorageModules when unset; see GetConfig.
 	StorageModules []string `env:"STORAGE_MODULES" envSeparator:" "`
 	// ThirdPartyRDMAModules defaults to mofedmodules.DefaultThirdPartyRDMAModules when unset; see GetConfig.
@@ -76,9 +79,11 @@ type Config struct {
 	BindDelaySec        int    `env:"BIND_DELAY_SEC"          envDefault:"4"`
 }
 
+var DefaultMlx5AuxiliaryModules = []string{"mlx5_vdpa", "mlx5_fwctl", "mlx5_dpll"}
+
 // GetConfig parses environment variables and returns a Config struct.
-// When STORAGE_MODULES or THIRD_PARTY_RDMA_MODULES is unset, the corresponding
-// slice is populated from the canonical defaults in the mofedmodules package.
+// When module-list environment variables are unset, the corresponding slices
+// are populated from the canonical defaults.
 func GetConfig() (Config, error) {
 	var cfg Config
 	if err := env.Parse(&cfg); err != nil {
@@ -89,6 +94,9 @@ func GetConfig() (Config, error) {
 	}
 	if len(cfg.ThirdPartyRDMAModules) == 0 {
 		cfg.ThirdPartyRDMAModules = append(cfg.ThirdPartyRDMAModules, mofedmodules.DefaultThirdPartyRDMAModules...)
+	}
+	if _, configured := os.LookupEnv("MLX5_AUXILIARY_MODULES"); !configured && len(cfg.Mlx5AuxiliaryModules) == 0 {
+		cfg.Mlx5AuxiliaryModules = append(cfg.Mlx5AuxiliaryModules, DefaultMlx5AuxiliaryModules...)
 	}
 	return cfg, nil
 }

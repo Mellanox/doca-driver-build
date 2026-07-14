@@ -2140,7 +2140,6 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_vdpa").Return("", "", errors.New("not found"))
 
 			// Mock printLoadedDriverVersion
 			hostMock.EXPECT().LsMod(ctx).Return(map[string]host.LoadedModule{
@@ -2197,7 +2196,6 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_vdpa").Return("", "", errors.New("not found"))
 
 			// Mock loadNfsRdma
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "rpcrdma").Return("", "", nil)
@@ -2308,7 +2306,6 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_vdpa").Return("", "", errors.New("not found"))
 
 			// Mock loadNfsRdma failure (should not cause Load to fail)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "rpcrdma").Return("", "", errors.New("rpcrdma load failed"))
@@ -2469,7 +2466,6 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_vdpa").Return("", "", errors.New("not found"))
 
 			err := dm.restartDriver(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -2483,7 +2479,6 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_vdpa").Return("", "", errors.New("not found"))
 
 			err := dm.restartDriver(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -2508,7 +2503,6 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_vdpa").Return("", "", errors.New("not found"))
 
 			err := dm.restartDriver(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -2521,18 +2515,21 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("aarch64", "", nil)
 			// pci-hyperv-intf should not be called for aarch64
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_vdpa").Return("", "", errors.New("not found"))
 
 			err := dm.restartDriver(ctx)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("should load mlx5_vdpa when available", func() {
+			cfg.Mlx5AuxiliaryModules = []string{"mlx5_vdpa"}
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
 			// Mock loadHostDependencies
 			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-r", "mlx5_vdpa").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_vdpa").Return("", "", nil) // Module exists
 			// Mock GetOSType for non-SLES case
@@ -2544,16 +2541,75 @@ var _ = Describe("Driver", func() {
 		})
 
 		It("should load mlx5_vdpa with --allow-unsupported on SLES", func() {
+			cfg.Mlx5AuxiliaryModules = []string{"mlx5_vdpa"}
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
 			// Mock loadHostDependencies
 			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-r", "mlx5_vdpa").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_vdpa").Return("", "", nil) // Module exists
 			// Mock GetOSType for SLES case
 			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeSLES, nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "--allow-unsupported", "mlx5_vdpa").Return("", "", nil)
+
+			err := dm.restartDriver(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should fail when a previously unloaded mlx5 auxiliary module cannot be reloaded", func() {
+			cfg.Mlx5AuxiliaryModules = []string{"mlx5_fwctl"}
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-r", "mlx5_fwctl").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeRedHat, nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_fwctl").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "mlx5_fwctl").Return("", "", errors.New("reload failed"))
+
+			err := dm.restartDriver(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to reload previously unloaded mlx5 auxiliary module mlx5_fwctl"))
+		})
+
+		It("should fail when a previously unloaded mlx5 auxiliary module is missing after restart", func() {
+			cfg.Mlx5AuxiliaryModules = []string{"mlx5_fwctl"}
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-r", "mlx5_fwctl").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeRedHat, nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_fwctl").Return("", "", errors.New("not found"))
+
+			err := dm.restartDriver(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to find previously unloaded mlx5 auxiliary module mlx5_fwctl after driver restart"))
+		})
+
+		It("should continue when a mlx5 auxiliary module that was not unloaded cannot be loaded", func() {
+			cfg.Mlx5AuxiliaryModules = []string{"mlx5_fwctl"}
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-r", "mlx5_fwctl").Return("", "", errors.New("not loaded"))
+			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
+			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeRedHat, nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_fwctl").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "mlx5_fwctl").Return("", "", errors.New("load failed"))
 
 			err := dm.restartDriver(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -2577,7 +2633,6 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", mock.Anything).Return("1", "", nil)
 
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_vdpa").Return("", "", errors.New("not found"))
 
 			err := dm.restartDriver(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -2606,7 +2661,6 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", errors.New("pci-hyperv-intf load failed"))
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_vdpa").Return("", "", errors.New("not found"))
 
 			err := dm.restartDriver(ctx)
 			Expect(err).NotTo(HaveOccurred())
@@ -4175,6 +4229,34 @@ var _ = Describe("Driver OFED Blacklist", func() {
 				}
 			}
 			Expect(blacklistLines).To(Equal(2))
+		})
+
+		It("should include mlx5 auxiliary modules in blacklist when configured", func() {
+			blacklistFile := filepath.Join(tempDir, "mlx5-auxiliary-blacklist.conf")
+			cfg := config.Config{
+				OfedBlacklistModulesFile: blacklistFile,
+				OfedBlacklistModules:     []string{"mlx5_core"},
+				Mlx5AuxiliaryModules:     []string{"mlx5_vdpa", "mlx5_fwctl", "mlx5_dpll"},
+			}
+
+			dm = &driverMgr{
+				cfg:  cfg,
+				cmd:  cmdMock,
+				host: hostMock,
+				os:   wrappers.NewOS(),
+			}
+
+			err := dm.generateOfedModulesBlacklist(ctx)
+			Expect(err).ToNot(HaveOccurred())
+
+			content, err := os.ReadFile(blacklistFile)
+			Expect(err).ToNot(HaveOccurred())
+
+			contentStr := string(content)
+			Expect(contentStr).To(ContainSubstring("# blacklist mlx5 auxiliary modules to prevent reload races"))
+			Expect(contentStr).To(ContainSubstring("blacklist mlx5_vdpa"))
+			Expect(contentStr).To(ContainSubstring("blacklist mlx5_fwctl"))
+			Expect(contentStr).To(ContainSubstring("blacklist mlx5_dpll"))
 		})
 	})
 
