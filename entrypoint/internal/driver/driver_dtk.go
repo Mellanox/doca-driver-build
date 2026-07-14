@@ -28,6 +28,7 @@ import (
 	"github.com/go-logr/logr"
 
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/constants"
+	hostutils "github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/host"
 )
 
 // buildDriverDTK orchestrates the driver build using the OpenShift Driver Toolkit (DTK)
@@ -51,7 +52,7 @@ func (d *driverMgr) buildDriverDTK(ctx context.Context, kernelVersion, inventory
 	if _, err := d.os.Stat(doneFlagPath); os.IsNotExist(err) {
 		log.Info("DTK build not done, setting up build")
 
-		if err := d.dtkSetupDriverBuild(ctx, dtkSharedDir, startFlagPath, doneFlagPath); err != nil {
+		if err := d.dtkSetupDriverBuild(ctx, dtkSharedDir, startFlagPath, doneFlagPath, kernelVersion); err != nil {
 			return fmt.Errorf("failed to setup DTK build: %w", err)
 		}
 
@@ -80,7 +81,7 @@ func sanitizeKernelVersion(version string) string {
 }
 
 // dtkSetupDriverBuild prepares the shared directory and script for DTK build
-func (d *driverMgr) dtkSetupDriverBuild(ctx context.Context, sharedDir, startFlagPath, doneFlagPath string) error {
+func (d *driverMgr) dtkSetupDriverBuild(ctx context.Context, sharedDir, startFlagPath, doneFlagPath, kernelVersion string) error {
 	log := logr.FromContextOrDiscard(ctx)
 	log.Info("Setting up DTK driver build", "sharedDir", sharedDir)
 
@@ -117,7 +118,10 @@ func (d *driverMgr) dtkSetupDriverBuild(ctx context.Context, sharedDir, startFla
 
 	// Create dtk.env file
 	// Get append flags
-	appendFlags := d.getAppendDriverBuildFlags(constants.OSTypeRedHat)
+	appendFlags, err := d.getDTKAppendDriverBuildFlags(ctx, kernelVersion)
+	if err != nil {
+		return err
+	}
 	appendFlagsStr := strings.Join(appendFlags, " ")
 
 	envContent := fmt.Sprintf(`export DTK_OCP_NIC_SHARED_DIR="%s"
@@ -151,6 +155,43 @@ export USE_DKMS="%v"
 	}
 
 	return nil
+}
+
+func (d *driverMgr) getDTKAppendDriverBuildFlags(ctx context.Context, kernelVersion string) ([]string, error) {
+	appendFlags := d.getAppendDriverBuildFlags(constants.OSTypeRedHat)
+	appendFlags = append(appendFlags, "--kernel", kernelVersion)
+
+	versionInfo, err := d.host.GetRedHatVersionInfo(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get RedHat version info for DTK driver build: %w", err)
+	}
+
+	distroVersion := redHatDistroVersion(versionInfo, kernelVersion)
+	if distroVersion == "" {
+		return nil, fmt.Errorf("failed to determine RHEL distro version for DTK driver build")
+	}
+
+	appendFlags = append(appendFlags, "--distro", "rhel"+distroVersion)
+	return appendFlags, nil
+}
+
+func redHatDistroVersion(versionInfo *hostutils.RedhatVersionInfo, kernelVersion string) string {
+	if versionInfo != nil {
+		if versionInfo.RHELVersion != "" {
+			return versionInfo.RHELVersion
+		}
+		if versionInfo.OpenShiftVersion == "" && versionInfo.FullVersion != "" {
+			return versionInfo.FullVersion
+		}
+	}
+
+	if matches := regexp.MustCompile(`\.el([0-9]+)_([0-9]+)`).FindStringSubmatch(kernelVersion); len(matches) == 3 {
+		return matches[1] + "." + matches[2]
+	}
+	if matches := regexp.MustCompile(`\.el([0-9]+)`).FindStringSubmatch(kernelVersion); len(matches) == 2 {
+		return matches[1]
+	}
+	return ""
 }
 
 // dtkWaitForBuild waits for the DTK build to complete
