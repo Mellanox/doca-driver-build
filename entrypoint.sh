@@ -384,6 +384,22 @@ function set_append_driver_build_flags() {
     fi
 }
 
+function get_rhel_version_for_dtk_build() {
+    debug_print "Function: ${FUNCNAME[0]}"
+
+    local dtk_rhel_version=""
+    dtk_rhel_version=$(sed -n 's/^RHEL_VERSION=//p' /host/etc/os-release 2>/dev/null | head -n1 | tr -d '"')
+
+    if [[ -z "${dtk_rhel_version}" ]]; then
+        dtk_rhel_version=$(echo "${FULL_KVER}" | sed -n 's/.*\.el\([0-9][0-9]*\)_\([0-9][0-9]*\).*/\1.\2/p')
+    fi
+    if [[ -z "${dtk_rhel_version}" ]]; then
+        dtk_rhel_version=$(echo "${FULL_KVER}" | sed -n 's/.*\.el\([0-9][0-9]*\).*/\1/p')
+    fi
+
+    echo "${dtk_rhel_version}"
+}
+
 function dtk_ocp_setup_driver_build() {
     debug_print "Function: ${FUNCNAME[0]}"
 
@@ -391,7 +407,16 @@ function dtk_ocp_setup_driver_build() {
     exec_cmd "mkdir -p ${DTK_OCP_NIC_SHARED_DIR}/"
     exec_cmd "cp -r ${NVIDIA_NIC_DRIVER_PATH} ${DTK_OCP_NIC_SHARED_DIR}/"
 
-    exec_cmd "sed -i '/append_driver_build_flags=/c\append_driver_build_flags=\"${append_driver_build_flags}\"' ${DTK_OCP_BUILD_SCRIPT}"
+    local dtk_rhel_version
+    dtk_rhel_version=$(get_rhel_version_for_dtk_build)
+    if [[ -z "${dtk_rhel_version}" ]]; then
+        timestamp_print "Failed to determine RHEL version for OCP DTK driver build"
+        exit_entryp 1
+    fi
+
+    local dtk_append_driver_build_flags="${append_driver_build_flags} --kernel ${FULL_KVER} --distro rhel${dtk_rhel_version}"
+
+    exec_cmd "sed -i '/append_driver_build_flags=/c\append_driver_build_flags=\"${dtk_append_driver_build_flags}\"' ${DTK_OCP_BUILD_SCRIPT}"
     exec_cmd "sed -i '/DTK_OCP_COMPILED_DRIVER_VER=/c\DTK_OCP_COMPILED_DRIVER_VER=${NVIDIA_NIC_DRIVER_VER}' ${DTK_OCP_BUILD_SCRIPT}"
     exec_cmd "sed -i '/DTK_OCP_START_COMPILE_FLAG=/c\DTK_OCP_START_COMPILE_FLAG=${DTK_OCP_START_COMPILE_FLAG}' ${DTK_OCP_BUILD_SCRIPT}"
     exec_cmd "sed -i '/DTK_OCP_DONE_COMPILE_FLAG=/c\DTK_OCP_DONE_COMPILE_FLAG=${DTK_OCP_DONE_COMPILE_FLAG}' ${DTK_OCP_BUILD_SCRIPT}"

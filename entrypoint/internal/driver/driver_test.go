@@ -4513,13 +4513,15 @@ var _ = Describe("Driver OFED Blacklist", func() {
 
 var _ = Describe("Driver DTK setup", func() {
 	var (
-		cmdMock *cmdMockPkg.Interface
-		ctx     context.Context
-		tempDir string
+		cmdMock  *cmdMockPkg.Interface
+		hostMock *hostMockPkg.Interface
+		ctx      context.Context
+		tempDir  string
 	)
 
 	BeforeEach(func() {
 		cmdMock = cmdMockPkg.NewInterface(GinkgoT())
+		hostMock = hostMockPkg.NewInterface(GinkgoT())
 		ctx = context.Background()
 		tempDir = GinkgoT().TempDir()
 	})
@@ -4544,20 +4546,28 @@ var _ = Describe("Driver DTK setup", func() {
 				UseDKMS:             true,
 				EnableNfsRdma:       true,
 			}
-			dm := &driverMgr{cfg: cfg, cmd: cmdMock, os: wrappers.NewOS()}
+			dm := &driverMgr{cfg: cfg, cmd: cmdMock, host: hostMock, os: wrappers.NewOS()}
 
 			sharedDir := filepath.Join(tempDir, "dkms-true")
 			startFlagPath := filepath.Join(sharedDir, "dtk_start_compile")
 			doneFlagPath := filepath.Join(sharedDir, "dtk_done_compile_ver")
+			kernelVersion := "5.14.0-687.13.1.el9_8.x86_64"
 
 			mockCpCalls(dm, sharedDir)
+			hostMock.EXPECT().GetRedHatVersionInfo(ctx).Return(&host.RedhatVersionInfo{
+				MajorVersion:     4,
+				FullVersion:      "4.18",
+				RHELVersion:      "9.8",
+				OpenShiftVersion: "4.18",
+			}, nil)
 
-			err := dm.dtkSetupDriverBuild(ctx, sharedDir, startFlagPath, doneFlagPath)
+			err := dm.dtkSetupDriverBuild(ctx, sharedDir, startFlagPath, doneFlagPath, kernelVersion)
 			Expect(err).NotTo(HaveOccurred())
 
 			content, err := os.ReadFile(filepath.Join(sharedDir, "dtk.env"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(content)).To(ContainSubstring(`export USE_DKMS="true"`))
+			Expect(string(content)).To(ContainSubstring(`export APPEND_DRIVER_BUILD_FLAGS="--kernel 5.14.0-687.13.1.el9_8.x86_64 --distro rhel9.8"`))
 			// Sanity-check that other required fields are also present
 			Expect(string(content)).To(ContainSubstring(`export USE_NEW_ENTRYPOINT="true"`))
 			Expect(string(content)).To(ContainSubstring(`export NVIDIA_NIC_DRIVER_VER="26.04-0.5.3.0"`))
@@ -4570,20 +4580,37 @@ var _ = Describe("Driver DTK setup", func() {
 				UseDKMS:             false,
 				EnableNfsRdma:       true,
 			}
-			dm := &driverMgr{cfg: cfg, cmd: cmdMock, os: wrappers.NewOS()}
+			dm := &driverMgr{cfg: cfg, cmd: cmdMock, host: hostMock, os: wrappers.NewOS()}
 
 			sharedDir := filepath.Join(tempDir, "dkms-false")
 			startFlagPath := filepath.Join(sharedDir, "dtk_start_compile")
 			doneFlagPath := filepath.Join(sharedDir, "dtk_done_compile_ver")
+			kernelVersion := "5.14.0-687.13.1.el9_8.x86_64"
 
 			mockCpCalls(dm, sharedDir)
+			hostMock.EXPECT().GetRedHatVersionInfo(ctx).Return(&host.RedhatVersionInfo{
+				MajorVersion:     4,
+				FullVersion:      "4.18",
+				RHELVersion:      "9.8",
+				OpenShiftVersion: "4.18",
+			}, nil)
 
-			err := dm.dtkSetupDriverBuild(ctx, sharedDir, startFlagPath, doneFlagPath)
+			err := dm.dtkSetupDriverBuild(ctx, sharedDir, startFlagPath, doneFlagPath, kernelVersion)
 			Expect(err).NotTo(HaveOccurred())
 
 			content, err := os.ReadFile(filepath.Join(sharedDir, "dtk.env"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(content)).To(ContainSubstring(`export USE_DKMS="false"`))
+		})
+
+		It("should derive DTK distro version from kernel when RHCOS does not expose RHEL_VERSION", func() {
+			versionInfo := &host.RedhatVersionInfo{
+				MajorVersion:     4,
+				FullVersion:      "4.18",
+				OpenShiftVersion: "4.18",
+			}
+
+			Expect(redHatDistroVersion(versionInfo, "5.14.0-687.13.1.el9_8.x86_64")).To(Equal("9.8"))
 		})
 	})
 })

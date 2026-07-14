@@ -26,7 +26,7 @@ import (
 
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/constants"
 	cmd_mocks "github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/cmd/mocks"
- 	wrappers_mocks "github.com/Mellanox/doca-driver-build/entrypoint/internal/wrappers/mocks"
+	wrappers_mocks "github.com/Mellanox/doca-driver-build/entrypoint/internal/wrappers/mocks"
 )
 
 var _ = Describe("Host", func() {
@@ -36,7 +36,7 @@ var _ = Describe("Host", func() {
 		h       Interface
 		ctx     context.Context
 	)
-	
+
 	BeforeEach(func() {
 		cmdMock = cmd_mocks.NewInterface(GinkgoT())
 		osMock = wrappers_mocks.NewOSWrapper(GinkgoT())
@@ -746,6 +746,7 @@ PRETTY_NAME="Red Hat Enterprise Linux 9.2 (Plow)"`
 			Expect(err).ToNot(HaveOccurred())
 			Expect(versionInfo.MajorVersion).To(Equal(9))
 			Expect(versionInfo.FullVersion).To(Equal("9.2"))
+			Expect(versionInfo.RHELVersion).To(Equal("9.2"))
 			Expect(versionInfo.OpenShiftVersion).To(Equal(""))
 		})
 
@@ -765,6 +766,7 @@ PRETTY_NAME="Red Hat Enterprise Linux 8.4 (Ootpa)"`
 			Expect(err).ToNot(HaveOccurred())
 			Expect(versionInfo.MajorVersion).To(Equal(8))
 			Expect(versionInfo.FullVersion).To(Equal("8.4"))
+			Expect(versionInfo.RHELVersion).To(Equal("8.4"))
 			Expect(versionInfo.OpenShiftVersion).To(Equal(""))
 		})
 
@@ -859,6 +861,7 @@ OSTREE_VERSION="418.94.202506251005-0"`
 			Expect(err).ToNot(HaveOccurred())
 			Expect(versionInfo.MajorVersion).To(Equal(4))
 			Expect(versionInfo.FullVersion).To(Equal("4.18"))
+			Expect(versionInfo.RHELVersion).To(Equal("9.4"))
 			Expect(versionInfo.OpenShiftVersion).To(Equal("4.18"))
 		})
 
@@ -876,6 +879,7 @@ RHEL_VERSION="9.2.1"`
 			Expect(err).ToNot(HaveOccurred())
 			Expect(versionInfo.MajorVersion).To(Equal(9))
 			Expect(versionInfo.FullVersion).To(Equal("9.2.1")) // RHEL_VERSION takes precedence
+			Expect(versionInfo.RHELVersion).To(Equal("9.2.1"))
 			Expect(versionInfo.OpenShiftVersion).To(Equal(""))
 		})
 

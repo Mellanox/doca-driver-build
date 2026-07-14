@@ -32,7 +32,6 @@ import (
 	cmdMockPkg "github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/cmd/mocks"
 )
 
-
 func TestRunBuild(t *testing.T) {
 	log := logr.Discard()
 	tempDir := t.TempDir()
@@ -75,6 +74,7 @@ func TestRunBuild(t *testing.T) {
 	t.Run("should wait for start flag and run build without dkms", func(t *testing.T) {
 		cfgNoDKMS := cfg
 		cfgNoDKMS.UseDKMS = false
+		cfgNoDKMS.AppendDriverBuildFlags = "--kernel 5.14.0-687.13.1.el9_8.x86_64 --distro rhel9.8"
 
 		cmdMock := cmdMockPkg.NewInterface(t)
 		cmdMock.EXPECT().RunCommand(mock.Anything, "dnf", "install", "-y", "perl").Return("", "", nil)
@@ -93,7 +93,8 @@ func TestRunBuild(t *testing.T) {
 		cmdMock.EXPECT().RunCommand(mock.Anything, expectedInstallScript,
 			"--build-only", "--kernel-only", "--without-knem", "--without-iser", "--without-isert",
 			"--without-srp", "--with-mlnx-tools", "--with-ofed-scripts", "--copy-ifnames-udev",
-			"--disable-kmp", "--without-dkms").Return("", "", nil)
+			"--disable-kmp", "--without-dkms", "--kernel", "5.14.0-687.13.1.el9_8.x86_64",
+			"--distro", "rhel9.8").Return("", "", nil)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		errCh := make(chan error)
