@@ -161,6 +161,7 @@ The following environment variables can be set at container runtime to control d
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OFED_BLACKLIST_MODULES` | `mlx5_core:mlx5_ib:ib_umad:ib_uverbs:ib_ipoib:rdma_cm:rdma_ucm:ib_core:ib_cm` | Colon-separated list of OFED kernel modules to blacklist on the host. |
+| `MLX5_AUXILIARY_MODULES` | `mlx5_vdpa mlx5_fwctl mlx5_dpll` | Space-separated list of mlx5 auxiliary modules to temporarily blacklist and unload before driver restart, then explicitly reload after the new driver stack is active. Set to an empty string to disable this handling. |
 | `UNLOAD_THIRD_PARTY_RDMA_MODULES` | `false` | When `true`, all known third-party RDMA kernel modules (from rdma-core: qedr, efa, siw, etc.) are blacklisted and unloaded before OFED driver reload. The module list is hardcoded. |
 | `UNLOAD_STORAGE_MODULES` | `false` | When `true`, storage modules (ib_isert, nvme_rdma, etc.) are unloaded during driver restart. |
 | `RESTORE_DRIVER_ON_POD_TERMINATION` | `false` | When `true`, restores the inbox driver on container teardown. |
