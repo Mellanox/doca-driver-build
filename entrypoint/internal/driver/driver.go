@@ -50,6 +50,8 @@ const (
 	moduleMlx5IB   = "mlx5_ib"
 )
 
+var kernelModuleNamePattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]*$`)
+
 // New creates a new instance of the driver manager
 func New(containerMode string, cfg config.Config,
 	c cmd.Interface, h host.Interface, osWrapper wrappers.OSWrapper,
@@ -864,6 +866,18 @@ func (d *driverMgr) generateOfedModulesBlacklist(ctx context.Context) error {
 		for _, module := range d.cfg.ThirdPartyRDMAModules {
 			fmt.Fprintf(&content, "blacklist %s\n", module)
 			log.V(2).Info("Added third-party RDMA module to blacklist", "module", module)
+		}
+	}
+
+	if len(d.cfg.Mlx5AuxiliaryModules) > 0 {
+		content.WriteString("\n# blacklist mlx5 auxiliary modules to prevent reload races\n")
+		for _, module := range d.cfg.Mlx5AuxiliaryModules {
+			module = strings.TrimSpace(module)
+			if module == "" {
+				continue
+			}
+			fmt.Fprintf(&content, "blacklist %s\n", module)
+			log.V(2).Info("Added mlx5 auxiliary module to blacklist", "module", module)
 		}
 	}
 
@@ -1952,35 +1966,92 @@ func (d *driverMgr) restartDriver(ctx context.Context) error {
 		}
 	}
 
+	unloadedMlx5AuxiliaryModules := d.unloadMlx5AuxiliaryModules(ctx)
+
 	// Restart openibd service
 	_, _, err := d.cmd.RunCommand(ctx, "/etc/init.d/openibd", "restart")
 	if err != nil {
 		return fmt.Errorf("failed to restart openibd service: %w", err)
 	}
 
-	// Load mlx5_vdpa if available
-	_, _, err = d.cmd.RunCommand(ctx, "modinfo", "mlx5_vdpa")
-	if err == nil {
-		// Module exists, try to load it
-		// On SLES, we need --allow-unsupported
-		osType, err := d.host.GetOSType(ctx)
-		if err != nil {
-			log.V(1).Info("Failed to get OS type, proceeding without --allow-unsupported flag", "error", err)
-		}
-		if osType == constants.OSTypeSLES {
-			_, _, err = d.cmd.RunCommand(ctx, "modprobe", "--allow-unsupported", "mlx5_vdpa")
-		} else {
-			_, _, err = d.cmd.RunCommand(ctx, "modprobe", "mlx5_vdpa")
-		}
-		if err != nil {
-			log.V(1).Info("Failed to load mlx5_vdpa module", "error", err)
-			// Non-fatal, continue
-		}
-	} else {
-		log.V(1).Info("mlx5_vdpa module not found, skipping")
+	if err := d.loadMlx5AuxiliaryModules(ctx, unloadedMlx5AuxiliaryModules); err != nil {
+		return err
 	}
 
 	return nil
+}
+
+func (d *driverMgr) unloadMlx5AuxiliaryModules(ctx context.Context) map[string]struct{} {
+	log := logr.FromContextOrDiscard(ctx)
+	unloadedModules := map[string]struct{}{}
+
+	for _, module := range d.cfg.Mlx5AuxiliaryModules {
+		module, ok := sanitizeKernelModuleName(module)
+		if !ok {
+			log.V(1).Info("Skipping invalid mlx5 auxiliary module name", "module", module)
+			continue
+		}
+
+		if _, _, err := d.cmd.RunCommand(ctx, "modprobe", "-r", module); err != nil {
+			log.V(1).Info("Failed to unload mlx5 auxiliary module", "module", module, "error", err)
+			continue
+		}
+		unloadedModules[module] = struct{}{}
+	}
+
+	return unloadedModules
+}
+
+func (d *driverMgr) loadMlx5AuxiliaryModules(ctx context.Context, unloadedModules map[string]struct{}) error {
+	log := logr.FromContextOrDiscard(ctx)
+
+	if len(d.cfg.Mlx5AuxiliaryModules) == 0 {
+		return nil
+	}
+
+	osType, osTypeErr := d.host.GetOSType(ctx)
+	if osTypeErr != nil {
+		log.V(1).Info("Failed to get OS type, proceeding without --allow-unsupported flag", "error", osTypeErr)
+	}
+
+	for _, module := range d.cfg.Mlx5AuxiliaryModules {
+		module, ok := sanitizeKernelModuleName(module)
+		if !ok {
+			log.V(1).Info("Skipping invalid mlx5 auxiliary module name", "module", module)
+			continue
+		}
+
+		if _, _, err := d.cmd.RunCommand(ctx, "modinfo", module); err != nil {
+			if _, wasUnloaded := unloadedModules[module]; wasUnloaded {
+				return fmt.Errorf("failed to find previously unloaded mlx5 auxiliary module %s after driver restart: %w", module, err)
+			}
+			log.V(1).Info("mlx5 auxiliary module not found, skipping", "module", module)
+			continue
+		}
+
+		var err error
+		if osType == constants.OSTypeSLES {
+			_, _, err = d.cmd.RunCommand(ctx, "modprobe", "--allow-unsupported", module)
+		} else {
+			_, _, err = d.cmd.RunCommand(ctx, "modprobe", module)
+		}
+		if err != nil {
+			log.V(1).Info("Failed to load mlx5 auxiliary module", "module", module, "error", err)
+			if _, wasUnloaded := unloadedModules[module]; wasUnloaded {
+				return fmt.Errorf("failed to reload previously unloaded mlx5 auxiliary module %s: %w", module, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func sanitizeKernelModuleName(module string) (string, bool) {
+	module = strings.TrimSpace(module)
+	if module == "" {
+		return "", false
+	}
+	return module, kernelModuleNamePattern.MatchString(module)
 }
 
 // loadNfsRdma loads NFS RDMA modules if enabled

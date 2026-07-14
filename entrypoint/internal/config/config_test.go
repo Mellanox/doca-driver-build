@@ -34,6 +34,7 @@ var _ = Describe("Config", func() {
 		os.Unsetenv("UNLOAD_THIRD_PARTY_RDMA_MODULES")
 		os.Unsetenv("THIRD_PARTY_RDMA_MODULES")
 		os.Unsetenv("STORAGE_MODULES")
+		os.Unsetenv("MLX5_AUXILIARY_MODULES")
 	})
 
 	Context("UnloadThirdPartyRdmaModules", func() {
@@ -97,6 +98,32 @@ var _ = Describe("Config", func() {
 			cfg, err := GetConfig()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cfg.ThirdPartyRDMAModules).To(Equal([]string{"foo_re", "bar_rdma", "baz_ib"}))
+		})
+	})
+
+	Context("Mlx5AuxiliaryModules", func() {
+		It("should parse the default list when MLX5_AUXILIARY_MODULES is not set", func() {
+			os.Unsetenv("MLX5_AUXILIARY_MODULES")
+
+			cfg, err := GetConfig()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Mlx5AuxiliaryModules).To(Equal([]string{"mlx5_vdpa", "mlx5_fwctl", "mlx5_dpll"}))
+		})
+
+		It("should parse a space-separated override correctly", func() {
+			os.Setenv("MLX5_AUXILIARY_MODULES", "mlx5_fwctl mlx5_dpll")
+
+			cfg, err := GetConfig()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Mlx5AuxiliaryModules).To(Equal([]string{"mlx5_fwctl", "mlx5_dpll"}))
+		})
+
+		It("should allow an explicit empty override", func() {
+			os.Setenv("MLX5_AUXILIARY_MODULES", "")
+
+			cfg, err := GetConfig()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Mlx5AuxiliaryModules).To(BeEmpty())
 		})
 	})
 })

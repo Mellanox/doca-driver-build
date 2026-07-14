@@ -49,6 +49,10 @@
 
 : ${OFED_BLACKLIST_MODULES_FILE:=/host/etc/modprobe.d/blacklist-ofed-modules.conf}
 : ${OFED_BLACKLIST_MODULES:=mlx5_core:mlx5_ib:ib_umad:ib_uverbs:ib_ipoib:rdma_cm:rdma_ucm:ib_core:ib_cm}
+if [ -z "${MLX5_AUXILIARY_MODULES+x}" ]; then
+    MLX5_AUXILIARY_MODULES="mlx5_vdpa mlx5_fwctl mlx5_dpll"
+fi
+MLX5_AUXILIARY_MODULES_UNLOADED=""
 
 # UNLOAD_THIRD_PARTY_RDMA_MODULES: when true, all known third-party RDMA kernel
 # modules (from rdma-core) are blacklisted and unloaded before OFED driver reload.
@@ -607,11 +611,26 @@ function generate_ofed_modules_blacklist(){
         done
     fi
 
+    if [ -n "${MLX5_AUXILIARY_MODULES}" ]; then
+        echo -e "\n# blacklist mlx5 auxiliary modules to prevent reload races" >> ${OFED_BLACKLIST_MODULES_FILE}
+        for mod in ${MLX5_AUXILIARY_MODULES}; do
+            if ! is_valid_kernel_module_name "${mod}"; then
+                timestamp_print "Skipping invalid mlx5 auxiliary module name: ${mod}"
+                continue
+            fi
+            echo "blacklist $mod" >> ${OFED_BLACKLIST_MODULES_FILE}
+        done
+    fi
+
     debug_print "`cat ${OFED_BLACKLIST_MODULES_FILE}`"
 }
 
 function remove_ofed_modules_blacklist(){
     rm -rf ${OFED_BLACKLIST_MODULES_FILE}; timestamp_print "Remove blacklisted mofed modules file from host"
+}
+
+function is_valid_kernel_module_name() {
+    [[ "$1" =~ ^[A-Za-z0-9_][A-Za-z0-9_-]*$ ]]
 }
 
 function load_host_dependencies() {
@@ -644,6 +663,69 @@ function load_host_dependencies() {
     fi
 }
 
+function unload_mlx5_auxiliary_modules() {
+    debug_print "Function: ${FUNCNAME[0]}"
+
+    MLX5_AUXILIARY_MODULES_UNLOADED=""
+    for mod in ${MLX5_AUXILIARY_MODULES}; do
+        if ! is_valid_kernel_module_name "${mod}"; then
+            timestamp_print "Skipping invalid mlx5 auxiliary module name: ${mod}"
+            continue
+        fi
+
+        if modprobe -r "${mod}" 2>/dev/null; then
+            MLX5_AUXILIARY_MODULES_UNLOADED="${MLX5_AUXILIARY_MODULES_UNLOADED} ${mod}"
+        else
+            debug_print "Failed to unload mlx5 auxiliary module ${mod}; continuing"
+        fi
+    done
+}
+
+function was_mlx5_auxiliary_module_unloaded() {
+    local module="$1"
+
+    for unloaded_mod in ${MLX5_AUXILIARY_MODULES_UNLOADED}; do
+        if [ "${unloaded_mod}" = "${module}" ]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+function load_mlx5_auxiliary_modules() {
+    debug_print "Function: ${FUNCNAME[0]}"
+
+    for mod in ${MLX5_AUXILIARY_MODULES}; do
+        if ! is_valid_kernel_module_name "${mod}"; then
+            timestamp_print "Skipping invalid mlx5 auxiliary module name: ${mod}"
+            continue
+        fi
+
+        if modinfo "${mod}" &>/dev/null; then
+            if ${IS_OS_SLES}; then
+                modprobe --allow-unsupported "${mod}"
+            else
+                modprobe "${mod}"
+            fi
+            modprobe_rc=$?
+            if [ ${modprobe_rc} -ne 0 ]; then
+                if was_mlx5_auxiliary_module_unloaded "${mod}"; then
+                    timestamp_print "Failed to reload previously unloaded mlx5 auxiliary module ${mod}"
+                    exit_entryp ${modprobe_rc}
+                fi
+                timestamp_print "Failed to load mlx5 auxiliary module ${mod}; continuing"
+            fi
+        else
+            if was_mlx5_auxiliary_module_unloaded "${mod}"; then
+                timestamp_print "Failed to find previously unloaded mlx5 auxiliary module ${mod} after driver restart"
+                exit_entryp 1
+            fi
+            debug_print "${mod} module not found; skipping"
+        fi
+    done
+}
+
 function restart_driver() {
     debug_print "Function: ${FUNCNAME[0]}"
 
@@ -668,22 +750,13 @@ function restart_driver() {
     generate_ofed_modules_blacklist
     ${UNLOAD_STORAGE_MODULES} && unload_storage_modules
     ${UNLOAD_THIRD_PARTY_RDMA_MODULES} && unload_third_party_rdma_modules
+    unload_mlx5_auxiliary_modules
 
     exec_cmd "/etc/init.d/openibd restart"
 
-    # Explicitly load the mlx5_vdpa module from the container to prevent loading an incompatible version from the host.
-    # In Ubuntu 24.04, the inbox (built-in) mlx5_vdpa module is automatically loaded due to the "alias: auxiliary:mlx5_core.vnet" entry.
-    # Load mlx5_vdpa only if present
-
-    if modinfo mlx5_vdpa &>/dev/null; then
-        if ${IS_OS_SLES}; then
-            exec_cmd "modprobe --allow-unsupported mlx5_vdpa"
-        else
-            exec_cmd "modprobe mlx5_vdpa"
-        fi
-    else
-        debug_print "mlx5_vdpa module not found; skipping"
-    fi
+    # Explicitly load mlx5 auxiliary modules from the container to avoid
+    # alias-driven reload races while the OFED stack is being replaced.
+    load_mlx5_auxiliary_modules
 
     remove_ofed_modules_blacklist
 
