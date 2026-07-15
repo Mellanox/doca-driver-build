@@ -100,7 +100,7 @@ RUN set -x && \
 # Install prerequirements \
     DEBIAN_FRONTEND=noninteractive apt-get -yq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install curl \
     dkms make autoconf autotools-dev chrpath automake hostname debhelper dh-exec gcc$GCC_VER quilt libc6-dev build-essential pkg-config ubuntu-advantage-tools \
-    bison flex libelf-dev && \
+    bison flex libelf-dev zstd && \
 # On Ubuntu 24.04+ dkms is >= 3.0; the dh_dkms helper moved out of the dkms package into a
 # standalone dh-dkms package. mlnx-ofed-kernel's Build-Depends is "dh-dkms | dkms (<< 3.0)",
 # so dpkg-buildpackage fails on Noble+ unless dh-dkms is installed. Older Ubuntu releases
@@ -177,7 +177,7 @@ RUN set -x && \
     test -n "${D_KERNEL_VER}" && DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" linux-modules-extra-${D_KERNEL_VER} || true && \
 # Install DKMS and build tools if enabled (needed at runtime for dkms add/build/install)
     if [ "$D_ENABLE_DKMS" = "true" ]; then \
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" dkms build-essential bison flex libelf-dev pkg-config; \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" dkms build-essential bison flex libelf-dev pkg-config zstd; \
     fi
 # Cleanup
 RUN set -x && \
