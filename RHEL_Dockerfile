@@ -48,7 +48,7 @@ FROM $D_BASE_IMAGE AS base
 ARG D_OS
 
 # https://redmine.mellanox.com/issues/3528150/issue_history#note-9
-RUN if [[ "${D_OS}" == *"rhel9"* ]] ; then \
+RUN if [[ -f /etc/rhsm/rhsm.conf ]] ; then \
         sed -i 's#/etc/pki/entitlement#/etc/pki/entitlement-host#g' /etc/rhsm/rhsm.conf ;\
     fi
 
@@ -112,7 +112,7 @@ RUN --mount=type=bind,from=rhsm,source=.,target=/etc/pki/entitlement-host \
     set -x && \
     RELEASE_VER=$(echo ${D_OS} | sed 's/rhel//') && \
 # Install prerequirements
-    dnf install -y curl --allowerasing --releasever=${RELEASE_VER} \
+    dnf install -y --releasever=${RELEASE_VER} \
 # Driver build requirements
     autoconf python3-devel ethtool automake pciutils libtool hostname dracut \
 # Build tools needed by install.pl at runtime (avoids subscription-gated dnf at container start)
