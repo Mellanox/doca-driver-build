@@ -3,7 +3,7 @@ module github.com/Mellanox/doca-driver-build/entrypoint
 go 1.26.0
 
 require (
-	github.com/go-logr/logr v1.4.3
+	github.com/go-logr/logr v1.4.4
 	github.com/gofrs/flock v0.13.0
 	github.com/k8snetworkplumbingwg/sriovnet v1.3.0
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51
