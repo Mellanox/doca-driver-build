@@ -63,3 +63,18 @@ updates:
         update-types:
           - version-update:semver-major
           - version-update:semver-minor
+  # Go dependencies
+  - package-ecosystem: "gomod"
+    directory: "/entrypoint"
+    schedule:
+      interval: "daily"
+    commit-message:
+      prefix: "chore"
+    target-branch: network-operator-26.7.x
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    target-branch: network-operator-26.7.x
