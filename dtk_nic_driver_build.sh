@@ -35,6 +35,10 @@ function timestamp_print () {
     echo "[${date_time_stamp}] $@"
 }
 
+# PID 1 ignores SIGTERM unless a handler is installed. Install a trap so kubelet can
+# stop this sidecar promptly on pod deletion (otherwise only SIGKILL after grace period).
+trap 'timestamp_print "DTK build received termination signal, exiting"; exit 0' TERM INT
+
 function debug_print() {
     [ ${ENTRYPOINT_DEBUG} ] && timestamp_print $@
 }
@@ -67,7 +71,9 @@ exec_cmd "dnf install -y ethtool autoconf pciutils automake libtool python3-deve
 
 while [ ! -f ${DTK_OCP_START_COMPILE_FLAG} ]; do
     echo "Awaiting driver container preparations prior compilation, next query in ${RETRY_DELAY_SEC} sec"
-    sleep ${RETRY_DELAY_SEC}
+    # Background sleep + wait so SIGTERM is handled promptly by the trap above
+    sleep ${RETRY_DELAY_SEC} &
+    wait $! || true
 done
 
 timestamp_print "Starting compilation of driver version ${DTK_OCP_COMPILED_DRIVER_VER}"
@@ -90,5 +96,6 @@ exec_cmd "touch ${DTK_OCP_DONE_COMPILE_FLAG}"
 exec_cmd "rm ${DTK_OCP_START_COMPILE_FLAG}"
 
 timestamp_print "DTK driver build script end"
+# Keep container alive after build; wait is interruptible via the TERM/INT trap
 sleep infinity &
-wait $!
+wait $! || true
