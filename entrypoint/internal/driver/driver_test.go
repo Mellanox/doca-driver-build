@@ -551,9 +551,17 @@ var _ = Describe("Driver", func() {
 			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
 		})
 
-		It("should return -modules for Ubuntu", func() {
+		It("should return -modules for Ubuntu when DKMS is disabled", func() {
 			suffix := dm.getPackageSuffix(constants.OSTypeUbuntu)
 			Expect(suffix).To(Equal("-modules"))
+		})
+
+		It("should return -dkms for Ubuntu when DKMS is enabled", func() {
+			cfg.UseDKMS = true
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			suffix := dm.getPackageSuffix(constants.OSTypeUbuntu)
+			Expect(suffix).To(Equal("-dkms"))
 		})
 
 		It("should return empty string for SLES", func() {
@@ -807,6 +815,18 @@ var _ = Describe("Driver", func() {
 			Expect(flags).To(Equal([]string{
 				"--without-mlnx-nfsrdma-modules",
 				"--without-mlnx-nvme-modules",
+			}))
+		})
+
+		It("should return DKMS package flags when EnableNfsRdma is false for Ubuntu with DKMS enabled", func() {
+			cfg.EnableNfsRdma = false
+			cfg.UseDKMS = true
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			flags := dm.getAppendDriverBuildFlags(constants.OSTypeUbuntu)
+			Expect(flags).To(Equal([]string{
+				"--without-mlnx-nfsrdma-dkms",
+				"--without-mlnx-nvme-dkms",
 			}))
 		})
 
@@ -1298,12 +1318,12 @@ var _ = Describe("Driver", func() {
 			// UseDKMS true → install.pl must NOT include --without-dkms
 			cmdMock.EXPECT().RunCommand(ctx, "/test/driver/path/install.pl",
 				"--without-depcheck", "--kernel", "5.4.0-42-generic", "--kernel-only", "--build-only",
-				"--with-mlnx-tools", "--without-knem-modules", "--without-iser-modules",
-				"--without-isert-modules", "--without-srp-modules", "--without-kernel-mft-modules",
-				"--without-mlnx-rdma-rxe-modules", "--disable-kmp",
+				"--with-mlnx-tools", "--without-knem-dkms", "--without-iser-dkms",
+				"--without-isert-dkms", "--without-srp-dkms", "--without-kernel-mft-dkms",
+				"--without-mlnx-rdma-rxe-dkms", "--disable-kmp",
 				"--without-xpmem", "--without-xpmem-modules", "--without-xpmem-dkms",
-				"--without-mlnx-nfsrdma-modules",
-				"--without-mlnx-nvme-modules").Return("", "", nil)
+				"--without-mlnx-nfsrdma-dkms",
+				"--without-mlnx-nvme-dkms").Return("", "", nil)
 
 			// Mock copyBuildArtifacts - debug logging and copy
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
