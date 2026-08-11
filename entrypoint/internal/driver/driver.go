@@ -1619,10 +1619,15 @@ func (d *driverMgr) ubuntuSyncNetworkConfigurationTools(ctx context.Context) err
 	return nil
 }
 
-// getPackageSuffix returns the package suffix based on OS type
+// getPackageSuffix returns the package suffix based on OS type and build mode.
+// Ubuntu's install.pl uses distinct package names for DKMS and non-DKMS builds,
+// so exclusion flags must target the package variant selected by USE_DKMS.
 func (d *driverMgr) getPackageSuffix(osType string) string {
 	switch osType {
 	case constants.OSTypeUbuntu:
+		if d.cfg.UseDKMS {
+			return "-dkms"
+		}
 		return "-modules"
 	case constants.OSTypeSLES, constants.OSTypeRedHat, constants.OSTypeOpenShift:
 		return ""
