@@ -758,6 +758,11 @@ function restart_driver() {
     # alias-driven reload races while the OFED stack is being replaced.
     load_mlx5_auxiliary_modules
 
+    # Restart NetworkManager on OpenShift only to ensure that the network
+    # configuration is applied correctly included bonding interfaces
+    if [ -n "${OPENSHIFT_VERSION}" ]; then
+        exec_cmd "systemctl restart NetworkManager"
+    fi
     remove_ofed_modules_blacklist
 
 }
