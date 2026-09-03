@@ -199,6 +199,18 @@ COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/RPMS/redhat-release-*/${D_ARCH}
 
 RUN rpm -ivh --nodeps /root/*.rpm
 
+# 26.07 openibd check_if_ok_to_stop() added nvme with an inbox escape that
+# uses container modinfo, so image kmod-mlnx-nvme makes inbox nvme look OFED
+# and the first inbox→MOFED swap exits 1 on NVMe-rooted nodes. Drop nvme
+# from that list (26.04 behaviour). Unload still starts from ib_core/mlx5_core
+# and does not rmmod the local-disk nvme driver.
+RUN f=/usr/share/mlnx_ofed/mod_load_funcs && \
+    if [ ! -f "$f" ]; then echo "missing $f" >&2; exit 1; fi && \
+    if grep -q 'nvme_rdma nvmet_rdma nvme rpcrdma' "$f"; then \
+        sed -i 's/nvme_rdma nvmet_rdma nvme rpcrdma/nvme_rdma nvmet_rdma rpcrdma/' "$f" && \
+        grep -q 'for mod in ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma ib_srpt' "$f"; \
+    fi
+
 RUN set -x && \
     RELEASE_VER=$(echo ${D_OS} | sed 's/rhel//') && \
 # MOFED functional requirements
