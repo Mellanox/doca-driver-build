@@ -339,6 +339,12 @@ func (d *driverMgr) Load(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("failed to mount rootfs: %w", err)
 	}
 
+	// Install NFS userspace tools on host if NFSRDMA is enabled.
+	// Failures are logged inside and are non-fatal.
+	if d.cfg.EnableNfsRdma {
+		d.installNfsUserspace(ctx)
+	}
+
 	// Clean up old driver inventory to free disk space
 	if err := d.cleanupDriverInventory(ctx); err != nil {
 		log.V(1).Info("Failed to cleanup driver inventory", "error", err)
@@ -2075,6 +2081,47 @@ func (d *driverMgr) loadNfsRdma(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// installNfsUserspace copies NFS userspace tools (mount.nfs) from the container
+// to the host filesystem when ENABLE_NFSRDMA is true. This ensures the host has
+// the mount.nfs binary required for NFS mounts over RDMA.
+// All failures are non-fatal: missing or uncopyable binaries are logged and skipped.
+func (d *driverMgr) installNfsUserspace(ctx context.Context) {
+	log := logr.FromContextOrDiscard(ctx)
+
+	if !d.cfg.EnableNfsRdma {
+		return
+	}
+
+	log.Info("Installing NFS userspace tools to host")
+
+	nfsBins := []string{"mount.nfs", "mount.nfs4", "umount.nfs", "umount.nfs4"}
+	for _, bin := range nfsBins {
+		// Skip if already present on host
+		dst := "/host/usr/sbin/" + bin
+		if _, err := d.os.Stat(dst); err == nil {
+			log.V(1).Info("NFS binary already present on host, skipping", "binary", bin)
+			continue
+		}
+
+		src := ""
+		if _, err := d.os.Stat("/usr/sbin/" + bin); err == nil {
+			src = "/usr/sbin/" + bin
+		} else if _, err := d.os.Stat("/sbin/" + bin); err == nil {
+			src = "/sbin/" + bin
+		}
+		if src == "" {
+			log.V(1).Info("NFS binary not found in container, skipping", "binary", bin)
+			continue
+		}
+		_, _, err := d.cmd.RunCommand(ctx, "cp", src, dst)
+		if err != nil {
+			log.V(1).Info("WARNING: failed to copy NFS binary to host, skipping", "binary", bin, "error", err)
+			continue
+		}
+		log.Info("Copied NFS binary to host", "binary", bin, "destination", dst)
+	}
 }
 
 // printLoadedDriverVersion prints the currently loaded driver version
