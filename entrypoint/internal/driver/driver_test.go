@@ -1912,9 +1912,10 @@ var _ = Describe("Driver", func() {
 
 			// Mock checkLoadedKmodSrcverVsModinfo to return true (modules match)
 			hostMock.EXPECT().LsMod(ctx).Return(map[string]host.LoadedModule{
-				"mlx5_core": {Name: "mlx5_core", RefCount: 1, UsedBy: []string{}},
-				"mlx5_ib":   {Name: "mlx5_ib", RefCount: 1, UsedBy: []string{}},
-				"ib_core":   {Name: "ib_core", RefCount: 1, UsedBy: []string{}},
+				"mlx5_core":   {Name: "mlx5_core", RefCount: 1, UsedBy: []string{}},
+				"mlx5_ib":     {Name: "mlx5_ib", RefCount: 1, UsedBy: []string{}},
+				"ib_core":     {Name: "ib_core", RefCount: 1, UsedBy: []string{}},
+				modulePeerMem: {Name: modulePeerMem, RefCount: 0, UsedBy: []string{}},
 			}, nil)
 
 			// Mock modinfo calls for each module
@@ -1945,6 +1946,7 @@ var _ = Describe("Driver", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).To(BeTrue())
 			Expect(dm.newDriverLoaded).To(BeFalse())
+			hostMock.AssertNotCalled(GinkgoT(), "RmMod", mock.Anything, modulePeerMem)
 		})
 
 		It("should setup DKMS when UseDKMS is enabled and modules match", func() {
@@ -2177,6 +2179,7 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
+			hostMock.EXPECT().LsMod(ctx).Return(map[string]host.LoadedModule{}, nil)
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
 
 			// Mock printLoadedDriverVersion
@@ -2236,6 +2239,7 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
+			hostMock.EXPECT().LsMod(ctx).Return(map[string]host.LoadedModule{}, nil)
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
 
 			// Mock loadNfsRdma
@@ -2305,6 +2309,7 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
+			hostMock.EXPECT().LsMod(ctx).Return(map[string]host.LoadedModule{}, nil)
 			expectedError := errors.New("openibd restart failed")
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", expectedError)
 
@@ -2349,6 +2354,7 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
+			hostMock.EXPECT().LsMod(ctx).Return(map[string]host.LoadedModule{}, nil)
 			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
 
 			// Mock loadNfsRdma failure (should not cause Load to fail)
@@ -2502,8 +2508,18 @@ var _ = Describe("Driver", func() {
 	})
 
 	Context("restartDriver", func() {
+		var (
+			loadedModulesBeforeRestart map[string]host.LoadedModule
+			lsModErr                   error
+		)
+
 		BeforeEach(func() {
 			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+			loadedModulesBeforeRestart = map[string]host.LoadedModule{}
+			lsModErr = nil
+			hostMock.EXPECT().LsMod(ctx).RunAndReturn(func(context.Context) (map[string]host.LoadedModule, error) {
+				return loadedModulesBeforeRestart, lsModErr
+			}).Once()
 		})
 
 		It("should restart driver successfully", func() {
@@ -2570,14 +2586,25 @@ var _ = Describe("Driver", func() {
 		It("should load mlx5_vdpa when available", func() {
 			cfg.Mlx5AuxiliaryModules = []string{"mlx5_vdpa"}
 			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+			loadedModulesBeforeRestart = map[string]host.LoadedModule{
+				modulePeerMem: {Name: modulePeerMem, RefCount: 0, UsedBy: []string{}},
+			}
+			var reloadSequence []string
 
 			// Mock loadHostDependencies
 			osMock.EXPECT().ReadFile("/proc/modules").Return([]byte("mlx5_ib 12345 0 - Live 0xffff"), nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-r", "mlx5_vdpa").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-r", "mlx5_vdpa").Run(func(context.Context, string, ...string) {
+				reloadSequence = append(reloadSequence, "auxiliary")
+			}).Return("", "", nil)
+			hostMock.EXPECT().RmMod(ctx, modulePeerMem).Run(func(context.Context, string) {
+				reloadSequence = append(reloadSequence, "peermem")
+			}).Return(nil)
+			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Run(func(context.Context, string, ...string) {
+				reloadSequence = append(reloadSequence, "openibd")
+			}).Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "mlx5_vdpa").Return("", "", nil) // Module exists
 			// Mock GetOSType for non-SLES case
 			hostMock.EXPECT().GetOSType(ctx).Return(constants.OSTypeUbuntu, nil)
@@ -2585,6 +2612,7 @@ var _ = Describe("Driver", func() {
 
 			err := dm.restartDriver(ctx)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(reloadSequence).To(Equal([]string{"auxiliary", "peermem", "openibd"}))
 		})
 
 		It("should load mlx5_vdpa with --allow-unsupported on SLES", func() {
@@ -2711,6 +2739,47 @@ var _ = Describe("Driver", func() {
 
 			err := dm.restartDriver(ctx)
 			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should continue when nvidia_peermem is not loaded", func() {
+			Expect(dm.unloadNvidiaPeermem(ctx)).To(Succeed())
+			hostMock.AssertNotCalled(GinkgoT(), "RmMod", mock.Anything, modulePeerMem)
+		})
+
+		It("should unload an unused nvidia_peermem module", func() {
+			loadedModulesBeforeRestart = map[string]host.LoadedModule{
+				modulePeerMem: {Name: modulePeerMem, RefCount: 0, UsedBy: []string{}},
+			}
+			hostMock.EXPECT().RmMod(ctx, modulePeerMem).Return(nil)
+
+			Expect(dm.unloadNvidiaPeermem(ctx)).To(Succeed())
+		})
+
+		It("should fail when nvidia_peermem is in use", func() {
+			loadedModulesBeforeRestart = map[string]host.LoadedModule{
+				modulePeerMem: {Name: modulePeerMem, RefCount: 1, UsedBy: []string{"consumer"}},
+			}
+
+			err := dm.unloadNvidiaPeermem(ctx)
+			Expect(err).To(MatchError("nvidia_peermem module is used by other modules: [consumer]"))
+			hostMock.AssertNotCalled(GinkgoT(), "RmMod", mock.Anything, modulePeerMem)
+		})
+
+		It("should fail when loaded modules cannot be listed", func() {
+			lsModErr = errors.New("lsmod failed")
+
+			err := dm.unloadNvidiaPeermem(ctx)
+			Expect(err).To(MatchError("failed to list loaded kernel modules before driver restart: lsmod failed"))
+		})
+
+		It("should fail when nvidia_peermem cannot be unloaded", func() {
+			loadedModulesBeforeRestart = map[string]host.LoadedModule{
+				modulePeerMem: {Name: modulePeerMem, RefCount: 0, UsedBy: []string{}},
+			}
+			hostMock.EXPECT().RmMod(ctx, modulePeerMem).Return(errors.New("rmmod failed"))
+
+			err := dm.unloadNvidiaPeermem(ctx)
+			Expect(err).To(MatchError("failed to unload nvidia_peermem module: rmmod failed"))
 		})
 	})
 

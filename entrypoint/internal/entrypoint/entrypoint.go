@@ -273,8 +273,7 @@ func (e *entrypoint) createUDEVRulesIfRequired(ctx context.Context) error {
 	return nil
 }
 
-// handleKernelModules function ensures the nvidia_peermem module is unloaded
-// and confirms storage and third-party RDMA modules will unload during openibd restart.
+// handleKernelModules confirms storage and third-party RDMA modules will unload during openibd restart.
 func (e *entrypoint) handleKernelModules(ctx context.Context) error {
 	e.log.Info("Verifying loaded modules will not prevent future driver restart")
 
@@ -282,21 +281,6 @@ func (e *entrypoint) handleKernelModules(ctx context.Context) error {
 	if err != nil {
 		e.log.Error(err, "failed to list loaded kernel modules")
 		return err
-	}
-	nvPeerMemInfo, found := loadedModules["nvidia_peermem"]
-	if found {
-		if nvPeerMemInfo.RefCount > 0 {
-			err := fmt.Errorf("module is used by other modules: %s", nvPeerMemInfo.UsedBy)
-			e.log.Error(err, "failed to unload nvidia_peermem module")
-			return err
-		}
-		if err := e.host.RmMod(ctx, "nvidia_peermem"); err != nil {
-			e.log.Error(err, "failed to unload nvidia_peermem module")
-			return err
-		}
-		e.log.V(1).Info("nvidia_peermem module unloaded")
-	} else {
-		e.log.V(1).Info("nvidia_peermem module in not loaded")
 	}
 	if e.config.UnloadStorageModules {
 		// storage modules will be unloaded by the openibd restart, no need to check if they are loaded

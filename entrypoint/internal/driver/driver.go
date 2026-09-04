@@ -48,6 +48,7 @@ const (
 	moduleIBCore   = "ib_core"
 	moduleMlx5Core = "mlx5_core"
 	moduleMlx5IB   = "mlx5_ib"
+	modulePeerMem  = "nvidia_peermem"
 )
 
 var kernelModuleNamePattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]*$`)
@@ -1972,6 +1973,9 @@ func (d *driverMgr) restartDriver(ctx context.Context) error {
 	}
 
 	unloadedMlx5AuxiliaryModules := d.unloadMlx5AuxiliaryModules(ctx)
+	if err := d.unloadNvidiaPeermem(ctx); err != nil {
+		return err
+	}
 
 	// Restart openibd service
 	_, _, err := d.cmd.RunCommand(ctx, "/etc/init.d/openibd", "restart")
@@ -1982,6 +1986,31 @@ func (d *driverMgr) restartDriver(ctx context.Context) error {
 	if err := d.loadMlx5AuxiliaryModules(ctx, unloadedMlx5AuxiliaryModules); err != nil {
 		return err
 	}
+
+	return nil
+}
+
+// unloadNvidiaPeermem unloads nvidia_peermem immediately before openibd
+// replaces the OFED modules it depends on.
+func (d *driverMgr) unloadNvidiaPeermem(ctx context.Context) error {
+	log := logr.FromContextOrDiscard(ctx)
+	loadedModules, err := d.host.LsMod(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list loaded kernel modules before driver restart: %w", err)
+	}
+
+	module, found := loadedModules[modulePeerMem]
+	if !found {
+		log.V(1).Info("nvidia_peermem module is not loaded")
+		return nil
+	}
+	if module.RefCount > 0 {
+		return fmt.Errorf("nvidia_peermem module is used by other modules: %v", module.UsedBy)
+	}
+	if err := d.host.RmMod(ctx, modulePeerMem); err != nil {
+		return fmt.Errorf("failed to unload nvidia_peermem module: %w", err)
+	}
+	log.V(1).Info("nvidia_peermem module unloaded")
 
 	return nil
 }

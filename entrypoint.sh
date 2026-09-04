@@ -751,6 +751,7 @@ function restart_driver() {
     ${UNLOAD_STORAGE_MODULES} && unload_storage_modules
     ${UNLOAD_THIRD_PARTY_RDMA_MODULES} && unload_third_party_rdma_modules
     unload_mlx5_auxiliary_modules
+    unload_blocking_modules
 
     exec_cmd "/etc/init.d/openibd restart"
 
@@ -1957,8 +1958,6 @@ if [ -z "${NVIDIA_NIC_DRIVER_VER}" ]; then
 fi
 
 timestamp_print "Container full version: ${NVIDIA_NIC_DRIVER_VER}-${NVIDIA_NIC_CONTAINER_VER}"
-
-unload_blocking_modules
 
 storage_modules_loaded=$(lsmod | egrep 'ib_isert|nvme_rdma|nvmet_rdma|rpcrdma|xprtrdma|ib_srpt' -c)
 
