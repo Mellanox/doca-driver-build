@@ -1958,6 +1958,10 @@ fi
 
 timestamp_print "Container full version: ${NVIDIA_NIC_DRIVER_VER}-${NVIDIA_NIC_CONTAINER_VER}"
 
+# Unset driver readiness before unloading nvidia_peermem. GPU Operator waits
+# for this marker when Network Operator manages MOFED (USE_HOST_MOFED=false).
+set_driver_readiness 0
+
 unload_blocking_modules
 
 storage_modules_loaded=$(lsmod | egrep 'ib_isert|nvme_rdma|nvmet_rdma|rpcrdma|xprtrdma|ib_srpt' -c)
@@ -2008,10 +2012,6 @@ case "$@" in
     timestamp_print "Failed to determine container type, mandatory execution parameter not provided"
     exit_entryp 1
 esac
-
-# Unset driver readiness in case it was set in a previous run of this container
-# and container was killed
-set_driver_readiness 0
 
 # Remove possible udev rules leftovers from ungraceful termination
 delete_udev_rules
