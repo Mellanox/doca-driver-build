@@ -17,6 +17,7 @@
 package entrypoint
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"syscall"
@@ -33,6 +34,7 @@ import (
 	driverMockPkg "github.com/Mellanox/doca-driver-build/entrypoint/internal/driver/mocks"
 	netconfigMockPkg "github.com/Mellanox/doca-driver-build/entrypoint/internal/netconfig/mocks"
 	cmdMockPkg "github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/cmd/mocks"
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/host"
 	hostMockPkg "github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/host/mocks"
 	readyMockPkg "github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/ready/mocks"
 	udevMockPkg "github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/udev/mocks"
@@ -153,6 +155,17 @@ var _ = Describe("Entrypoint", func() {
 			driverMock.On("Unload", mock.Anything).Return(false, fmt.Errorf("test")).Once()
 
 			Expect(e.run(signalCH)).To(HaveOccurred())
+		})
+
+		It("defers nvidia_peermem unloading to the driver restart", func() {
+			e.config.UnloadStorageModules = true
+			e.config.UnloadThirdPartyRdmaModules = true
+			hostMock.On("LsMod", mock.Anything).Return(map[string]host.LoadedModule{
+				"nvidia_peermem": {Name: "nvidia_peermem", RefCount: 0, UsedBy: []string{}},
+			}, nil).Once()
+
+			Expect(e.handleKernelModules(context.Background())).To(Succeed())
+			hostMock.AssertNotCalled(GinkgoT(), "RmMod", mock.Anything, "nvidia_peermem")
 		})
 	})
 
