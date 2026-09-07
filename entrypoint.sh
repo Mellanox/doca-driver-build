@@ -66,6 +66,9 @@ THIRD_PARTY_RDMA_MODULES="${THIRD_PARTY_RDMA_MODULES:-bnxt_re efa erdma iw_cxgb4
 
 : ${UBUNTU_PRO_TOKEN:=""}
 
+# Recorded before defaulting so a precompiled image overriding USE_DKMS can tell an
+# explicit user request apart from the default.
+[[ -n "${USE_DKMS+x}" ]] && use_dkms_requested=true || use_dkms_requested=false
 : ${USE_DKMS:=false}
 DKMS_MODULE_NAME=""
 DKMS_MODULE_VERSION=""
@@ -1957,6 +1960,16 @@ if [ -z "${NVIDIA_NIC_DRIVER_VER}" ]; then
 fi
 
 timestamp_print "Container full version: ${NVIDIA_NIC_DRIVER_VER}-${NVIDIA_NIC_CONTAINER_VER}"
+
+# The DKMS layout of a precompiled image is fixed at build time, so the value baked in by
+# the image build takes precedence over a user-supplied USE_DKMS. The variable is absent in
+# sources images and in precompiled images built before it existed.
+if [[ -n "${NVIDIA_NIC_DRIVER_DKMS_ENABLED}" ]] && [[ "${NVIDIA_NIC_DRIVER_DKMS_ENABLED}" != "${USE_DKMS}" ]]; then
+    if ${use_dkms_requested}; then
+        timestamp_print "USE_DKMS=${USE_DKMS} ignored, precompiled image was built with DKMS=${NVIDIA_NIC_DRIVER_DKMS_ENABLED}"
+    fi
+    USE_DKMS="${NVIDIA_NIC_DRIVER_DKMS_ENABLED}"
+fi
 
 unload_blocking_modules
 

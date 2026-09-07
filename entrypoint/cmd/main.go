@@ -79,6 +79,11 @@ func main() {
 
 	log.Info(fmt.Sprintf("Container full version: %s-%s", cfg.NvidiaNicDriverVer, cfg.NvidiaNicContainerVer))
 
+	if cfg.DKMSModeOverridden {
+		log.Info("USE_DKMS was ignored: this precompiled image was built with a fixed DKMS mode",
+			"requested", !cfg.UseDKMS, "effective", cfg.UseDKMS)
+	}
+
 	if log.V(1).Enabled() {
 		//nolint:errchkjson
 		data, _ := json.MarshalIndent(cfg, "", "  ")

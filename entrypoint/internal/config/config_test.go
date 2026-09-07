@@ -35,6 +35,8 @@ var _ = Describe("Config", func() {
 		os.Unsetenv("THIRD_PARTY_RDMA_MODULES")
 		os.Unsetenv("STORAGE_MODULES")
 		os.Unsetenv("MLX5_AUXILIARY_MODULES")
+		os.Unsetenv("USE_DKMS")
+		os.Unsetenv("NVIDIA_NIC_DRIVER_DKMS_ENABLED")
 	})
 
 	Context("UnloadThirdPartyRdmaModules", func() {
@@ -124,6 +126,66 @@ var _ = Describe("Config", func() {
 			cfg, err := GetConfig()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cfg.Mlx5AuxiliaryModules).To(BeEmpty())
+		})
+	})
+
+	Context("UseDKMS", func() {
+		// Sources images, and precompiled images built before NVIDIA_NIC_DRIVER_DKMS_ENABLED
+		// existed, do not declare a baked DKMS mode, so USE_DKMS stays user controlled.
+		It("should honor USE_DKMS when the image declares no DKMS mode", func() {
+			os.Setenv("USE_DKMS", "true")
+
+			cfg, err := GetConfig()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.UseDKMS).To(BeTrue())
+			Expect(cfg.ImageDKMSEnabled).To(BeNil())
+			Expect(cfg.DKMSModeOverridden).To(BeFalse())
+		})
+
+		It("should default to false when neither variable is set", func() {
+			cfg, err := GetConfig()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.UseDKMS).To(BeFalse())
+			Expect(cfg.DKMSModeOverridden).To(BeFalse())
+		})
+
+		It("should force UseDKMS false when the image was built without DKMS", func() {
+			os.Setenv("NVIDIA_NIC_DRIVER_DKMS_ENABLED", "false")
+			os.Setenv("USE_DKMS", "true")
+
+			cfg, err := GetConfig()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.UseDKMS).To(BeFalse())
+			Expect(cfg.DKMSModeOverridden).To(BeTrue())
+		})
+
+		It("should force UseDKMS true when the image was built with DKMS", func() {
+			os.Setenv("NVIDIA_NIC_DRIVER_DKMS_ENABLED", "true")
+			os.Setenv("USE_DKMS", "false")
+
+			cfg, err := GetConfig()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.UseDKMS).To(BeTrue())
+			Expect(cfg.DKMSModeOverridden).To(BeTrue())
+		})
+
+		It("should not report an override when both values agree", func() {
+			os.Setenv("NVIDIA_NIC_DRIVER_DKMS_ENABLED", "true")
+			os.Setenv("USE_DKMS", "true")
+
+			cfg, err := GetConfig()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.UseDKMS).To(BeTrue())
+			Expect(cfg.DKMSModeOverridden).To(BeFalse())
+		})
+
+		It("should apply the image value without reporting an override when USE_DKMS is unset", func() {
+			os.Setenv("NVIDIA_NIC_DRIVER_DKMS_ENABLED", "true")
+
+			cfg, err := GetConfig()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.UseDKMS).To(BeTrue())
+			Expect(cfg.DKMSModeOverridden).To(BeFalse())
 		})
 	})
 })
