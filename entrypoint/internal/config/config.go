@@ -63,6 +63,12 @@ type Config struct {
 
 	// DKMS settings
 	UseDKMS bool `env:"USE_DKMS" envDefault:"false"`
+	// ImageDKMSEnabled is baked into precompiled images from the D_ENABLE_DKMS build arg
+	// and reflects whether the driver packages in the image are DKMS-enabled. It is nil for
+	// sources images and for precompiled images built before this variable existed.
+	ImageDKMSEnabled *bool `env:"NVIDIA_NIC_DRIVER_DKMS_ENABLED"`
+	// DKMSModeOverridden is true when ImageDKMSEnabled overrode a conflicting USE_DKMS.
+	DKMSModeOverridden bool `env:"-"`
 	// UnloadThirdPartyRdmaModules enables blacklisting and unloading of all known
 	// third-party RDMA kernel modules (from rdma-core) before OFED driver reload.
 	// When true, modules from ThirdPartyRDMAModules are:
@@ -97,6 +103,16 @@ func GetConfig() (Config, error) {
 	}
 	if _, configured := os.LookupEnv("MLX5_AUXILIARY_MODULES"); !configured && len(cfg.Mlx5AuxiliaryModules) == 0 {
 		cfg.Mlx5AuxiliaryModules = append(cfg.Mlx5AuxiliaryModules, DefaultMlx5AuxiliaryModules...)
+	}
+	// The DKMS layout of a precompiled image is fixed at build time: enabling DKMS at
+	// runtime on a non-DKMS image has no source tree to build from, and disabling it on a
+	// DKMS image leaves no modules for the running kernel. Either way the container fails,
+	// so the baked value wins and the user's USE_DKMS is ignored.
+	if cfg.ImageDKMSEnabled != nil && *cfg.ImageDKMSEnabled != cfg.UseDKMS {
+		// An unset USE_DKMS just picks up the image value, nothing was overridden.
+		_, requested := os.LookupEnv("USE_DKMS")
+		cfg.UseDKMS = *cfg.ImageDKMSEnabled
+		cfg.DKMSModeOverridden = requested
 	}
 	return cfg, nil
 }

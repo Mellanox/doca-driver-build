@@ -151,7 +151,13 @@ RUN ls -l /lib/modules
 # Build driver --distro ${D_OS}
 # When D_ENABLE_DKMS=true, install.pl creates DKMS-enabled RPMs (source in /usr/src/, dkms.conf)
 # When D_ENABLE_DKMS=false, install.pl creates static kernel modules (--without-dkms)
+# Only the exact string "true" enables DKMS; reject other values so they cannot produce
+# non-DKMS packages while the runtime bool parser treats them as enabled.
 RUN set -x && \
+    case "$D_ENABLE_DKMS" in \
+        true|false) ;; \
+        *) echo "error: D_ENABLE_DKMS must be exactly 'true' or 'false', got '$D_ENABLE_DKMS'" >&2; exit 1 ;; \
+    esac && \
     if [ "$D_ENABLE_DKMS" = "true" ]; then \
         ${OFED_SRC_LOCAL_DIR}/install.pl -vvv --distro ${D_OS} --kernel-sources /lib/modules/${D_KERNEL_VER}/build --without-depcheck --kernel ${D_KERNEL_VER} --kernel-only --build-only --copy-ifnames-udev --with-mlnx-tools --without-knem-modules --without-srp-modules --without-kernel-mft-modules --without-iser-modules --without-isert-modules --without-xpmem --without-xpmem-modules --without-xpmem-dkms; \
     else \
@@ -175,6 +181,13 @@ ARG D_ENABLE_DKMS
 ENV NVIDIA_NIC_DRIVER_VER=${D_OFED_VERSION}
 ENV NVIDIA_NIC_DRIVER_PATH=""
 ENV NVIDIA_NIC_CONTAINER_VER=${D_CONTAINER_VER}
+# Canonical true/false matching install.pl ([ "$D_ENABLE_DKMS" = "true" ]).
+# Reject TRUE/1/yes so Go cannot parse them as enabled against non-DKMS packages.
+RUN case "$D_ENABLE_DKMS" in \
+        true|false) ;; \
+        *) echo "error: D_ENABLE_DKMS must be exactly 'true' or 'false', got '$D_ENABLE_DKMS'" >&2; exit 1 ;; \
+    esac
+ENV NVIDIA_NIC_DRIVER_DKMS_ENABLED=${D_ENABLE_DKMS}
 
 ENV NVIDIA_NIC_DRIVER_PATH=""
 COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/RPMS/sles-release-*/${D_ARCH}/*.rpm /root/
