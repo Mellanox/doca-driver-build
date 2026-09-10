@@ -94,7 +94,6 @@ func RunBuild(ctx context.Context, log logr.Logger, cfg config.Config, cmdHelper
 		"--without-isert",
 		"--without-srp",
 		"--with-mlnx-tools",
-		"--with-ofed-scripts",
 		"--copy-ifnames-udev",
 	}
 

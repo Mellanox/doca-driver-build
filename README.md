@@ -61,6 +61,18 @@ Before building the container, you need to provide following parameters as `buil
 > NVIDIA NIC driver sources are bundled as part of NVIDIA DOCA package. Both the DOCA package version and its corresponding NIC driver (MLNX_OFED)
 > version need to be specified to fetch the correct driver sources when building the driver container. check [^5] for more information.
 
+>[!NOTE]
+> DOCA 3.6 deprecated `install.pl` and now publishes the driver sources as a flat
+> `DOCA_BASE_SRC-*` archive containing only source packages. The driver container still
+> builds via `install.pl`, so the installer scripts are vendored under `vendor/mlnx_ofed/`
+> and staged into the extracted archive at image build time. See
+> [vendor/mlnx_ofed/README.md](vendor/mlnx_ofed/README.md).
+> Because the published archive name includes a build number that cannot be derived from
+> `D_DOCA_VERSION`, pass the exact archive name or local path via `D_OFED_URL_PATH`; the
+> extracted directory is then discovered automatically.
+> Pre-3.6 `MLNX_OFED_SRC-*` archives remain supported and need no extra arguments: they
+> already bundle `install.pl`, so they are used as-is and the vendored copies are ignored.
+
 >[!IMPORTANT]
 > Check desired NVIDIA NIC drivers sources[^1] availability for designated container OS, only versions available on download page can be utilized  
 
@@ -173,7 +185,9 @@ The following environment variables can be set at container runtime to control d
 >Modification of D_OFED_SRC_DOWNLOAD_PATH must be tighdly coupled with corresponding update to entrypoint.sh script
 
 [^1]: Latest NIC drivers published at [NIC drivers download center](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/), for example:  
-  `https://linux.mellanox.com/public/repo/doca/3.2.0/SOURCES/mlnx_ofed/MLNX_OFED_SRC-debian-25.10-1.2.8.0.tgz`
+  `https://linux.mellanox.com/public/repo/doca/3.2.0/SOURCES/mlnx_ofed/MLNX_OFED_SRC-debian-25.10-1.2.8.0.tgz`  
+  As of DOCA 3.6 the archive is named after the DOCA source version instead, e.g. `DOCA_BASE_SRC-debian-3.6.0-016000.tar.gz`.
+  Override `D_OFED_BASE_URL` if the publishing path for your DOCA release differs from the default.
 
 [^2]: To build RHEL based container from official repository, you need to log in to `registry.redhat.io`, run the following command:  
 `podman login registry.redhat.io --username=${RH_USERNAME} --password=${RH_PASSWORD}`  

@@ -78,7 +78,7 @@ done
 
 timestamp_print "Starting compilation of driver version ${DTK_OCP_COMPILED_DRIVER_VER}"
 
-COMMON_BUILD_FLAGS="--build-only --kernel-only --without-knem --without-iser --without-isert --without-srp --with-mlnx-tools --with-ofed-scripts --copy-ifnames-udev --without-xpmem --without-xpmem-modules"
+COMMON_BUILD_FLAGS="--build-only --kernel-only --without-knem --without-iser --without-isert --without-srp --with-mlnx-tools --copy-ifnames-udev --without-xpmem --without-xpmem-modules"
 
 if [[ "${USE_DKMS}" = true ]]; then
     # DKMS path: omit --disable-kmp so that install.pl produces both the DKMS source

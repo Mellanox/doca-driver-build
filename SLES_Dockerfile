@@ -77,8 +77,13 @@ ARG D_OFED_SRC_DOWNLOAD_PATH
 ARG D_OFED_BASE_URL="https://linux.mellanox.com/public/repo/doca/${D_DOCA_VERSION}/SOURCES/mlnx_ofed"
 ARG D_OFED_SRC_TYPE=""
 
+# Up to DOCA 3.5 the sources ship as MLNX_OFED_SRC-<ofed-version>.tgz, which bundles
+# install.pl; from 3.6 on they ship as DOCA_BASE_SRC-<doca-version>-<build-number>.tar.gz
+# with no installer. This default composes the legacy name because the 3.6 build number cannot
+# be derived from D_DOCA_VERSION, so 3.6+ callers must pass the exact archive name or path via
+# D_OFED_URL_PATH. Both layouts are detected and handled below.
 ARG D_OFED_SRC_ARCHIVE="MLNX_OFED_SRC-${D_OFED_SRC_TYPE}${D_OFED_VERSION}.tgz"
-ARG D_OFED_URL_PATH="${D_OFED_BASE_URL}/${D_OFED_SRC_ARCHIVE}"  # although argument name says URL, local `*.tgz` compressed files may also be used (intended for internal use)
+ARG D_OFED_URL_PATH="${D_OFED_BASE_URL}/${D_OFED_SRC_ARCHIVE}"  # although argument name says URL, local compressed archives may also be used (intended for internal use)
 
 ENV NVIDIA_NIC_DRIVER_PATH="${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_VERSION}"
 
@@ -108,12 +113,32 @@ RUN set -x && \
 # Download NVIDIA NIC driver
 RUN mkdir -p ${D_OFED_SRC_DOWNLOAD_PATH}
 WORKDIR ${D_OFED_SRC_DOWNLOAD_PATH}
-ADD ${D_OFED_URL_PATH} ${D_OFED_SRC_ARCHIVE}
-RUN if file ${D_OFED_SRC_ARCHIVE} | grep compressed; then \
-    tar -xzf ${D_OFED_SRC_ARCHIVE}; \
-  else \
-    mv ${D_OFED_SRC_ARCHIVE}/MLNX_OFED_SRC-${D_OFED_VERSION} . ; \
-  fi
+# Fixed destination name: ADD unpacks a local archive into a directory of this name, and
+# writes a plain file of this name when fetching a URL. The archive's own top-level
+# directory is discovered afterwards, so its exact version is not needed here.
+ADD ${D_OFED_URL_PATH} doca_base_src
+
+# Up to DOCA 3.5 the archive extracts to MLNX_OFED_SRC-<ofed-version>/ complete with
+# install.pl, landing directly at NVIDIA_NIC_DRIVER_PATH with no further work needed.
+# DOCA 3.6 deprecated install.pl and ships a flat DOCA_BASE_SRC-* directory of SRPMs
+# instead, so that layout is reshaped into the tree the build expects and the vendored
+# scripts are staged into it. See vendor/mlnx_ofed/README.md.
+COPY vendor/mlnx_ofed /opt/mlnx_ofed
+RUN set -eux && \
+    if [ -d doca_base_src ]; then \
+        mv doca_base_src/* . && rmdir doca_base_src; \
+    else \
+        tar -xzf doca_base_src && rm -f doca_base_src; \
+    fi && \
+    src_dir=$(find . -maxdepth 1 -type d -name 'DOCA_BASE_SRC-*' | head -1) && \
+    if [ -n "${src_dir}" ]; then \
+        /opt/mlnx_ofed/stage_src_tree.sh "${src_dir}" "${NVIDIA_NIC_DRIVER_PATH}" rpm; \
+    elif [ -f "${NVIDIA_NIC_DRIVER_PATH}/install.pl" ]; then \
+        echo "Using legacy source tree with bundled install.pl: ${NVIDIA_NIC_DRIVER_PATH}"; \
+    else \
+        echo "error: ${D_OFED_URL_PATH} yielded neither a DOCA_BASE_SRC-* directory nor ${NVIDIA_NIC_DRIVER_PATH}/install.pl" >&2; \
+        exit 1; \
+    fi
 
 WORKDIR /root
 
