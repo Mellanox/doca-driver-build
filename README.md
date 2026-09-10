@@ -164,6 +164,7 @@ The following environment variables can be set at container runtime to control d
 | `MLX5_AUXILIARY_MODULES` | `mlx5_vdpa mlx5_fwctl mlx5_dpll` | Space-separated list of mlx5 auxiliary modules to temporarily blacklist and unload before driver restart, then explicitly reload after the new driver stack is active. Set to an empty string to disable this handling. |
 | `UNLOAD_THIRD_PARTY_RDMA_MODULES` | `false` | When `true`, all known third-party RDMA kernel modules (from rdma-core: qedr, efa, siw, etc.) are blacklisted and unloaded before OFED driver reload. The module list is hardcoded. |
 | `UNLOAD_STORAGE_MODULES` | `false` | When `true`, storage modules (ib_isert, nvme_rdma, etc.) are unloaded during driver restart. |
+| `ENABLE_NFSRDMA` | `false` | When `true`, builds and loads NFS-RDMA kernel modules (rpcrdma, nvme_rdma) and copies NFS userspace tools (mount.nfs) to the host if not already present. |
 | `RESTORE_DRIVER_ON_POD_TERMINATION` | `false` | When `true`, restores the inbox driver on container teardown. |
 
 >[!IMPORTANT]
