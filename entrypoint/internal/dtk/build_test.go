@@ -92,7 +92,7 @@ func TestRunBuild(t *testing.T) {
 		// --without-dkms must be present when UseDKMS is false
 		cmdMock.EXPECT().RunCommand(mock.Anything, expectedInstallScript,
 			"--build-only", "--kernel-only", "--without-knem", "--without-iser", "--without-isert",
-			"--without-srp", "--with-mlnx-tools", "--with-ofed-scripts", "--copy-ifnames-udev",
+			"--without-srp", "--with-mlnx-tools", "--copy-ifnames-udev",
 			"--disable-kmp", "--without-dkms", "--kernel", "5.14.0-687.13.1.el9_8.x86_64",
 			"--distro", "rhel9.8").Return("", "", nil)
 
@@ -145,7 +145,7 @@ func TestRunBuild(t *testing.T) {
 		// (which place .ko files without needing kernel headers in the main container).
 		cmdMock.EXPECT().RunCommand(mock.Anything, expectedInstallScript,
 			"--build-only", "--kernel-only", "--without-knem", "--without-iser", "--without-isert",
-			"--without-srp", "--with-mlnx-tools", "--with-ofed-scripts", "--copy-ifnames-udev").
+			"--without-srp", "--with-mlnx-tools", "--copy-ifnames-udev").
 			Return("", "", nil)
 
 		ctx, cancel := context.WithCancel(context.Background())
