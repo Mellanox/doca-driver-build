@@ -71,9 +71,16 @@ RUN set -x && \
     dnf -y update --exclude=redhat-release --releasever=${RELEASE_VER} && \
     dnf -y install perl \
 # Container functional requirements
-    jq iproute kmod procps-ng udev \
-# NFS userspace tools (mount.nfs) — copied to host at runtime when ENABLE_NFSRDMA=true
-    nfs-utils --releasever=${RELEASE_VER}
+    jq iproute kmod procps-ng udev --releasever=${RELEASE_VER}
+
+# NFS userspace tools (mount.nfs) — copied to host at runtime when ENABLE_NFSRDMA=true.
+# nfs-utils is carried by the entitled RHEL repos only, not by the UBI ones, so bases that
+# resolve packages without a subscription (the hardened STIG base) cannot supply it. The
+# runtime copy is best effort, so keep the image buildable instead of requiring the package.
+RUN set -x && \
+    RELEASE_VER=$(echo ${D_OS} | sed 's/rhel//') && \
+    dnf -y install nfs-utils --releasever=${RELEASE_VER} || \
+    echo "WARNING: nfs-utils unavailable, mount.nfs will not be provisioned to the host when ENABLE_NFSRDMA=true"
 
 COPY --from=go_builder /workspace/build/entrypoint /root/entrypoint
 WORKDIR /root
@@ -256,15 +263,20 @@ RUN set -x && \
 # MOFED functional requirements
     dnf install -y pciutils hostname udev ethtool \
 # Container functional requirements
-    jq iproute kmod procps-ng udev \
-# NFS userspace tools (mount.nfs) — copied to host at runtime when ENABLE_NFSRDMA=true
-    nfs-utils --releasever=${RELEASE_VER} && \
+    jq iproute kmod procps-ng udev --releasever=${RELEASE_VER} && \
 # DKMS and kernel module build tools when DKMS enabled (runtime dkms add/build/install)
     if [ "$D_ENABLE_DKMS" = "true" ]; then \
         MAJOR_VER=$(echo ${D_OS} | sed 's/rhel\([0-9]*\).*/\1/') && \
         dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${MAJOR_VER}.noarch.rpm && \
         dnf install -y dkms gcc make bison flex elfutils-libelf-devel --releasever=${RELEASE_VER}; \
     fi
+
+# NFS userspace tools (mount.nfs) — copied to host at runtime when ENABLE_NFSRDMA=true.
+# Best effort for the same reason as in the base stage: only the entitled RHEL repos carry it.
+RUN set -x && \
+    RELEASE_VER=$(echo ${D_OS} | sed 's/rhel//') && \
+    dnf -y install nfs-utils --releasever=${RELEASE_VER} || \
+    echo "WARNING: nfs-utils unavailable, mount.nfs will not be provisioned to the host when ENABLE_NFSRDMA=true"
 
 # Prevent modprobe from giving a WARNING about missing files
 RUN touch /lib/modules/${D_KERNEL_VER}/modules.order /lib/modules/${D_KERNEL_VER}/modules.builtin && \
