@@ -64,6 +64,11 @@ MLX5_AUXILIARY_MODULES_UNLOADED=""
 # Space-separated to match the Go envSeparator and bash word-splitting — no translation needed.
 THIRD_PARTY_RDMA_MODULES="${THIRD_PARTY_RDMA_MODULES:-bnxt_re efa erdma iw_cxgb4 hfi1 hns_roce ionic_rdma irdma ib_qib mana_ib ocrdma qedr rdma_rxe siw vmw_pvrdma}"
 
+# Storage-over-RDMA modules unloaded when UNLOAD_STORAGE_MODULES=true. Same list and
+# separator as mofedmodules.DefaultStorageModules, and it drives both the unload
+# injection and the loaded-module check below so the two cannot drift apart.
+STORAGE_MODULES="${STORAGE_MODULES:-ib_iser ib_isert ib_srp ib_srpt nvme_rdma nvmet_rdma rpcrdma svcrdma xprtrdma}"
+
 : ${UBUNTU_PRO_TOKEN:=""}
 
 # Recorded before defaulting so a precompiled image overriding USE_DKMS can tell an
@@ -562,9 +567,7 @@ function unload_storage_modules() {
         unload_storage_script="/usr/share/mlnx_ofed/mod_load_funcs"
     fi
 
-    # STORAGE_MODULES is space-separated (matches Go config envSeparator and bash word-splitting).
-    storage_modules_list="${STORAGE_MODULES:-ib_iser ib_isert ib_srp ib_srpt nvme_rdma nvmet_rdma rpcrdma xprtrdma}"
-    sed -i -e "/^[[:space:]]*UNLOAD_MODULES=\"[a-z]/a\\    UNLOAD_MODULES=\"\$UNLOAD_MODULES ${storage_modules_list}\"" ${unload_storage_script}
+    sed -i -e "/^[[:space:]]*UNLOAD_MODULES=\"[a-z]/a\\    UNLOAD_MODULES=\"\$UNLOAD_MODULES ${STORAGE_MODULES}\"" ${unload_storage_script}
 
     if [ `grep ib_isert ${unload_storage_script} -c` -lt 1 ]; then
         timestamp_print "Failed to inject storage modules for unload"
@@ -2006,7 +2009,7 @@ fi
 
 unload_blocking_modules
 
-storage_modules_loaded=$(lsmod | egrep 'ib_isert|nvme_rdma|nvmet_rdma|rpcrdma|xprtrdma|ib_srpt' -c)
+storage_modules_loaded=$(lsmod | egrep "^(${STORAGE_MODULES// /|}) " -c)
 
 if ! ${UNLOAD_STORAGE_MODULES} && [[ "${storage_modules_loaded}" != "0" ]]; then
     timestamp_print "Storage modules are loaded for current driver, terminating prior driver reload failure due to UNLOAD_STORAGE_MODULES not set to \"true\""

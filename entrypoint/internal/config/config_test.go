@@ -66,7 +66,7 @@ var _ = Describe("Config", func() {
 	})
 
 	Context("StorageModules", func() {
-		It("should include ib_iser and ib_srp in the default list", func() {
+		It("should parse the default list when STORAGE_MODULES is not set", func() {
 			os.Unsetenv("STORAGE_MODULES")
 
 			cfg, err := GetConfig()
@@ -78,7 +78,9 @@ var _ = Describe("Config", func() {
 			Expect(cfg.StorageModules).To(ContainElement("nvme_rdma"))
 			Expect(cfg.StorageModules).To(ContainElement("nvmet_rdma"))
 			Expect(cfg.StorageModules).To(ContainElement("rpcrdma"))
+			Expect(cfg.StorageModules).To(ContainElement("svcrdma"))
 			Expect(cfg.StorageModules).To(ContainElement("xprtrdma"))
+			Expect(cfg.StorageModules).To(HaveLen(9))
 		})
 	})
 

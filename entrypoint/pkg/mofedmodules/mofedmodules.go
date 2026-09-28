@@ -27,10 +27,11 @@ const Separator = " "
 // DefaultStorageModules is the list of storage-over-RDMA kernel modules that
 // the driver container unloads when UNLOAD_STORAGE_MODULES=true. Includes
 // both initiator (ib_iser, ib_srp, nvme_rdma, rpcrdma/xprtrdma) and target
-// (ib_isert, ib_srpt, nvmet_rdma) sides of iSCSI, SRP, NVMe and NFS over RDMA.
+// (ib_isert, ib_srpt, nvmet_rdma, svcrdma) sides of iSCSI, SRP, NVMe and NFS
+// over RDMA.
 var DefaultStorageModules = []string{
 	"ib_iser", "ib_isert", "ib_srp", "ib_srpt",
-	"nvme_rdma", "nvmet_rdma", "rpcrdma", "xprtrdma",
+	"nvme_rdma", "nvmet_rdma", "rpcrdma", "svcrdma", "xprtrdma",
 }
 
 // DefaultThirdPartyRDMAModules is the list of non-NVIDIA NIC-vendor RDMA

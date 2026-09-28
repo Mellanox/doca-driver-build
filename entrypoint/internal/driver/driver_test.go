@@ -34,6 +34,7 @@ import (
 	hostMockPkg "github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/host/mocks"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/wrappers"
 	wrappersMockPkg "github.com/Mellanox/doca-driver-build/entrypoint/internal/wrappers/mocks"
+	"github.com/Mellanox/doca-driver-build/entrypoint/pkg/mofedmodules"
 )
 
 var _ = Describe("Driver", func() {
@@ -2723,6 +2724,25 @@ var _ = Describe("Driver", func() {
 
 			err := dm.restartDriver(ctx)
 			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("unloadStorageModules", func() {
+		It("should inject the default storage modules into the openibd unload list", func() {
+			cfg.StorageModules = mofedmodules.DefaultStorageModules
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+
+			osMock.EXPECT().Stat("/usr/share/mlnx_ofed/mod_load_funcs").Return(nil, errors.New("not found"))
+			cmdMock.EXPECT().RunCommand(ctx, "sed", "-i", "-e", mock.MatchedBy(func(sedScript string) bool {
+				// svcrdma keeps a reference on ib_core on NFS-over-RDMA servers,
+				// so the openibd restart fails unless it is unloaded too.
+				return strings.Contains(sedScript,
+					`UNLOAD_MODULES="$UNLOAD_MODULES `+
+						`ib_iser ib_isert ib_srp ib_srpt nvme_rdma nvmet_rdma rpcrdma svcrdma xprtrdma"`)
+			}), "/etc/init.d/openibd").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "sh", "-c", "grep ib_iser /etc/init.d/openibd -c").Return("1", "", nil)
+
+			Expect(dm.unloadStorageModules(ctx)).To(Succeed())
 		})
 	})
 
