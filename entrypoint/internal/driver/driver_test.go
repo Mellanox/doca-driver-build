@@ -61,6 +61,52 @@ var _ = Describe("Driver", func() {
 		}
 	})
 
+	Context("patchOpenIBDNVMECheck", func() {
+		const path = "/usr/share/mlnx_ofed/mod_load_funcs"
+		const old = "for mod in ib_isert nvme_rdma nvmet_rdma nvme rpcrdma xprtrdma ib_srpt"
+		const fixed = "for mod in ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma ib_srpt"
+
+		BeforeEach(func() {
+			cfg.NvidiaNicDriverVer = "26.07-0.7.7.0"
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+		})
+
+		It("patches only the stop-check loop and retains other nvme references", func() {
+			input := "nvme elsewhere\n" + old + "; do\n  check_module $mod\ndone\n"
+			want := "nvme elsewhere\n" + fixed + "; do\n  check_module $mod\ndone\n"
+			osMock.EXPECT().ReadFile(path).Return([]byte(input), nil)
+			osMock.EXPECT().WriteFile(path, []byte(want), os.FileMode(0o644)).Return(nil)
+			Expect(dm.patchOpenIBDNVMECheck(ctx)).To(Succeed())
+		})
+
+		It("accepts an already patched precompiled image without writing", func() {
+			osMock.EXPECT().ReadFile(path).Return([]byte(fixed), nil)
+			Expect(dm.patchOpenIBDNVMECheck(ctx)).To(Succeed())
+		})
+
+		DescribeTable("skips unaffected versions without accessing the file", func(version string) {
+			dm.cfg.NvidiaNicDriverVer = version
+			Expect(dm.patchOpenIBDNVMECheck(ctx)).To(Succeed())
+		}, Entry("older", "26.04-1.1.0.0"), Entry("newer", "26.10-0.1.0.0"))
+
+		DescribeTable("rejects unexpected layouts", func(content string) {
+			osMock.EXPECT().ReadFile(path).Return([]byte(content), nil)
+			Expect(dm.patchOpenIBDNVMECheck(ctx)).To(MatchError(ContainSubstring("unexpected openibd")))
+		}, Entry("unknown", "for mod in nvme; do"), Entry("duplicate", old+"\n"+old),
+			Entry("mixed", old+"\n"+fixed))
+
+		It("fails before unloading when the installed file is missing", func() {
+			osMock.EXPECT().ReadFile(path).Return(nil, os.ErrNotExist)
+			Expect(dm.restartDriver(ctx)).To(MatchError(ContainSubstring("read openibd NVMe")))
+		})
+
+		It("propagates write failures before unloading", func() {
+			osMock.EXPECT().ReadFile(path).Return([]byte(old), nil)
+			osMock.EXPECT().WriteFile(path, []byte(fixed), os.FileMode(0o644)).Return(os.ErrPermission)
+			Expect(dm.restartDriver(ctx)).To(MatchError(ContainSubstring("patch openibd NVMe")))
+		})
+	})
+
 	Context("New", func() {
 		It("should create a new driver manager instance", func() {
 			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
