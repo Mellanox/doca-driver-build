@@ -1970,8 +1970,9 @@ func (d *driverMgr) patchOpenIBDNVMECheck(ctx context.Context) error {
 	if strings.Contains(content, fixed) {
 		return nil
 	}
-	content = strings.Replace(content, old, fixed, 1)
-	if err := d.os.WriteFile(path, []byte(content), 0o644); err != nil {
+	// sed -i writes a temporary file and replaces the original only after writing it.
+	_, _, err = d.cmd.RunCommand(ctx, "sed", "-i", "s/"+old+"/"+fixed+"/", path)
+	if err != nil {
 		return fmt.Errorf("patch openibd NVMe stop check: %w", err)
 	}
 	logr.FromContextOrDiscard(ctx).Info("Patched openibd stop check to preserve inbox nvme")

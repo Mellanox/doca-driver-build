@@ -73,9 +73,8 @@ var _ = Describe("Driver", func() {
 
 		It("patches only the stop-check loop and retains other nvme references", func() {
 			input := "nvme elsewhere\n" + old + "; do\n  check_module $mod\ndone\n"
-			want := "nvme elsewhere\n" + fixed + "; do\n  check_module $mod\ndone\n"
 			osMock.EXPECT().ReadFile(path).Return([]byte(input), nil)
-			osMock.EXPECT().WriteFile(path, []byte(want), os.FileMode(0o644)).Return(nil)
+			cmdMock.EXPECT().RunCommand(ctx, "sed", "-i", "s/"+old+"/"+fixed+"/", path).Return("", "", nil)
 			Expect(dm.patchOpenIBDNVMECheck(ctx)).To(Succeed())
 		})
 
@@ -101,9 +100,10 @@ var _ = Describe("Driver", func() {
 			Expect(dm.restartDriver(ctx)).To(MatchError(ContainSubstring("read openibd NVMe")))
 		})
 
-		It("propagates write failures before unloading", func() {
+		It("propagates sed failures before unloading", func() {
 			osMock.EXPECT().ReadFile(path).Return([]byte(old), nil)
-			osMock.EXPECT().WriteFile(path, []byte(fixed), os.FileMode(0o644)).Return(os.ErrPermission)
+			cmdMock.EXPECT().RunCommand(ctx, "sed", "-i", "s/"+old+"/"+fixed+"/", path).
+				Return("", "sed: permission denied", os.ErrPermission)
 			Expect(dm.restartDriver(ctx)).To(MatchError(ContainSubstring("patch openibd NVMe")))
 		})
 	})
@@ -2217,8 +2217,8 @@ var _ = Describe("Driver", func() {
 			}
 			patchComplete := osMock.EXPECT().ReadFile(path).Return([]byte(content), nil).Once()
 			if !alreadyPatched {
-				patchComplete = osMock.EXPECT().WriteFile(path, []byte(fixed), os.FileMode(0o644)).
-					Return(nil).Once().NotBefore(patchComplete)
+				patchComplete = cmdMock.EXPECT().RunCommand(ctx, "sed", "-i", "s/"+old+"/"+fixed+"/", path).
+					Return("", "", nil).Once().NotBefore(patchComplete)
 			}
 
 			// Mock generateOfedModulesBlacklist
