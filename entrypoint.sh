@@ -726,7 +726,36 @@ function load_mlx5_auxiliary_modules() {
     done
 }
 
+# Container modinfo can mistake host inbox nvme for OFED's local-disk driver.
+# Restore the pre-26.07 stop check after package installation, retaining RDMA checks.
+function patch_openibd_nvme_check() {
+    [[ "${NVIDIA_NIC_DRIVER_VER}" == 26.07-* ]] || return 0
+
+    local f=/usr/share/mlnx_ofed/mod_load_funcs
+    local old='for mod in ib_isert nvme_rdma nvmet_rdma nvme rpcrdma xprtrdma ib_srpt'
+    local fixed='for mod in ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma ib_srpt'
+    local count
+
+    if [[ ! -f "$f" ]]; then
+        echo "Missing $f" >&2
+        return 1
+    fi
+    count=$(grep -Fo -e "$old" -e "$fixed" "$f" | wc -l)
+    if [[ "$count" -ne 1 ]]; then
+        echo "Unexpected openibd NVMe stop-check layout in $f" >&2
+        return 1
+    fi
+    if grep -Fq "$fixed" "$f"; then
+        return 0
+    fi
+    sed -i "s/$old/$fixed/" "$f" || return 1
+    grep -Fq "$fixed" "$f" || return 1
+    timestamp_print "Patched openibd stop check to preserve inbox nvme"
+}
+
 function restart_driver() {
+    patch_openibd_nvme_check || exit 1
+
     debug_print "Function: ${FUNCNAME[0]}"
 
     load_pci_hyperv_intf=false

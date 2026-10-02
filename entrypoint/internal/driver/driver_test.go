@@ -61,6 +61,53 @@ var _ = Describe("Driver", func() {
 		}
 	})
 
+	Context("patchOpenIBDNVMECheck", func() {
+		const path = "/usr/share/mlnx_ofed/mod_load_funcs"
+		const old = "for mod in ib_isert nvme_rdma nvmet_rdma nvme rpcrdma xprtrdma ib_srpt"
+		const fixed = "for mod in ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma ib_srpt"
+
+		BeforeEach(func() {
+			cfg.NvidiaNicDriverVer = "26.07-0.7.7.0"
+			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
+		})
+
+		It("patches only the stop-check loop and retains other nvme references", func() {
+			input := "nvme elsewhere\n" + old + "; do\n  check_module $mod\ndone\n"
+			osMock.EXPECT().ReadFile(path).Return([]byte(input), nil)
+			cmdMock.EXPECT().RunCommand(ctx, "sed", "-i", "s/"+old+"/"+fixed+"/", path).Return("", "", nil)
+			Expect(dm.patchOpenIBDNVMECheck(ctx)).To(Succeed())
+		})
+
+		It("accepts an already patched precompiled image without writing", func() {
+			dm.containerMode = constants.DriverContainerModePrecompiled
+			osMock.EXPECT().ReadFile(path).Return([]byte(fixed), nil)
+			Expect(dm.patchOpenIBDNVMECheck(ctx)).To(Succeed())
+		})
+
+		DescribeTable("skips unaffected versions without accessing the file", func(version string) {
+			dm.cfg.NvidiaNicDriverVer = version
+			Expect(dm.patchOpenIBDNVMECheck(ctx)).To(Succeed())
+		}, Entry("older", "26.04-1.1.0.0"), Entry("newer", "26.10-0.1.0.0"))
+
+		DescribeTable("rejects unexpected layouts", func(content string) {
+			osMock.EXPECT().ReadFile(path).Return([]byte(content), nil)
+			Expect(dm.patchOpenIBDNVMECheck(ctx)).To(MatchError(ContainSubstring("unexpected openibd")))
+		}, Entry("unknown", "for mod in nvme; do"), Entry("duplicate", old+"\n"+old),
+			Entry("mixed", old+"\n"+fixed))
+
+		It("fails before unloading when the installed file is missing", func() {
+			osMock.EXPECT().ReadFile(path).Return(nil, os.ErrNotExist)
+			Expect(dm.restartDriver(ctx)).To(MatchError(ContainSubstring("read openibd NVMe")))
+		})
+
+		It("propagates sed failures before unloading", func() {
+			osMock.EXPECT().ReadFile(path).Return([]byte(old), nil)
+			cmdMock.EXPECT().RunCommand(ctx, "sed", "-i", "s/"+old+"/"+fixed+"/", path).
+				Return("", "sed: permission denied", os.ErrPermission)
+			Expect(dm.restartDriver(ctx)).To(MatchError(ContainSubstring("patch openibd NVMe")))
+		})
+	})
+
 	Context("New", func() {
 		It("should create a new driver manager instance", func() {
 			dm = New(constants.DriverContainerModeSources, cfg, cmdMock, hostMock, osMock).(*driverMgr)
@@ -2145,12 +2192,33 @@ var _ = Describe("Driver", func() {
 			Expect(result).To(BeTrue())
 		})
 
-		It("should restart driver when modules don't match", func() {
+		DescribeTable("patches the NVMe stop check before restarting mismatched modules", func(mode string, alreadyPatched bool) {
+			cfg.NvidiaNicDriverVer = "26.07-0.7.7.0"
 			dm = &driverMgr{
-				cfg:  cfg,
-				cmd:  cmdMock,
-				host: hostMock,
-				os:   osMock,
+				cfg:                   cfg,
+				containerMode:         mode,
+				newDriverLoaded:       false,
+				driverBuildIncomplete: false,
+				cmd:                   cmdMock,
+				host:                  hostMock,
+				os:                    osMock,
+			}
+
+			// Precompiled startup needs no build or package installation to patch the script.
+			if mode == constants.DriverContainerModePrecompiled {
+				Expect(dm.Build(ctx)).To(Succeed())
+			}
+			const path = "/usr/share/mlnx_ofed/mod_load_funcs"
+			const old = "for mod in ib_isert nvme_rdma nvmet_rdma nvme rpcrdma xprtrdma ib_srpt"
+			const fixed = "for mod in ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma ib_srpt"
+			content := old
+			if alreadyPatched {
+				content = fixed
+			}
+			patchComplete := osMock.EXPECT().ReadFile(path).Return([]byte(content), nil).Once()
+			if !alreadyPatched {
+				patchComplete = cmdMock.EXPECT().RunCommand(ctx, "sed", "-i", "s/"+old+"/"+fixed+"/", path).
+					Return("", "", nil).Once().NotBefore(patchComplete)
 			}
 
 			// Mock generateOfedModulesBlacklist
@@ -2177,7 +2245,8 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "modinfo", "-F", "depends", "mlx5_ib").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "modprobe", "-d", "/host", "pci-hyperv-intf").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "/etc/init.d/openibd", "restart").Return("", "", nil).
+				Once().NotBefore(patchComplete)
 
 			// Mock printLoadedDriverVersion
 			hostMock.EXPECT().LsMod(ctx).Return(map[string]host.LoadedModule{
@@ -2199,7 +2268,9 @@ var _ = Describe("Driver", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).To(BeTrue())
 			Expect(dm.newDriverLoaded).To(BeTrue())
-		})
+		}, Entry("dynamic image", constants.DriverContainerModeSources, false),
+			Entry("precompiled image without Dockerfile patch", constants.DriverContainerModePrecompiled, false),
+			Entry("precompiled image with existing Dockerfile patch", constants.DriverContainerModePrecompiled, true))
 
 		It("should include NFS RDMA modules when enabled", func() {
 			cfg.EnableNfsRdma = true
