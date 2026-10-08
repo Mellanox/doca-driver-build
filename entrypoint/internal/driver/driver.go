@@ -1947,8 +1947,44 @@ func (d *driverMgr) loadModuleHostInboxDependencies(ctx context.Context, modName
 	}
 }
 
+// patchOpenIBDNVMECheck restores the pre-26.07 stop check. Container modinfo can
+// mistake the host's inbox nvme for OFED's local-disk driver. Keep RDMA checks.
+// Run after package installation (including cache reuse), before any unloading.
+func (d *driverMgr) patchOpenIBDNVMECheck(ctx context.Context) error {
+	if !strings.HasPrefix(d.cfg.NvidiaNicDriverVer, "26.07-") {
+		return nil
+	}
+
+	const path = "/usr/share/mlnx_ofed/mod_load_funcs"
+	const old = "for mod in ib_isert nvme_rdma nvmet_rdma nvme rpcrdma xprtrdma ib_srpt"
+	const fixed = "for mod in ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma ib_srpt"
+
+	data, err := d.os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read openibd NVMe stop check: %w", err)
+	}
+	content := string(data)
+	if strings.Count(content, old)+strings.Count(content, fixed) != 1 {
+		return fmt.Errorf("unexpected openibd NVMe stop-check layout in %s", path)
+	}
+	if strings.Contains(content, fixed) {
+		return nil
+	}
+	// sed -i writes a temporary file and replaces the original only after writing it.
+	_, _, err = d.cmd.RunCommand(ctx, "sed", "-i", "s/"+old+"/"+fixed+"/", path)
+	if err != nil {
+		return fmt.Errorf("patch openibd NVMe stop check: %w", err)
+	}
+	logr.FromContextOrDiscard(ctx).Info("Patched openibd stop check to preserve inbox nvme")
+	return nil
+}
+
 // restartDriver restarts the driver modules
 func (d *driverMgr) restartDriver(ctx context.Context) error {
+	if err := d.patchOpenIBDNVMECheck(ctx); err != nil {
+		return err
+	}
+
 	log := logr.FromContextOrDiscard(ctx)
 
 	log.V(1).Info("Restarting driver modules")
