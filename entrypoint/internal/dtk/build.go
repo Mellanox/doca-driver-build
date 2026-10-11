@@ -83,8 +83,7 @@ func RunBuild(ctx context.Context, log logr.Logger, cfg config.Config, cmdHelper
 
 	// Construct install.pl command
 	// ${DTK_OCP_NIC_SHARED_DIR}/MLNX_OFED_SRC-${DTK_OCP_COMPILED_DRIVER_VER}/install.pl
-	srcDirName := fmt.Sprintf("MLNX_OFED_SRC-%s", cfg.DtkOcpCompiledDriverVer)
-	installScript := filepath.Join(cfg.DtkOcpNicSharedDir, srcDirName, "install.pl")
+	installScript := filepath.Join(cfg.DtkOcpNicSharedDir, SourceDirName(cfg.DtkOcpCompiledDriverVer), "install.pl")
 
 	installArgs := []string{
 		installScript,
@@ -128,11 +127,8 @@ func RunBuild(ctx context.Context, log logr.Logger, cfg config.Config, cmdHelper
 		return fmt.Errorf("driver build failed: %w", err)
 	}
 
-	// install.pl may exit 0 without producing RPMs (e.g. its source tree was replaced mid-build).
-	// Never record success for such a build, otherwise it is skipped on every later restart.
-	if !HasBuiltRPMs(filepath.Dir(installScript)) {
-		_ = os.Remove(cfg.DtkOcpStartCompileFlag)
-		return fmt.Errorf("driver build produced no RPMs under %s", filepath.Join(filepath.Dir(installScript), "RPMS"))
+	if err := ensureRPMsBuilt(filepath.Dir(installScript), cfg.DtkOcpStartCompileFlag); err != nil {
+		return err
 	}
 
 	// Create done flag
@@ -175,4 +171,16 @@ func startFlagIsCurrent(log logr.Logger, path string) bool {
 		log.Error(err, "failed to remove stale start flag")
 	}
 	return false
+}
+
+// ensureRPMsBuilt fails when the build tree holds no RPMs. install.pl may exit 0 without
+// producing any (e.g. its source tree was replaced mid-build), and recording success for such a
+// build would make every later restart skip it. The start flag is removed so a retry waits for
+// fresh preparations.
+func ensureRPMsBuilt(srcDir, startFlagPath string) error {
+	if HasBuiltRPMs(srcDir) {
+		return nil
+	}
+	_ = os.Remove(startFlagPath)
+	return fmt.Errorf("driver build produced no RPMs under %s", filepath.Join(srcDir, "RPMS"))
 }

@@ -49,14 +49,8 @@ func (d *driverMgr) buildDriverDTK(ctx context.Context, kernelVersion, inventory
 	doneFlagPath := filepath.Join(dtkSharedDir, doneFlagName)
 	startFlagPath := filepath.Join(dtkSharedDir, constants.DtkStartCompileFlag)
 
-	// A done flag without built RPMs is stale (e.g. written for a build that was interrupted by a
-	// node reboot): drop it so the build is redone instead of failing in finalize forever.
-	if _, err := d.os.Stat(doneFlagPath); err == nil &&
-		!dtk.HasBuiltRPMs(filepath.Join(dtkSharedDir, "MLNX_OFED_SRC-"+d.cfg.NvidiaNicDriverVer)) {
-		log.Info("DTK done flag found but no built RPMs, discarding it", "flag", doneFlagPath)
-		if err := d.os.RemoveAll(doneFlagPath); err != nil {
-			return fmt.Errorf("failed to remove stale done flag: %w", err)
-		}
+	if err := d.discardStaleDoneFlag(ctx, dtkSharedDir, doneFlagPath); err != nil {
+		return err
 	}
 
 	// Check if build is already done
@@ -105,7 +99,7 @@ func (d *driverMgr) dtkSetupDriverBuild(ctx context.Context, sharedDir, startFla
 	// Matches bash: cp -r ${NVIDIA_NIC_DRIVER_PATH} ${DTK_OCP_NIC_SHARED_DIR}/
 	srcDir := d.cfg.NvidiaNicDriverPath
 	// Use expected directory name format to ensure DTK build script finds it
-	expectedName := fmt.Sprintf("MLNX_OFED_SRC-%s", d.cfg.NvidiaNicDriverVer)
+	expectedName := dtk.SourceDirName(d.cfg.NvidiaNicDriverVer)
 	destDir := filepath.Join(sharedDir, expectedName)
 
 	// Clean up destination if it exists to avoid nesting (cp -r behavior)
@@ -159,17 +153,38 @@ export USE_DKMS="%v"
 		return fmt.Errorf("failed to copy build script: %w", err)
 	}
 
-	// Create start flag, stamped with the boot ID so the sidecar can ignore a flag left over
-	// from before a node reboot.
-	log.Info("Creating start compile flag", "path", startFlagPath)
-	bootID, err := dtk.BootID()
+	return d.writeStartFlag(ctx, startFlagPath)
+}
+
+// discardStaleDoneFlag removes a done flag that has no built RPMs behind it (e.g. written for a
+// build interrupted by a node reboot), so the build is redone instead of failing in finalize forever.
+func (d *driverMgr) discardStaleDoneFlag(ctx context.Context, sharedDir, doneFlagPath string) error {
+	if _, err := d.os.Stat(doneFlagPath); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to stat done flag: %w", err)
+	}
+	if dtk.HasBuiltRPMs(filepath.Join(sharedDir, dtk.SourceDirName(d.cfg.NvidiaNicDriverVer))) {
+		return nil
+	}
+	logr.FromContextOrDiscard(ctx).Info("DTK done flag found but no built RPMs, discarding it", "flag", doneFlagPath)
+	if err := d.os.RemoveAll(doneFlagPath); err != nil {
+		return fmt.Errorf("failed to remove stale done flag: %w", err)
+	}
+	return nil
+}
+
+// writeStartFlag signals the sidecar to compile. The flag is stamped with the boot ID so the
+// sidecar can ignore one left over from before a node reboot.
+func (d *driverMgr) writeStartFlag(ctx context.Context, startFlagPath string) error {
+	logr.FromContextOrDiscard(ctx).Info("Creating start compile flag", "path", startFlagPath)
+	bootID, err := dtk.BootIDFrom(d.os.ReadFile)
 	if err != nil {
 		return err
 	}
 	if err := d.os.WriteFile(startFlagPath, []byte(bootID), 0o644); err != nil {
 		return fmt.Errorf("failed to create start flag: %w", err)
 	}
-
 	return nil
 }
 

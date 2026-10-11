@@ -4729,6 +4729,16 @@ var _ = Describe("Driver OFED Blacklist", func() {
 	})
 })
 
+// fixedBootIDOS serves a constant boot ID so DTK setup tests do not depend on the host's /proc.
+type fixedBootIDOS struct{ wrappers.OSWrapper }
+
+func (f fixedBootIDOS) ReadFile(path string) ([]byte, error) {
+	if strings.HasSuffix(path, "boot_id") {
+		return []byte("test-boot-id\n"), nil
+	}
+	return f.OSWrapper.ReadFile(path)
+}
+
 var _ = Describe("Driver DTK setup", func() {
 	var (
 		cmdMock  *cmdMockPkg.Interface
@@ -4764,7 +4774,7 @@ var _ = Describe("Driver DTK setup", func() {
 				UseDKMS:             true,
 				EnableNfsRdma:       true,
 			}
-			dm := &driverMgr{cfg: cfg, cmd: cmdMock, host: hostMock, os: wrappers.NewOS()}
+			dm := &driverMgr{cfg: cfg, cmd: cmdMock, host: hostMock, os: fixedBootIDOS{wrappers.NewOS()}}
 
 			sharedDir := filepath.Join(tempDir, "dkms-true")
 			startFlagPath := filepath.Join(sharedDir, "dtk_start_compile")
@@ -4798,7 +4808,7 @@ var _ = Describe("Driver DTK setup", func() {
 				UseDKMS:             false,
 				EnableNfsRdma:       true,
 			}
-			dm := &driverMgr{cfg: cfg, cmd: cmdMock, host: hostMock, os: wrappers.NewOS()}
+			dm := &driverMgr{cfg: cfg, cmd: cmdMock, host: hostMock, os: fixedBootIDOS{wrappers.NewOS()}}
 
 			sharedDir := filepath.Join(tempDir, "dkms-false")
 			startFlagPath := filepath.Join(sharedDir, "dtk_start_compile")
@@ -4847,7 +4857,7 @@ PACKAGE_VERSION="2604.0.43-1"
 	BeforeEach(func() {
 		ctx = context.Background()
 		srcBase = GinkgoT().TempDir()
-		dm = &driverMgr{os: wrappers.NewOS()}
+		dm = &driverMgr{os: fixedBootIDOS{wrappers.NewOS()}}
 	})
 
 	It("finds dkms.conf directly under mlnx-ofa_kernel-* directory", func() {

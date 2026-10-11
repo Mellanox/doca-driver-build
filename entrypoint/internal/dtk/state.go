@@ -30,7 +30,13 @@ var bootIDPath = "/proc/sys/kernel/random/boot_id"
 // survives a node reboot (containers restart in place), so the boot ID is used to tell a
 // start flag written before the reboot from one written for the current attempt.
 func BootID() (string, error) {
-	data, err := os.ReadFile(bootIDPath)
+	return BootIDFrom(os.ReadFile)
+}
+
+// BootIDFrom is BootID with an injectable file reader, for callers that read host files
+// through their own OS abstraction.
+func BootIDFrom(readFile func(path string) ([]byte, error)) (string, error) {
+	data, err := readFile(bootIDPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read boot id: %w", err)
 	}
@@ -43,4 +49,9 @@ func BootID() (string, error) {
 func HasBuiltRPMs(srcDir string) bool {
 	matches, err := filepath.Glob(filepath.Join(srcDir, "RPMS", "redhat-release-*", "*", "*.rpm"))
 	return err == nil && len(matches) > 0
+}
+
+// SourceDirName returns the name of the driver source directory inside the shared DTK dir.
+func SourceDirName(driverVersion string) string {
+	return "MLNX_OFED_SRC-" + driverVersion
 }
