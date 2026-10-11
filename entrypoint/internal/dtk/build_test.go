@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/config"
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/constants"
 	cmdMockPkg "github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/cmd/mocks"
 )
 
@@ -209,6 +210,10 @@ func TestRunBuild(t *testing.T) {
 		assert.True(t, os.IsNotExist(statErr))
 		_, statErr = os.Stat(cfgEmpty.DtkOcpStartCompileFlag)
 		assert.True(t, os.IsNotExist(statErr))
+		failFlag := filepath.Join(dir, constants.DtkFailedCompileFlag)
+		failBody, readErr := os.ReadFile(failFlag)
+		assert.NoError(t, readErr)
+		assert.Contains(t, string(failBody), "produced no RPMs")
 	})
 }
 
@@ -221,11 +226,32 @@ func TestStartFlagIsCurrent(t *testing.T) {
 
 	assert.NoError(t, os.WriteFile(flag, []byte("boot-1"), 0o644))
 	assert.False(t, startFlagIsCurrent(log, flag), "flag from previous boot")
-	_, err := os.Stat(flag)
-	assert.True(t, os.IsNotExist(err), "stale flag must be removed")
+	data, err := os.ReadFile(flag)
+	assert.NoError(t, err, "a stale flag must be left for the driver to replace")
+	assert.Equal(t, "boot-1", string(data))
+
+	assert.NoError(t, os.WriteFile(flag, []byte(""), 0o644))
+	assert.False(t, startFlagIsCurrent(log, flag), "empty flag")
+	_, err = os.Stat(flag)
+	assert.NoError(t, err, "an empty flag must not be deleted")
 
 	assert.NoError(t, os.WriteFile(flag, []byte("boot-2"), 0o644))
 	assert.True(t, startFlagIsCurrent(log, flag), "flag from current boot")
+}
+
+func TestPublishFlag(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dtk_start_compile")
+	assert.NoError(t, os.WriteFile(path, []byte("old"), 0o644))
+	assert.NoError(t, PublishFlag(path, []byte("boot-2")))
+
+	data, err := os.ReadFile(path)
+	assert.NoError(t, err)
+	assert.Equal(t, "boot-2", string(data))
+
+	entries, err := os.ReadDir(dir)
+	assert.NoError(t, err)
+	assert.Len(t, entries, 1, "temporary flag must not be left behind")
 }
 
 func TestHasBuiltRPMs(t *testing.T) {

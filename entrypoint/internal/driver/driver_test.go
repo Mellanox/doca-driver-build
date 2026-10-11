@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/config"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/constants"
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/dtk"
 	cmdMockPkg "github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/cmd/mocks"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/host"
 	hostMockPkg "github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/host/mocks"
@@ -4789,12 +4791,21 @@ var _ = Describe("Driver DTK setup", func() {
 				OpenShiftVersion: "4.18",
 			}, nil)
 
+			Expect(os.MkdirAll(sharedDir, 0o755)).To(Succeed())
+			failFlag := filepath.Join(sharedDir, constants.DtkFailedCompileFlag)
+			Expect(os.WriteFile(failFlag, []byte("previous failure"), 0o644)).To(Succeed())
+
 			err := dm.dtkSetupDriverBuild(ctx, sharedDir, startFlagPath, doneFlagPath, kernelVersion)
 			Expect(err).NotTo(HaveOccurred())
 
 			content, err := os.ReadFile(filepath.Join(sharedDir, "dtk.env"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(content)).To(ContainSubstring(`export USE_DKMS="true"`))
+			startBody, err := os.ReadFile(startFlagPath)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(startBody)).To(Equal("test-boot-id"))
+			_, err = os.Stat(failFlag)
+			Expect(os.IsNotExist(err)).To(BeTrue())
 			Expect(string(content)).To(ContainSubstring(`export APPEND_DRIVER_BUILD_FLAGS="--kernel 5.14.0-687.13.1.el9_8.x86_64 --distro rhel9.8"`))
 			// Sanity-check that other required fields are also present
 			Expect(string(content)).To(ContainSubstring(`export USE_NEW_ENTRYPOINT="true"`))
@@ -4829,6 +4840,131 @@ var _ = Describe("Driver DTK setup", func() {
 			content, err := os.ReadFile(filepath.Join(sharedDir, "dtk.env"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(content)).To(ContainSubstring(`export USE_DKMS="false"`))
+		})
+
+		It("discards a done flag that has no built RPMs", func() {
+			cfg := config.Config{NvidiaNicDriverVer: "26.04-0.5.3.0"}
+			dm := &driverMgr{cfg: cfg, os: wrappers.NewOS()}
+			sharedDir := GinkgoT().TempDir()
+			doneFlag := filepath.Join(sharedDir, "dtk_done_compile_26_04_0_5_3_0")
+			Expect(os.WriteFile(doneFlag, nil, 0o644)).To(Succeed())
+
+			Expect(dm.discardStaleDoneFlag(ctx, sharedDir, doneFlag)).To(Succeed())
+			_, err := os.Stat(doneFlag)
+			Expect(os.IsNotExist(err)).To(BeTrue())
+		})
+
+		It("keeps a done flag that has built RPMs behind it", func() {
+			ver := "26.04-0.5.3.0"
+			cfg := config.Config{NvidiaNicDriverVer: ver}
+			dm := &driverMgr{cfg: cfg, os: wrappers.NewOS()}
+			sharedDir := GinkgoT().TempDir()
+			doneFlag := filepath.Join(sharedDir, "dtk_done_compile_26_04_0_5_3_0")
+			Expect(os.WriteFile(doneFlag, nil, 0o644)).To(Succeed())
+			rpmDir := filepath.Join(sharedDir, dtk.SourceDirName(ver), "RPMS", "redhat-release-9.8", "x86_64")
+			Expect(os.MkdirAll(rpmDir, 0o755)).To(Succeed())
+			Expect(os.WriteFile(filepath.Join(rpmDir, "a.rpm"), []byte("x"), 0o644)).To(Succeed())
+
+			Expect(dm.discardStaleDoneFlag(ctx, sharedDir, doneFlag)).To(Succeed())
+			_, err := os.Stat(doneFlag)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("returns an error when the stale done flag cannot be removed", func() {
+			cfg := config.Config{NvidiaNicDriverVer: "26.04-0.5.3.0"}
+			osMock := wrappersMockPkg.NewOSWrapper(GinkgoT())
+			dm := &driverMgr{cfg: cfg, os: osMock}
+			sharedDir := GinkgoT().TempDir()
+			doneFlag := filepath.Join(sharedDir, "dtk_done_compile_26_04_0_5_3_0")
+			osMock.EXPECT().Stat(doneFlag).Return(nil, nil)
+			osMock.EXPECT().RemoveAll(doneFlag).Return(errors.New("eperm"))
+
+			err := dm.discardStaleDoneFlag(ctx, sharedDir, doneFlag)
+			Expect(err).To(MatchError(ContainSubstring("failed to remove stale done flag")))
+		})
+
+		It("stops waiting when the sidecar reports a failed build", func() {
+			dm := &driverMgr{os: wrappers.NewOS()}
+			dir := GinkgoT().TempDir()
+			doneFlag := filepath.Join(dir, "done")
+			startFlag := filepath.Join(dir, constants.DtkStartCompileFlag)
+			Expect(os.WriteFile(filepath.Join(dir, constants.DtkFailedCompileFlag), []byte("produced no RPMs"), 0o644)).To(Succeed())
+
+			err := dm.dtkWaitForBuild(context.Background(), doneFlag, startFlag)
+			Expect(errors.Is(err, errDTKCompileFailed)).To(BeTrue())
+			Expect(err).To(MatchError(ContainSubstring("produced no RPMs")))
+		})
+
+		It("prepares sources again after the sidecar reports a failed build", func() {
+			orig := dtkBuildPollInterval
+			dtkBuildPollInterval = 10 * time.Millisecond
+			defer func() { dtkBuildPollInterval = orig }()
+
+			ver := "26.04-0.5.3.0"
+			kernelVersion := "5.14.0-687.13.1.el9_8.x86_64"
+			cfg := config.Config{
+				NvidiaNicDriverVer:  ver,
+				NvidiaNicDriverPath: "/run/mellanox/src/MLNX_OFED_SRC-" + ver,
+				DtkOcpNicSharedDir:  tempDir,
+				EnableNfsRdma:       true,
+				UseDKMS:             true,
+			}
+			dm := &driverMgr{cfg: cfg, cmd: cmdMock, host: hostMock, os: fixedBootIDOS{wrappers.NewOS()}}
+			sharedDir := filepath.Join(tempDir, sanitizeKernelVersion(kernelVersion))
+			startFlag := filepath.Join(sharedDir, constants.DtkStartCompileFlag)
+			failFlag := filepath.Join(sharedDir, constants.DtkFailedCompileFlag)
+			verSanitized := strings.ReplaceAll(strings.ReplaceAll(ver, ".", "_"), "-", "_")
+			doneFlag := filepath.Join(sharedDir, constants.DtkDoneCompileFlagPrefix+verSanitized)
+			inventory := filepath.Join(tempDir, "inventory")
+
+			mockCpCalls := func() {
+				destDir := filepath.Join(sharedDir, dtk.SourceDirName(ver))
+				cmdMock.EXPECT().RunCommand(mock.Anything, "cp", "-rT", cfg.NvidiaNicDriverPath, destDir).Return("", "", nil).Times(2)
+				cmdMock.EXPECT().RunCommand(mock.Anything, "cp", "/root/entrypoint",
+					filepath.Join(sharedDir, "entrypoint")).Return("", "", nil).Times(2)
+				cmdMock.EXPECT().RunCommand(mock.Anything, "cp", constants.DtkOcpBuildScriptPath,
+					filepath.Join(sharedDir, filepath.Base(constants.DtkOcpBuildScriptPath))).Return("", "", nil).Times(2)
+			}
+			mockCpCalls()
+			hostMock.EXPECT().GetRedHatVersionInfo(mock.Anything).Return(&host.RedhatVersionInfo{
+				MajorVersion:     4,
+				FullVersion:      "4.18",
+				RHELVersion:      "9.8",
+				OpenShiftVersion: "4.18",
+			}, nil).Times(2)
+			cmdMock.EXPECT().RunCommand(mock.Anything, "mkdir", "-p", inventory).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(mock.Anything, "uname", "-m").Return("x86_64", "", nil)
+			cmdMock.EXPECT().RunCommand(mock.Anything, "cp", "-f", mock.Anything, mock.Anything).Return("", "", nil)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			go func() {
+				defer GinkgoRecover()
+				sawFailure := false
+				deadline := time.Now().Add(8 * time.Second)
+				for time.Now().Before(deadline) {
+					_, startErr := os.Stat(startFlag)
+					_, failErr := os.Stat(failFlag)
+					if !sawFailure {
+						if startErr == nil && os.IsNotExist(failErr) {
+							Expect(os.WriteFile(failFlag, []byte("produced no RPMs"), 0o644)).To(Succeed())
+							sawFailure = true
+						}
+					} else if os.IsNotExist(failErr) && startErr == nil {
+						// The retry cleared the failure flag after re-preparing sources.
+						rpmDir := filepath.Join(sharedDir, dtk.SourceDirName(ver), "RPMS", "redhat-release-9.8", "x86_64")
+						Expect(os.MkdirAll(rpmDir, 0o755)).To(Succeed())
+						Expect(os.WriteFile(filepath.Join(rpmDir, "a.rpm"), []byte("x"), 0o644)).To(Succeed())
+						Expect(os.WriteFile(doneFlag, nil, 0o644)).To(Succeed())
+						return
+					}
+					time.Sleep(2 * time.Millisecond)
+				}
+			}()
+
+			Expect(dm.buildDriverDTK(ctx, kernelVersion, inventory)).To(Succeed())
+			_, err := os.Stat(doneFlag)
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("should derive DTK distro version from kernel when RHCOS does not expose RHEL_VERSION", func() {

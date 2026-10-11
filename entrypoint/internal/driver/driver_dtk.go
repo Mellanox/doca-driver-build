@@ -18,6 +18,7 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -56,13 +57,8 @@ func (d *driverMgr) buildDriverDTK(ctx context.Context, kernelVersion, inventory
 	// Check if build is already done
 	if _, err := d.os.Stat(doneFlagPath); os.IsNotExist(err) {
 		log.Info("DTK build not done, setting up build")
-
-		if err := d.dtkSetupDriverBuild(ctx, dtkSharedDir, startFlagPath, doneFlagPath, kernelVersion); err != nil {
-			return fmt.Errorf("failed to setup DTK build: %w", err)
-		}
-
-		if err := d.dtkWaitForBuild(ctx, doneFlagPath); err != nil {
-			return fmt.Errorf("failed waiting for DTK build: %w", err)
+		if err := d.buildAndWaitDTK(ctx, dtkSharedDir, startFlagPath, doneFlagPath, kernelVersion); err != nil {
+			return err
 		}
 	} else {
 		log.Info("DTK build already done", "flag", doneFlagPath)
@@ -174,15 +170,53 @@ func (d *driverMgr) discardStaleDoneFlag(ctx context.Context, sharedDir, doneFla
 	return nil
 }
 
-// writeStartFlag signals the sidecar to compile. The flag is stamped with the boot ID so the
-// sidecar can ignore one left over from before a node reboot.
+// errDTKCompileFailed is returned when the sidecar publishes a failure flag instead of a done flag.
+var errDTKCompileFailed = errors.New("DTK sidecar reported a failed build")
+
+// dtkBuildMaxAttempts is the first try plus one retry. The retry covers a sidecar that compiled
+// a source tree the driver was still replacing; a second empty build is a real failure.
+const dtkBuildMaxAttempts = 2
+
+// dtkBuildPollInterval is how often the driver checks the sidecar's flags. Tests shorten it.
+var dtkBuildPollInterval = 30 * time.Second
+
+// buildAndWaitDTK prepares sources and waits for the sidecar. When the sidecar reports that the
+// build produced no RPMs, the sources are prepared again so the restarted sidecar can compile a
+// stable tree instead of both containers waiting out the full timeout.
+func (d *driverMgr) buildAndWaitDTK(ctx context.Context, sharedDir, startFlagPath, doneFlagPath, kernelVersion string) error {
+	log := logr.FromContextOrDiscard(ctx)
+	var waitErr error
+	for attempt := 1; attempt <= dtkBuildMaxAttempts; attempt++ {
+		if err := d.dtkSetupDriverBuild(ctx, sharedDir, startFlagPath, doneFlagPath, kernelVersion); err != nil {
+			return fmt.Errorf("failed to setup DTK build: %w", err)
+		}
+		waitErr = d.dtkWaitForBuild(ctx, doneFlagPath, startFlagPath)
+		if waitErr == nil {
+			return nil
+		}
+		if !errors.Is(waitErr, errDTKCompileFailed) || attempt == dtkBuildMaxAttempts {
+			return fmt.Errorf("failed waiting for DTK build: %w", waitErr)
+		}
+		log.Info("DTK sidecar reported a failed build, preparing sources again", "attempt", attempt, "error", waitErr)
+	}
+	return fmt.Errorf("failed waiting for DTK build: %w", waitErr)
+}
+
+// writeStartFlag signals the sidecar to compile. The flag is stamped with the boot ID and
+// published atomically so the sidecar never observes an empty file. A failure flag from an
+// earlier attempt is cleared first, otherwise the next wait would treat the new attempt as
+// already failed.
 func (d *driverMgr) writeStartFlag(ctx context.Context, startFlagPath string) error {
 	logr.FromContextOrDiscard(ctx).Info("Creating start compile flag", "path", startFlagPath)
+	failFlag := filepath.Join(filepath.Dir(startFlagPath), constants.DtkFailedCompileFlag)
+	if err := d.os.RemoveAll(failFlag); err != nil {
+		return fmt.Errorf("failed to clear compile failure flag: %w", err)
+	}
 	bootID, err := dtk.BootIDFrom(d.os.ReadFile)
 	if err != nil {
 		return err
 	}
-	if err := d.os.WriteFile(startFlagPath, []byte(bootID), 0o644); err != nil {
+	if err := dtk.PublishFlag(startFlagPath, []byte(bootID)); err != nil {
 		return fmt.Errorf("failed to create start flag: %w", err)
 	}
 	return nil
@@ -225,10 +259,12 @@ func redHatDistroVersion(versionInfo *hostutils.RedhatVersionInfo, kernelVersion
 	return ""
 }
 
-// dtkWaitForBuild waits for the DTK build to complete
-func (d *driverMgr) dtkWaitForBuild(ctx context.Context, doneFlagPath string) error {
+// dtkWaitForBuild waits for the DTK build to complete. A failure flag from the sidecar ends the
+// wait immediately so the driver can prepare another attempt.
+func (d *driverMgr) dtkWaitForBuild(ctx context.Context, doneFlagPath, startFlagPath string) error {
 	log := logr.FromContextOrDiscard(ctx)
 	log.Info("Waiting for DTK build to complete", "doneFlag", doneFlagPath)
+	failFlagPath := filepath.Join(filepath.Dir(startFlagPath), constants.DtkFailedCompileFlag)
 
 	// Poll every 30s. Air-gapped builds from local RPM repos typically finish in ~180s,
 	// but full first-time DTK compilations on slower nodes can exceed 15 min.
@@ -242,13 +278,20 @@ func (d *driverMgr) dtkWaitForBuild(ctx context.Context, doneFlagPath string) er
 			log.Info("DTK build completed")
 			return nil
 		}
+		if reason, err := d.os.ReadFile(failFlagPath); err == nil {
+			detail := strings.TrimSpace(string(reason))
+			if detail == "" {
+				detail = "no details"
+			}
+			return fmt.Errorf("%w: %s", errDTKCompileFailed, detail)
+		}
 
 		log.Info("Awaiting DTK compilation", "next_query_sec", sleepSec)
 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(time.Duration(sleepSec) * time.Second):
+		case <-time.After(dtkBuildPollInterval):
 		}
 
 		totalSleepSec += sleepSec

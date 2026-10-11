@@ -18,6 +18,7 @@ package dtk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,6 +29,7 @@ import (
 	"github.com/kballard/go-shellquote"
 
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/config"
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/constants"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/cmd"
 )
 
@@ -151,11 +153,18 @@ func RunBuild(ctx context.Context, log logr.Logger, cfg config.Config, cmdHelper
 }
 
 // startFlagIsCurrent reports whether the start flag exists and was written during the current
-// node boot. A flag left over from before a reboot is removed so the sidecar waits for the
-// driver container to prepare the sources again instead of compiling on a half-copied tree.
+// node boot. A flag from a previous boot is left in place. The driver replaces it atomically,
+// and deleting it from an earlier read can unlink that replacement, so the sidecar waits
+// until the contents match the current boot instead of compiling on a half-copied tree.
 func startFlagIsCurrent(log logr.Logger, path string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		return false
+	}
+	contents := strings.TrimSpace(string(data))
+	// An empty file is not a request to compile. Atomic publish should hide partial
+	// writes; if one is observed, wait for the driver to replace it.
+	if contents == "" {
 		return false
 	}
 	bootID, err := BootID()
@@ -163,24 +172,29 @@ func startFlagIsCurrent(log logr.Logger, path string) bool {
 		log.Error(err, "failed to get boot id, trusting start flag")
 		return true
 	}
-	if strings.TrimSpace(string(data)) == bootID {
+	if contents == bootID {
 		return true
 	}
-	log.Info("Removing stale start flag from a previous boot", "flag", path)
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		log.Error(err, "failed to remove stale start flag")
-	}
+	log.Info("Start flag is from a previous boot, waiting for the driver to publish a new one", "flag", path)
 	return false
 }
 
 // ensureRPMsBuilt fails when the build tree holds no RPMs. install.pl may exit 0 without
 // producing any (e.g. its source tree was replaced mid-build), and recording success for such a
-// build would make every later restart skip it. The start flag is removed so a retry waits for
-// fresh preparations.
+// build would make every later restart skip it. The start flag is removed before the failure
+// flag is published, so a restarted sidecar waits instead of compiling the same tree while the
+// driver is still preparing the next attempt.
 func ensureRPMsBuilt(srcDir, startFlagPath string) error {
 	if HasBuiltRPMs(srcDir) {
 		return nil
 	}
-	_ = os.Remove(startFlagPath)
-	return fmt.Errorf("driver build produced no RPMs under %s", filepath.Join(srcDir, "RPMS"))
+	msg := fmt.Sprintf("driver build produced no RPMs under %s", filepath.Join(srcDir, "RPMS"))
+	if err := os.Remove(startFlagPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("%s: %w", msg, err)
+	}
+	failFlag := filepath.Join(filepath.Dir(startFlagPath), constants.DtkFailedCompileFlag)
+	if err := PublishFlag(failFlag, []byte(msg)); err != nil {
+		return fmt.Errorf("%s: %w", msg, err)
+	}
+	return errors.New(msg)
 }

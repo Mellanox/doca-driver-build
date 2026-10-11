@@ -23,6 +23,40 @@ import (
 	"strings"
 )
 
+// PublishFlag atomically replaces path with data. Readers see either the previous
+// contents or the complete new contents, never a truncated file. The temporary file
+// is created in the same directory so the rename stays on one filesystem.
+func PublishFlag(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	f, err := os.CreateTemp(dir, ".tmp-"+filepath.Base(path)+"-")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary flag: %w", err)
+	}
+	tmp := f.Name()
+	published := false
+	defer func() {
+		if !published {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if err := f.Chmod(0o644); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("failed to set flag permissions: %w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("failed to write temporary flag: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary flag: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("failed to publish flag %s: %w", path, err)
+	}
+	published = true
+	return nil
+}
+
 // bootIDPath is overridable in tests.
 var bootIDPath = "/proc/sys/kernel/random/boot_id"
 
