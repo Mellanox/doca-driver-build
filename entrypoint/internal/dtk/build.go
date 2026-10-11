@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -66,7 +67,7 @@ func RunBuild(ctx context.Context, log logr.Logger, cfg config.Config, cmdHelper
 		default:
 		}
 
-		if _, err := os.Stat(cfg.DtkOcpStartCompileFlag); err == nil {
+		if startFlagIsCurrent(log, cfg.DtkOcpStartCompileFlag) {
 			break
 		}
 		log.Info("Awaiting driver container preparations prior compilation", "next_query_sec", retryDelay.Seconds())
@@ -127,6 +128,13 @@ func RunBuild(ctx context.Context, log logr.Logger, cfg config.Config, cmdHelper
 		return fmt.Errorf("driver build failed: %w", err)
 	}
 
+	// install.pl may exit 0 without producing RPMs (e.g. its source tree was replaced mid-build).
+	// Never record success for such a build, otherwise it is skipped on every later restart.
+	if !HasBuiltRPMs(filepath.Dir(installScript)) {
+		_ = os.Remove(cfg.DtkOcpStartCompileFlag)
+		return fmt.Errorf("driver build produced no RPMs under %s", filepath.Join(filepath.Dir(installScript), "RPMS"))
+	}
+
 	// Create done flag
 	if _, err := os.Create(cfg.DtkOcpDoneCompileFlag); err != nil {
 		return fmt.Errorf("failed to create done flag: %w", err)
@@ -144,4 +152,27 @@ func RunBuild(ctx context.Context, log logr.Logger, cfg config.Config, cmdHelper
 	log.Info("Build completed, sleeping indefinitely")
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+// startFlagIsCurrent reports whether the start flag exists and was written during the current
+// node boot. A flag left over from before a reboot is removed so the sidecar waits for the
+// driver container to prepare the sources again instead of compiling on a half-copied tree.
+func startFlagIsCurrent(log logr.Logger, path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	bootID, err := BootID()
+	if err != nil {
+		log.Error(err, "failed to get boot id, trusting start flag")
+		return true
+	}
+	if strings.TrimSpace(string(data)) == bootID {
+		return true
+	}
+	log.Info("Removing stale start flag from a previous boot", "flag", path)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		log.Error(err, "failed to remove stale start flag")
+	}
+	return false
 }

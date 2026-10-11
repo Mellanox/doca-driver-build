@@ -32,9 +32,29 @@ import (
 	cmdMockPkg "github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/cmd/mocks"
 )
 
+// useBootID points BootID at a temp file holding id and returns id.
+func useBootID(t *testing.T, id string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "boot_id")
+	assert.NoError(t, os.WriteFile(path, []byte(id+"\n"), 0o644))
+	orig := bootIDPath
+	bootIDPath = path
+	t.Cleanup(func() { bootIDPath = orig })
+	return id
+}
+
+// fakeRPM creates RPMS/redhat-release-x/x86_64/a.rpm under srcDir.
+func fakeRPM(t *testing.T, srcDir string) {
+	t.Helper()
+	dir := filepath.Join(srcDir, "RPMS", "redhat-release-9.8", "x86_64")
+	assert.NoError(t, os.MkdirAll(dir, 0o755))
+	assert.NoError(t, os.WriteFile(filepath.Join(dir, "a.rpm"), []byte("x"), 0o644))
+}
+
 func TestRunBuild(t *testing.T) {
 	log := logr.Discard()
 	tempDir := t.TempDir()
+	bootID := useBootID(t, "boot-1")
 
 	startFlag := filepath.Join(tempDir, "dtk_start_compile")
 	doneFlag := filepath.Join(tempDir, "dtk_done_compile")
@@ -83,9 +103,7 @@ func TestRunBuild(t *testing.T) {
 		// Create start flag after a short delay
 		go func() {
 			time.Sleep(100 * time.Millisecond)
-			f, err := os.Create(startFlag)
-			assert.NoError(t, err)
-			f.Close()
+			assert.NoError(t, os.WriteFile(startFlag, []byte(bootID), 0o644))
 		}()
 
 		expectedInstallScript := filepath.Join(tempDir, "MLNX_OFED_SRC-1.0.0", "install.pl")
@@ -94,7 +112,9 @@ func TestRunBuild(t *testing.T) {
 			"--build-only", "--kernel-only", "--without-knem", "--without-iser", "--without-isert",
 			"--without-srp", "--with-mlnx-tools", "--copy-ifnames-udev",
 			"--disable-kmp", "--without-dkms", "--kernel", "5.14.0-687.13.1.el9_8.x86_64",
-			"--distro", "rhel9.8").Return("", "", nil)
+			"--distro", "rhel9.8").
+			Run(func(_ context.Context, _ string, _ ...string) { fakeRPM(t, filepath.Dir(expectedInstallScript)) }).
+			Return("", "", nil)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		errCh := make(chan error)
@@ -133,9 +153,7 @@ func TestRunBuild(t *testing.T) {
 
 		go func() {
 			time.Sleep(100 * time.Millisecond)
-			f, err := os.Create(startFlagDKMS)
-			assert.NoError(t, err)
-			f.Close()
+			assert.NoError(t, os.WriteFile(startFlagDKMS, []byte(bootID), 0o644))
 		}()
 
 		expectedInstallScript := filepath.Join(tempDir, "MLNX_OFED_SRC-1.0.0", "install.pl")
@@ -146,6 +164,7 @@ func TestRunBuild(t *testing.T) {
 		cmdMock.EXPECT().RunCommand(mock.Anything, expectedInstallScript,
 			"--build-only", "--kernel-only", "--without-knem", "--without-iser", "--without-isert",
 			"--without-srp", "--with-mlnx-tools", "--copy-ifnames-udev").
+			Run(func(_ context.Context, _ string, _ ...string) { fakeRPM(t, filepath.Dir(expectedInstallScript)) }).
 			Return("", "", nil)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -168,4 +187,52 @@ func TestRunBuild(t *testing.T) {
 		err := <-errCh
 		assert.ErrorIs(t, err, context.Canceled)
 	})
+
+	t.Run("should not write done flag when the build produced no RPMs", func(t *testing.T) {
+		cfgEmpty := cfg
+		dir := t.TempDir()
+		cfgEmpty.DtkOcpNicSharedDir = dir
+		cfgEmpty.DtkOcpStartCompileFlag = filepath.Join(dir, "dtk_start_compile")
+		cfgEmpty.DtkOcpDoneCompileFlag = filepath.Join(dir, "dtk_done_compile")
+		assert.NoError(t, os.WriteFile(cfgEmpty.DtkOcpStartCompileFlag, []byte(bootID), 0o644))
+
+		cmdMock := cmdMockPkg.NewInterface(t)
+		cmdMock.EXPECT().RunCommand(mock.Anything, "dnf", "install", "-y", "perl").Return("", "", nil)
+		cmdMock.EXPECT().RunCommand(mock.Anything, "dnf", "install", "-y", "ethtool", "autoconf", "pciutils", "automake", "libtool", "python3-devel").Return("", "", nil)
+		cmdMock.EXPECT().RunCommand(mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+			mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return("", "", nil)
+
+		err := RunBuild(context.Background(), log, cfgEmpty, cmdMock)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "produced no RPMs")
+		_, statErr := os.Stat(cfgEmpty.DtkOcpDoneCompileFlag)
+		assert.True(t, os.IsNotExist(statErr))
+		_, statErr = os.Stat(cfgEmpty.DtkOcpStartCompileFlag)
+		assert.True(t, os.IsNotExist(statErr))
+	})
+}
+
+func TestStartFlagIsCurrent(t *testing.T) {
+	log := logr.Discard()
+	useBootID(t, "boot-2")
+	flag := filepath.Join(t.TempDir(), "dtk_start_compile")
+
+	assert.False(t, startFlagIsCurrent(log, flag), "missing flag")
+
+	assert.NoError(t, os.WriteFile(flag, []byte("boot-1"), 0o644))
+	assert.False(t, startFlagIsCurrent(log, flag), "flag from previous boot")
+	_, err := os.Stat(flag)
+	assert.True(t, os.IsNotExist(err), "stale flag must be removed")
+
+	assert.NoError(t, os.WriteFile(flag, []byte("boot-2"), 0o644))
+	assert.True(t, startFlagIsCurrent(log, flag), "flag from current boot")
+}
+
+func TestHasBuiltRPMs(t *testing.T) {
+	src := t.TempDir()
+	assert.False(t, HasBuiltRPMs(src))
+	assert.NoError(t, os.MkdirAll(filepath.Join(src, "RPMS"), 0o755))
+	assert.False(t, HasBuiltRPMs(src), "empty RPMS")
+	fakeRPM(t, src)
+	assert.True(t, HasBuiltRPMs(src))
 }

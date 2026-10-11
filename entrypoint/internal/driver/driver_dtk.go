@@ -28,6 +28,7 @@ import (
 	"github.com/go-logr/logr"
 
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/constants"
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/dtk"
 	hostutils "github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/host"
 )
 
@@ -47,6 +48,16 @@ func (d *driverMgr) buildDriverDTK(ctx context.Context, kernelVersion, inventory
 	doneFlagName := constants.DtkDoneCompileFlagPrefix + verSanitized
 	doneFlagPath := filepath.Join(dtkSharedDir, doneFlagName)
 	startFlagPath := filepath.Join(dtkSharedDir, constants.DtkStartCompileFlag)
+
+	// A done flag without built RPMs is stale (e.g. written for a build that was interrupted by a
+	// node reboot): drop it so the build is redone instead of failing in finalize forever.
+	if _, err := d.os.Stat(doneFlagPath); err == nil &&
+		!dtk.HasBuiltRPMs(filepath.Join(dtkSharedDir, "MLNX_OFED_SRC-"+d.cfg.NvidiaNicDriverVer)) {
+		log.Info("DTK done flag found but no built RPMs, discarding it", "flag", doneFlagPath)
+		if err := d.os.RemoveAll(doneFlagPath); err != nil {
+			return fmt.Errorf("failed to remove stale done flag: %w", err)
+		}
+	}
 
 	// Check if build is already done
 	if _, err := d.os.Stat(doneFlagPath); os.IsNotExist(err) {
@@ -148,9 +159,14 @@ export USE_DKMS="%v"
 		return fmt.Errorf("failed to copy build script: %w", err)
 	}
 
-	// Create start flag
+	// Create start flag, stamped with the boot ID so the sidecar can ignore a flag left over
+	// from before a node reboot.
 	log.Info("Creating start compile flag", "path", startFlagPath)
-	if _, err := d.os.Create(startFlagPath); err != nil {
+	bootID, err := dtk.BootID()
+	if err != nil {
+		return err
+	}
+	if err := d.os.WriteFile(startFlagPath, []byte(bootID), 0o644); err != nil {
 		return fmt.Errorf("failed to create start flag: %w", err)
 	}
 
