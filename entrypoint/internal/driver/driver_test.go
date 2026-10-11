@@ -4763,10 +4763,13 @@ var _ = Describe("Driver DTK setup", func() {
 			srcDir := dm.cfg.NvidiaNicDriverPath
 			destDir := filepath.Join(sharedDir, "MLNX_OFED_SRC-"+dm.cfg.NvidiaNicDriverVer)
 			cmdMock.EXPECT().RunCommand(mock.Anything, "cp", "-rT", srcDir, destDir).Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(mock.Anything, "cp", "/root/entrypoint",
-				filepath.Join(sharedDir, "entrypoint")).Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(mock.Anything, "cp", constants.DtkOcpBuildScriptPath,
-				filepath.Join(sharedDir, filepath.Base(constants.DtkOcpBuildScriptPath))).Return("", "", nil)
+			// Files are copied to a temp sibling and renamed so a running binary can be replaced.
+			entrypointDest := filepath.Join(sharedDir, "entrypoint")
+			cmdMock.EXPECT().RunCommand(mock.Anything, "cp", "/root/entrypoint", entrypointDest+".tmp").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(mock.Anything, "mv", "-f", entrypointDest+".tmp", entrypointDest).Return("", "", nil)
+			scriptDest := filepath.Join(sharedDir, filepath.Base(constants.DtkOcpBuildScriptPath))
+			cmdMock.EXPECT().RunCommand(mock.Anything, "cp", constants.DtkOcpBuildScriptPath, scriptDest+".tmp").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(mock.Anything, "mv", "-f", scriptDest+".tmp", scriptDest).Return("", "", nil)
 		}
 
 		It("should write USE_DKMS=true into dtk.env when UseDKMS is true", func() {
@@ -4840,6 +4843,19 @@ var _ = Describe("Driver DTK setup", func() {
 			content, err := os.ReadFile(filepath.Join(sharedDir, "dtk.env"))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(string(content)).To(ContainSubstring(`export USE_DKMS="false"`))
+		})
+
+		It("replaces the entrypoint by rename so a busy binary does not fail the copy", func() {
+			dm := &driverMgr{cmd: cmdMock}
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "/src", "/dst.tmp").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "mv", "-f", "/dst.tmp", "/dst").Return("", "", nil)
+			Expect(dm.copyFileReplacing(ctx, "/src", "/dst")).To(Succeed())
+		})
+
+		It("does not rename when the temporary copy fails", func() {
+			dm := &driverMgr{cmd: cmdMock}
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "/src", "/dst.tmp").Return("", "", errors.New("no space"))
+			Expect(dm.copyFileReplacing(ctx, "/src", "/dst")).To(MatchError("no space"))
 		})
 
 		It("discards a done flag that has no built RPMs", func() {
@@ -4952,10 +4968,15 @@ var _ = Describe("Driver DTK setup", func() {
 			destDir := filepath.Join(sharedDir, dtk.SourceDirName(driverVer))
 			cmdMock.EXPECT().RunCommand(mock.Anything, "cp", "-rT", dm.cfg.NvidiaNicDriverPath, destDir).
 				Return("", "", nil).Times(times)
-			cmdMock.EXPECT().RunCommand(mock.Anything, "cp", "/root/entrypoint", filepath.Join(sharedDir, "entrypoint")).
+			entrypointDest := filepath.Join(sharedDir, "entrypoint")
+			cmdMock.EXPECT().RunCommand(mock.Anything, "cp", "/root/entrypoint", entrypointDest+".tmp").
 				Return("", "", nil).Times(times)
-			cmdMock.EXPECT().RunCommand(mock.Anything, "cp", constants.DtkOcpBuildScriptPath,
-				filepath.Join(sharedDir, filepath.Base(constants.DtkOcpBuildScriptPath))).
+			cmdMock.EXPECT().RunCommand(mock.Anything, "mv", "-f", entrypointDest+".tmp", entrypointDest).
+				Return("", "", nil).Times(times)
+			scriptDest := filepath.Join(sharedDir, filepath.Base(constants.DtkOcpBuildScriptPath))
+			cmdMock.EXPECT().RunCommand(mock.Anything, "cp", constants.DtkOcpBuildScriptPath, scriptDest+".tmp").
+				Return("", "", nil).Times(times)
+			cmdMock.EXPECT().RunCommand(mock.Anything, "mv", "-f", scriptDest+".tmp", scriptDest).
 				Return("", "", nil).Times(times)
 			hostMock.EXPECT().GetRedHatVersionInfo(mock.Anything).Return(&host.RedhatVersionInfo{
 				MajorVersion:     4,

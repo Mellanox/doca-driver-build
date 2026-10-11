@@ -112,8 +112,9 @@ func (d *driverMgr) dtkSetupDriverBuild(ctx context.Context, sharedDir, startFla
 	entrypointPath := "/root/entrypoint" // Assumed location based on Dockerfile
 	destEntrypointPath := filepath.Join(sharedDir, "entrypoint")
 	log.Info("Copying entrypoint binary", "from", entrypointPath, "to", destEntrypointPath)
-	// We use copyFile instead of copyDir for a single file
-	if _, _, err := d.cmd.RunCommand(ctx, "cp", entrypointPath, destEntrypointPath); err != nil {
+	// The DTK sidecar may still be executing the previous copy after a node reboot restarted the
+	// containers in place, and cp onto a running binary fails with "Text file busy".
+	if err := d.copyFileReplacing(ctx, entrypointPath, destEntrypointPath); err != nil {
 		return fmt.Errorf("failed to copy entrypoint binary: %w", err)
 	}
 
@@ -144,12 +145,24 @@ export USE_DKMS="%v"
 	srcScriptPath := constants.DtkOcpBuildScriptPath
 	destScriptPath := filepath.Join(sharedDir, filepath.Base(srcScriptPath))
 	log.Info("Copying build script", "from", srcScriptPath, "to", destScriptPath)
-	// We use copyFile equivalent (run command cp)
-	if _, _, err := d.cmd.RunCommand(ctx, "cp", srcScriptPath, destScriptPath); err != nil {
+	if err := d.copyFileReplacing(ctx, srcScriptPath, destScriptPath); err != nil {
 		return fmt.Errorf("failed to copy build script: %w", err)
 	}
 
 	return d.writeStartFlag(ctx, startFlagPath)
+}
+
+// copyFileReplacing copies src to a temporary sibling of dest and renames it over dest. Unlike a
+// plain cp, the rename succeeds when dest is a binary that is currently running.
+func (d *driverMgr) copyFileReplacing(ctx context.Context, src, dest string) error {
+	tmp := dest + ".tmp"
+	if _, _, err := d.cmd.RunCommand(ctx, "cp", src, tmp); err != nil {
+		return err
+	}
+	if _, _, err := d.cmd.RunCommand(ctx, "mv", "-f", tmp, dest); err != nil {
+		return err
+	}
+	return nil
 }
 
 // discardStaleDoneFlag removes a done flag that has no built RPMs behind it (e.g. written for a
