@@ -81,51 +81,62 @@ func sanitizeKernelVersion(version string) string {
 	return strings.Trim(sanitized, "-._")
 }
 
-// dtkSetupDriverBuild prepares the shared directory and script for DTK build
+// dtkSetupDriverBuild prepares the shared directory and signals the sidecar to compile.
 func (d *driverMgr) dtkSetupDriverBuild(ctx context.Context, sharedDir, startFlagPath, doneFlagPath, kernelVersion string) error {
-	log := logr.FromContextOrDiscard(ctx)
-	log.Info("Setting up DTK driver build", "sharedDir", sharedDir)
+	logr.FromContextOrDiscard(ctx).Info("Setting up DTK driver build", "sharedDir", sharedDir)
 
-	// Create shared directory
 	if err := d.os.MkdirAll(sharedDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create shared directory: %w", err)
 	}
+	if err := d.stageDTKDriverSources(ctx, sharedDir); err != nil {
+		return err
+	}
+	if err := d.copyDTKEntrypoint(ctx, sharedDir); err != nil {
+		return err
+	}
+	if err := d.writeDTKEnv(ctx, sharedDir, startFlagPath, doneFlagPath, kernelVersion); err != nil {
+		return err
+	}
+	if err := d.copyDTKBuildScript(ctx, sharedDir); err != nil {
+		return err
+	}
+	return d.writeStartFlag(ctx, startFlagPath)
+}
 
-	// Copy driver sources to shared directory
-	// Matches bash: cp -r ${NVIDIA_NIC_DRIVER_PATH} ${DTK_OCP_NIC_SHARED_DIR}/
+// stageDTKDriverSources replaces the shared source tree. The destination is removed first so
+// cp -rT does not nest a previous copy inside itself.
+func (d *driverMgr) stageDTKDriverSources(ctx context.Context, sharedDir string) error {
 	srcDir := d.cfg.NvidiaNicDriverPath
-	// Use expected directory name format to ensure DTK build script finds it
-	expectedName := dtk.SourceDirName(d.cfg.NvidiaNicDriverVer)
-	destDir := filepath.Join(sharedDir, expectedName)
-
-	// Clean up destination if it exists to avoid nesting (cp -r behavior)
+	destDir := filepath.Join(sharedDir, dtk.SourceDirName(d.cfg.NvidiaNicDriverVer))
 	if err := d.os.RemoveAll(destDir); err != nil {
 		return fmt.Errorf("failed to clean up destination directory: %w", err)
 	}
-
-	log.Info("Copying driver sources", "from", srcDir, "to", destDir)
+	logr.FromContextOrDiscard(ctx).Info("Copying driver sources", "from", srcDir, "to", destDir)
 	if err := d.copyDir(ctx, srcDir, destDir); err != nil {
 		return fmt.Errorf("failed to copy driver sources: %w", err)
 	}
+	return nil
+}
 
-	// Copy entrypoint binary to shared directory
-	entrypointPath := "/root/entrypoint" // Assumed location based on Dockerfile
-	destEntrypointPath := filepath.Join(sharedDir, "entrypoint")
-	log.Info("Copying entrypoint binary", "from", entrypointPath, "to", destEntrypointPath)
-	// The DTK sidecar may still be executing the previous copy after a node reboot restarted the
-	// containers in place, and cp onto a running binary fails with "Text file busy".
-	if err := d.copyFileReplacing(ctx, entrypointPath, destEntrypointPath); err != nil {
+// copyDTKEntrypoint publishes the driver entrypoint for the sidecar. The sidecar may still be
+// executing the previous copy after a node reboot restarted the containers in place.
+func (d *driverMgr) copyDTKEntrypoint(ctx context.Context, sharedDir string) error {
+	const entrypointPath = "/root/entrypoint" // location in the driver image
+	dest := filepath.Join(sharedDir, "entrypoint")
+	logr.FromContextOrDiscard(ctx).Info("Copying entrypoint binary", "from", entrypointPath, "to", dest)
+	if err := d.copyFileReplacing(ctx, entrypointPath, dest); err != nil {
 		return fmt.Errorf("failed to copy entrypoint binary: %w", err)
 	}
+	return nil
+}
 
-	// Create dtk.env file
-	// Get append flags
+// writeDTKEnv records the paths and build flags the sidecar reads before it compiles.
+func (d *driverMgr) writeDTKEnv(ctx context.Context, sharedDir, startFlagPath, doneFlagPath, kernelVersion string) error {
 	appendFlags, err := d.getDTKAppendDriverBuildFlags(ctx, kernelVersion)
 	if err != nil {
 		return err
 	}
 	appendFlagsStr := strings.Join(appendFlags, " ")
-
 	envContent := fmt.Sprintf(`export DTK_OCP_NIC_SHARED_DIR="%s"
 export DTK_OCP_COMPILED_DRIVER_VER="%s"
 export DTK_OCP_START_COMPILE_FLAG="%s"
@@ -136,20 +147,21 @@ export NVIDIA_NIC_DRIVER_VER="%s"
 export USE_DKMS="%v"
 `, sharedDir, d.cfg.NvidiaNicDriverVer, startFlagPath, doneFlagPath, appendFlagsStr, d.cfg.NvidiaNicDriverVer, d.cfg.UseDKMS)
 
-	envPath := filepath.Join(sharedDir, "dtk.env")
-	if err := d.os.WriteFile(envPath, []byte(envContent), 0o644); err != nil {
+	if err := d.os.WriteFile(filepath.Join(sharedDir, "dtk.env"), []byte(envContent), 0o644); err != nil {
 		return fmt.Errorf("failed to write dtk.env: %w", err)
 	}
+	return nil
+}
 
-	// Copy build script (loader)
-	srcScriptPath := constants.DtkOcpBuildScriptPath
-	destScriptPath := filepath.Join(sharedDir, filepath.Base(srcScriptPath))
-	log.Info("Copying build script", "from", srcScriptPath, "to", destScriptPath)
-	if err := d.copyFileReplacing(ctx, srcScriptPath, destScriptPath); err != nil {
+// copyDTKBuildScript publishes the sidecar loader script into the shared directory.
+func (d *driverMgr) copyDTKBuildScript(ctx context.Context, sharedDir string) error {
+	src := constants.DtkOcpBuildScriptPath
+	dest := filepath.Join(sharedDir, filepath.Base(src))
+	logr.FromContextOrDiscard(ctx).Info("Copying build script", "from", src, "to", dest)
+	if err := d.copyFileReplacing(ctx, src, dest); err != nil {
 		return fmt.Errorf("failed to copy build script: %w", err)
 	}
-
-	return d.writeStartFlag(ctx, startFlagPath)
+	return nil
 }
 
 // copyFileReplacing copies src to a temporary sibling of dest and renames it over dest. Unlike a
