@@ -1,5 +1,5 @@
 /*
- Copyright 2025, NVIDIA CORPORATION & AFFILIATES
+ Copyright 2026, NVIDIA CORPORATION & AFFILIATES
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -60,15 +60,10 @@ func PublishFlag(path string, data []byte) error {
 // bootIDPath is overridable in tests.
 var bootIDPath = "/proc/sys/kernel/random/boot_id"
 
-// BootID returns the identifier of the current node boot. The DTK flags live in an emptyDir that
-// survives a node reboot (containers restart in place), so the boot ID is used to tell a
-// start flag written before the reboot from one written for the current attempt.
-func BootID() (string, error) {
-	return BootIDFrom(os.ReadFile)
-}
-
-// BootIDFrom is BootID with an injectable file reader, for callers that read host files
-// through their own OS abstraction.
+// BootIDFrom returns the identifier of the current node boot. The DTK flags live in an emptyDir
+// that survives a node reboot (containers restart in place), so the boot ID tells a start flag
+// written before the reboot from one written for the current attempt. Callers pass their own
+// file reader so the driver can read it through its OS wrapper.
 func BootIDFrom(readFile func(path string) ([]byte, error)) (string, error) {
 	data, err := readFile(bootIDPath)
 	if err != nil {

@@ -1,5 +1,5 @@
 /*
- Copyright 2025, NVIDIA CORPORATION & AFFILIATES
+ Copyright 2026, NVIDIA CORPORATION & AFFILIATES
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -167,7 +167,7 @@ func startFlagIsCurrent(log logr.Logger, path string) bool {
 	if contents == "" {
 		return false
 	}
-	bootID, err := BootID()
+	bootID, err := BootIDFrom(os.ReadFile)
 	if err != nil {
 		log.Error(err, "failed to get boot id, trusting start flag")
 		return true
