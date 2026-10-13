@@ -217,6 +217,30 @@ func TestRunBuild(t *testing.T) {
 	})
 }
 
+func TestStartFlagWrittenForBoot(t *testing.T) {
+	dir := t.TempDir()
+	flag := filepath.Join(dir, "dtk_start_compile")
+
+	writtenForBoot, err := StartFlagWrittenForBoot(os.ReadFile, flag, "boot-2")
+	assert.NoError(t, err)
+	assert.False(t, writtenForBoot)
+
+	assert.NoError(t, os.WriteFile(flag, nil, 0o644))
+	writtenForBoot, err = StartFlagWrittenForBoot(os.ReadFile, flag, "boot-2")
+	assert.NoError(t, err)
+	assert.False(t, writtenForBoot)
+
+	assert.NoError(t, os.WriteFile(flag, []byte("boot-1"), 0o644))
+	writtenForBoot, err = StartFlagWrittenForBoot(os.ReadFile, flag, "boot-2")
+	assert.NoError(t, err)
+	assert.False(t, writtenForBoot)
+
+	assert.NoError(t, os.WriteFile(flag, []byte("boot-2\n"), 0o644))
+	writtenForBoot, err = StartFlagWrittenForBoot(os.ReadFile, flag, "boot-2")
+	assert.NoError(t, err)
+	assert.True(t, writtenForBoot)
+}
+
 func TestStartFlagIsCurrent(t *testing.T) {
 	log := logr.Discard()
 	useBootID(t, "boot-2")

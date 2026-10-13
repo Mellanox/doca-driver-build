@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -157,26 +156,17 @@ func RunBuild(ctx context.Context, log logr.Logger, cfg config.Config, cmdHelper
 // and deleting it from an earlier read can unlink that replacement, so the sidecar waits
 // until the contents match the current boot instead of compiling on a half-copied tree.
 func startFlagIsCurrent(log logr.Logger, path string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	contents := strings.TrimSpace(string(data))
-	// An empty file is not a request to compile. Atomic publish should hide partial
-	// writes; if one is observed, wait for the driver to replace it.
-	if contents == "" {
-		return false
-	}
 	bootID, err := BootIDFrom(os.ReadFile)
 	if err != nil {
-		log.Error(err, "failed to get boot id, trusting start flag")
-		return true
+		log.Error(err, "failed to get boot id")
+		return false
 	}
-	if contents == bootID {
-		return true
+	writtenForBoot, err := StartFlagWrittenForBoot(os.ReadFile, path, bootID)
+	if err != nil {
+		log.Error(err, "failed to read start flag", "flag", path)
+		return false
 	}
-	log.Info("Start flag is from a previous boot, waiting for the driver to publish a new one", "flag", path)
-	return false
+	return writtenForBoot
 }
 
 // ensureRPMsBuilt fails when the build tree holds no RPMs. install.pl may exit 0 without

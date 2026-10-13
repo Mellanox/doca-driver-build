@@ -205,14 +205,21 @@ const dtkBuildMaxAttempts = 2
 // dtkBuildPollInterval is how often the driver checks the sidecar's flags. Tests shorten it.
 var dtkBuildPollInterval = 30 * time.Second
 
-// buildAndWaitDTK prepares sources and waits for the sidecar. When the sidecar reports that the
-// build produced no RPMs, the sources are prepared again so the restarted sidecar can compile a
-// stable tree instead of both containers waiting out the full timeout.
+// buildAndWaitDTK prepares sources and waits for the sidecar. A start flag from the current boot
+// means a compile is already running, so a restarted driver container waits instead of replacing
+// that tree. A failure of the resumed build is prepared once more. A flag from another boot is
+// stale and is always replaced.
 func (d *driverMgr) buildAndWaitDTK(ctx context.Context, sharedDir, startFlagPath, doneFlagPath, kernelVersion string) error {
 	log := logr.FromContextOrDiscard(ctx)
 	var waitErr error
 	for attempt := 1; attempt <= dtkBuildMaxAttempts; attempt++ {
-		if err := d.dtkSetupDriverBuild(ctx, sharedDir, startFlagPath, doneFlagPath, kernelVersion); err != nil {
+		resume, err := d.dtkBuildInProgress(startFlagPath)
+		if err != nil {
+			return err
+		}
+		if attempt == 1 && resume {
+			log.Info("DTK build already in progress for this boot, waiting", "flag", startFlagPath)
+		} else if err := d.dtkSetupDriverBuild(ctx, sharedDir, startFlagPath, doneFlagPath, kernelVersion); err != nil {
 			return fmt.Errorf("failed to setup DTK build: %w", err)
 		}
 		waitErr = d.dtkWaitForBuild(ctx, doneFlagPath, startFlagPath)
@@ -225,6 +232,20 @@ func (d *driverMgr) buildAndWaitDTK(ctx context.Context, sharedDir, startFlagPat
 		log.Info("DTK sidecar reported a failed build, preparing sources again", "attempt", attempt, "error", waitErr)
 	}
 	return fmt.Errorf("failed waiting for DTK build: %w", waitErr)
+}
+
+// dtkBuildInProgress reports whether the sidecar was asked to compile during this boot.
+// The driver container then waits for that attempt instead of replacing its source tree.
+func (d *driverMgr) dtkBuildInProgress(startFlagPath string) (bool, error) {
+	bootID, err := dtk.BootIDFrom(d.os.ReadFile)
+	if err != nil {
+		return false, err
+	}
+	writtenForBoot, err := dtk.StartFlagWrittenForBoot(d.os.ReadFile, startFlagPath, bootID)
+	if err != nil {
+		return false, fmt.Errorf("failed to read start flag: %w", err)
+	}
+	return writtenForBoot, nil
 }
 
 // writeStartFlag signals the sidecar to compile. The flag is stamped with the boot ID and

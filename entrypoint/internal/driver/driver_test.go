@@ -1574,9 +1574,10 @@ var _ = Describe("Driver", func() {
 			// shouldBuild=true immediately, without any Stat/ReadFile calls.
 			osMock.EXPECT().RemoveAll(mock.Anything).Return(nil)
 
-			// DTK setup: done flag absent, then MkdirAll fails — keeps the mock surface
-			// minimal without having to wire up the entire DTK pipeline.
-			osMock.EXPECT().Stat(mock.Anything).Return(nil, os.ErrNotExist) // done flag not present
+			// DTK setup: done flag absent, no compile is in progress, then MkdirAll fails.
+			osMock.EXPECT().Stat(mock.Anything).Return(nil, os.ErrNotExist)
+			osMock.EXPECT().ReadFile("/proc/sys/kernel/random/boot_id").Return([]byte("boot-1\n"), nil)
+			osMock.EXPECT().ReadFile(mock.Anything).Return(nil, os.ErrNotExist)
 			osMock.EXPECT().MkdirAll(mock.Anything, mock.Anything).Return(errors.New("mkdir failed"))
 
 			err := dm.Build(ctx)
@@ -5036,6 +5037,46 @@ var _ = Describe("Driver DTK setup", func() {
 			err := dm.buildAndWaitDTK(attemptCtx, sharedDir, startFlag, doneFlag, kernelVersion)
 			Expect(err).To(MatchError(ContainSubstring("timeout")))
 			Expect(err).To(MatchError(ContainSubstring("awaiting DTK compilation")))
+		})
+
+		It("waits for a compile that is already running in this boot", func() {
+			Expect(os.MkdirAll(sharedDir, 0o755)).To(Succeed())
+			Expect(os.WriteFile(startFlag, []byte("test-boot-id"), 0o644)).To(Succeed())
+			Expect(os.WriteFile(doneFlag, nil, 0o644)).To(Succeed())
+
+			Expect(dm.buildAndWaitDTK(attemptCtx, sharedDir, startFlag, doneFlag, kernelVersion)).To(Succeed())
+			body, err := os.ReadFile(startFlag)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).To(Equal("test-boot-id"))
+		})
+
+		It("prepares sources when the start flag is from a previous boot", func() {
+			Expect(os.MkdirAll(sharedDir, 0o755)).To(Succeed())
+			Expect(os.WriteFile(startFlag, []byte("previous-boot"), 0o644)).To(Succeed())
+			Expect(os.WriteFile(doneFlag, nil, 0o644)).To(Succeed())
+			expectPreparations(1)
+
+			Expect(dm.buildAndWaitDTK(attemptCtx, sharedDir, startFlag, doneFlag, kernelVersion)).To(Succeed())
+			body, err := os.ReadFile(startFlag)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(body)).To(Equal("test-boot-id"))
+		})
+
+		It("prepares sources once when the resumed build has already failed", func() {
+			Expect(os.MkdirAll(sharedDir, 0o755)).To(Succeed())
+			Expect(os.WriteFile(startFlag, []byte("test-boot-id"), 0o644)).To(Succeed())
+			Expect(os.WriteFile(failFlag, []byte(failReason), 0o644)).To(Succeed())
+			expectPreparations(1)
+
+			go func() {
+				defer GinkgoRecover()
+				g := NewWithT(GinkgoT())
+				g.Eventually(failFlag).WithTimeout(4 * time.Second).WithPolling(2 * time.Millisecond).ShouldNot(BeAnExistingFile())
+				g.Expect(os.WriteFile(doneFlag, nil, 0o644)).To(Succeed())
+			}()
+
+			Expect(dm.buildAndWaitDTK(attemptCtx, sharedDir, startFlag, doneFlag, kernelVersion)).To(Succeed())
+			Expect(doneFlag).To(BeAnExistingFile())
 		})
 	})
 })

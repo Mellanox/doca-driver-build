@@ -72,6 +72,23 @@ func BootIDFrom(readFile func(path string) ([]byte, error)) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
+// StartFlagWrittenForBoot reports whether dtk_start_compile was published with bootID.
+// A missing or blank flag was not, and is left in place.
+func StartFlagWrittenForBoot(readFile func(path string) ([]byte, error), path, bootID string) (bool, error) {
+	data, err := readFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	contents := strings.TrimSpace(string(data))
+	if contents == "" {
+		return false, nil
+	}
+	return contents == bootID, nil
+}
+
 // HasBuiltRPMs reports whether the build tree contains at least one RPM under
 // RPMS/redhat-release-*/<arch>/. install.pl can exit 0 with an empty RPMS directory
 // when its source tree is removed mid-build, so the exit code alone is not proof of success.
