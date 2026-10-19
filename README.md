@@ -73,6 +73,12 @@ Before building the container, you need to provide following parameters as `buil
 > Pre-3.6 `MLNX_OFED_SRC-*` archives remain supported and need no extra arguments: they
 > already bundle `install.pl`, so they are used as-is and the vendored copies are ignored.
 
+>[!NOTE]
+> On Ubuntu, DOCA 3.6+ DKMS packages require `dkms >= 3.4.3`, which only the DOCA apt repo
+> provides. The image installs `dkms_*.deb` and `dh-dkms_*.deb` placed in the build context's
+> `doca-dkms/` directory; when there are none, it fetches them from the public DOCA repo for
+> `D_DOCA_VERSION`/`D_OS`/`D_ARCH`, or from `D_DOCA_REPO_URL` if set.
+
 >[!IMPORTANT]
 > Check desired NVIDIA NIC drivers sources[^1] availability for designated container OS, only versions available on download page can be utilized  
 

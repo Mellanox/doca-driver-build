@@ -82,12 +82,19 @@ FROM base AS driver-src
 
 # Inherited global args
 ARG D_OS
+ARG D_ARCH
 ARG D_DOCA_VERSION
 ARG D_OFED_VERSION
 ARG D_OFED_SRC_DOWNLOAD_PATH
 
 # Stage args
 ARG D_OFED_BASE_URL="https://linux.mellanox.com/public/repo/doca/${D_DOCA_VERSION}/SOURCES/mlnx_ofed"
+# From DOCA 3.6 on, mlnx-ofed-kernel-dkms depends on dkms >= 3.4.3, newer than any Ubuntu release
+# ships, so dkms and dh-dkms come from DOCA. Debs placed in the build context's doca-dkms/
+# directory are used as is (intended for internal builds of unreleased DOCA versions, alongside a
+# local D_OFED_URL_PATH). Otherwise they are fetched from this DOCA apt repo for the distro/arch,
+# which when empty is derived from D_DOCA_VERSION, D_OS and D_ARCH.
+ARG D_DOCA_REPO_URL=""
 ARG D_OFED_SRC_TYPE="debian-"
 
 # Up to DOCA 3.5 the sources ship as MLNX_OFED_SRC-debian-<ofed-version>.tgz, which bundles
@@ -102,6 +109,7 @@ ENV NVIDIA_NIC_DRIVER_PATH="${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_V
 WORKDIR /root
 RUN set -x && \
     apt-get update
+COPY doca-dkms/ /opt/doca-dkms/
 RUN set -x && \
     echo $D_OS | grep "ubuntu20.04" || GCC_VER="-12" && \
 # Install prerequirements \
@@ -114,6 +122,39 @@ RUN set -x && \
 # don't ship dh-dkms (and don't need it), so guard the install on the distro. \
     if echo "$D_OS" | grep -qE "ubuntu(2[4-9]|[3-9][0-9])"; then \
         DEBIAN_FRONTEND=noninteractive apt-get -yq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install dh-dkms; \
+    fi && \
+# Upgrade dkms and dh-dkms to the DOCA builds, which satisfy the "dkms (>= 3.4.3)" dependency of
+# DOCA 3.6+ mlnx-ofed-kernel-dkms. Both are installed as a pair: once dkms is >= 3.0, the
+# "dh-dkms | dkms (<< 3.0)" Build-Depends needs dh-dkms even on releases that don't ship it.
+# The debs are kept in /opt/doca-dkms for the precompiled stage. Older DOCA repos without
+# them keep the distro dkms, which their driver packages accept. \
+    if ls /opt/doca-dkms/dkms_*.deb >/dev/null 2>&1; then \
+        echo "Using dkms packages from the build context: $(ls /opt/doca-dkms/*.deb)"; \
+    else \
+        repo_url="${D_DOCA_REPO_URL}" && \
+        if [ -z "${repo_url}" ]; then \
+            case "${D_ARCH}" in \
+                aarch64|arm64) repo_arch="arm64-sbsa" ;; \
+                *) repo_arch="${D_ARCH}" ;; \
+            esac && \
+            repo_url="https://linux.mellanox.com/public/repo/doca/${D_DOCA_VERSION}/${D_OS}/${repo_arch}"; \
+        fi && \
+        if ! curl -fsSL "${repo_url}/Packages" -o /tmp/doca-Packages; then \
+            echo "error: cannot fetch ${repo_url}/Packages; place dkms_*.deb and dh-dkms_*.deb in doca-dkms/ or set D_DOCA_REPO_URL" >&2; \
+            exit 1; \
+        fi && \
+        for pkg in dkms dh-dkms; do \
+            deb_path=$(awk -v p="${pkg}" '$1 == "Package:" { m = ($2 == p) } m && $1 == "Filename:" { print $2; exit }' /tmp/doca-Packages) && \
+            if [ -n "${deb_path}" ]; then \
+                curl -fsSL "${repo_url}/${deb_path}" -o "/opt/doca-dkms/$(basename "${deb_path}")" || exit 1; \
+            fi; \
+        done && \
+        rm -f /tmp/doca-Packages; \
+    fi && \
+    if ls /opt/doca-dkms/*.deb >/dev/null 2>&1; then \
+        DEBIAN_FRONTEND=noninteractive apt-get -yq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install /opt/doca-dkms/*.deb; \
+    else \
+        echo "note: no DOCA dkms package available, keeping the distro dkms"; \
     fi && \
 # Cleanup \
     apt-get clean autoclean && apt install --reinstall -y ca-certificates && \
@@ -212,12 +253,17 @@ RUN case "$D_ENABLE_DKMS" in \
     esac
 ENV NVIDIA_NIC_DRIVER_DKMS_ENABLED=${D_ENABLE_DKMS}
 
+COPY --from=driver-src /opt/doca-dkms /opt/doca-dkms
+
 RUN set -x && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" lsb-release && \
     test -n "${D_KERNEL_VER}" && DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" linux-modules-extra-${D_KERNEL_VER} || true && \
 # Install DKMS and build tools if enabled (needed at runtime for dkms add/build/install)
     if [ "$D_ENABLE_DKMS" = "true" ]; then \
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" dkms build-essential bison flex libelf-dev pkg-config zstd; \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" dkms build-essential bison flex libelf-dev pkg-config zstd && \
+        if ls /opt/doca-dkms/dkms_*.deb >/dev/null 2>&1; then \
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" /opt/doca-dkms/dkms_*.deb; \
+        fi; \
     fi
 # Cleanup
 RUN set -x && \
