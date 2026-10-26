@@ -18,6 +18,7 @@ package dtk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 	"github.com/kballard/go-shellquote"
 
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/config"
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/constants"
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/cmd"
 )
 
@@ -66,7 +68,7 @@ func RunBuild(ctx context.Context, log logr.Logger, cfg config.Config, cmdHelper
 		default:
 		}
 
-		if _, err := os.Stat(cfg.DtkOcpStartCompileFlag); err == nil {
+		if startFlagIsCurrent(log, cfg.DtkOcpStartCompileFlag) {
 			break
 		}
 		log.Info("Awaiting driver container preparations prior compilation", "next_query_sec", retryDelay.Seconds())
@@ -82,8 +84,7 @@ func RunBuild(ctx context.Context, log logr.Logger, cfg config.Config, cmdHelper
 
 	// Construct install.pl command
 	// ${DTK_OCP_NIC_SHARED_DIR}/MLNX_OFED_SRC-${DTK_OCP_COMPILED_DRIVER_VER}/install.pl
-	srcDirName := fmt.Sprintf("MLNX_OFED_SRC-%s", cfg.DtkOcpCompiledDriverVer)
-	installScript := filepath.Join(cfg.DtkOcpNicSharedDir, srcDirName, "install.pl")
+	installScript := filepath.Join(cfg.DtkOcpNicSharedDir, SourceDirName(cfg.DtkOcpCompiledDriverVer), "install.pl")
 
 	installArgs := []string{
 		installScript,
@@ -127,6 +128,10 @@ func RunBuild(ctx context.Context, log logr.Logger, cfg config.Config, cmdHelper
 		return fmt.Errorf("driver build failed: %w", err)
 	}
 
+	if err := ensureRPMsBuilt(filepath.Dir(installScript), cfg.DtkOcpStartCompileFlag); err != nil {
+		return err
+	}
+
 	// Create done flag
 	if _, err := os.Create(cfg.DtkOcpDoneCompileFlag); err != nil {
 		return fmt.Errorf("failed to create done flag: %w", err)
@@ -144,4 +149,42 @@ func RunBuild(ctx context.Context, log logr.Logger, cfg config.Config, cmdHelper
 	log.Info("Build completed, sleeping indefinitely")
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+// startFlagIsCurrent reports whether the start flag exists and was written during the current
+// node boot. A flag from a previous boot is left in place. The driver replaces it atomically,
+// and deleting it from an earlier read can unlink that replacement, so the sidecar waits
+// until the contents match the current boot instead of compiling on a half-copied tree.
+func startFlagIsCurrent(log logr.Logger, path string) bool {
+	bootID, err := BootIDFrom(os.ReadFile)
+	if err != nil {
+		log.Error(err, "failed to get boot id")
+		return false
+	}
+	writtenForBoot, err := StartFlagWrittenForBoot(os.ReadFile, path, bootID)
+	if err != nil {
+		log.Error(err, "failed to read start flag", "flag", path)
+		return false
+	}
+	return writtenForBoot
+}
+
+// ensureRPMsBuilt fails when the build tree holds no RPMs. install.pl may exit 0 without
+// producing any (e.g. its source tree was replaced mid-build), and recording success for such a
+// build would make every later restart skip it. The start flag is removed before the failure
+// flag is published, so a restarted sidecar waits instead of compiling the same tree while the
+// driver is still preparing the next attempt.
+func ensureRPMsBuilt(srcDir, startFlagPath string) error {
+	if HasBuiltRPMs(srcDir) {
+		return nil
+	}
+	msg := fmt.Sprintf("driver build produced no RPMs under %s", filepath.Join(srcDir, "RPMS"))
+	if err := os.Remove(startFlagPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("%s: %w", msg, err)
+	}
+	failFlag := filepath.Join(filepath.Dir(startFlagPath), constants.DtkFailedCompileFlag)
+	if err := PublishFlag(failFlag, []byte(msg)); err != nil {
+		return fmt.Errorf("%s: %w", msg, err)
+	}
+	return errors.New(msg)
 }
