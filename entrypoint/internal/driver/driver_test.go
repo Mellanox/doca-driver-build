@@ -5062,7 +5062,10 @@ var _ = Describe("Unload", func() {
 			dm = &driverMgr{cfg: cfg, cmd: cmdMock, host: hostMock, os: osMock}
 			dm.newDriverLoaded = true
 
-			cmdMock.EXPECT().RunCommand(ctx, "/usr/sbin/mlnxofedctl", "--alt-mods", "force-restart").
+			cmdMock.EXPECT().RunCommand(ctx, "env",
+				"MLX5_LOAD=yes", "UMAD_LOAD=yes", "UVERBS_LOAD=yes", "IPOIB_LOAD=yes",
+				"RDMA_CM_LOAD=yes", "RDMA_UCM_LOAD=yes",
+				"/usr/sbin/mlnxofedctl", "--alt-mods", "force-restart").
 				Return("", "", nil)
 			setupPrintLoadedDriverVersion()
 
@@ -5082,7 +5085,10 @@ var _ = Describe("Unload", func() {
 				"-m", moduleName, "-v", moduleVersion, "-k", kernelVersion).
 				Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "depmod", kernelVersion).Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "/usr/sbin/mlnxofedctl", "--alt-mods", "force-restart").
+			cmdMock.EXPECT().RunCommand(ctx, "env",
+				"MLX5_LOAD=yes", "UMAD_LOAD=yes", "UVERBS_LOAD=yes", "IPOIB_LOAD=yes",
+				"RDMA_CM_LOAD=yes", "RDMA_UCM_LOAD=yes",
+				"/usr/sbin/mlnxofedctl", "--alt-mods", "force-restart").
 				Return("", "", nil)
 			setupPrintLoadedDriverVersion()
 
@@ -5102,7 +5108,10 @@ var _ = Describe("Unload", func() {
 				"-m", moduleName, "-v", moduleVersion, "-k", kernelVersion).
 				Return("", "module not found", errors.New("exit status 6"))
 			cmdMock.EXPECT().RunCommand(ctx, "depmod", kernelVersion).Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "/usr/sbin/mlnxofedctl", "--alt-mods", "force-restart").
+			cmdMock.EXPECT().RunCommand(ctx, "env",
+				"MLX5_LOAD=yes", "UMAD_LOAD=yes", "UVERBS_LOAD=yes", "IPOIB_LOAD=yes",
+				"RDMA_CM_LOAD=yes", "RDMA_UCM_LOAD=yes",
+				"/usr/sbin/mlnxofedctl", "--alt-mods", "force-restart").
 				Return("", "", nil)
 			setupPrintLoadedDriverVersion()
 
@@ -5121,7 +5130,10 @@ var _ = Describe("Unload", func() {
 			osMock.EXPECT().ReadDir("/usr/src/").Return([]os.DirEntry{}, nil)
 
 			// No dkms remove or depmod — but mlnxofedctl still runs
-			cmdMock.EXPECT().RunCommand(ctx, "/usr/sbin/mlnxofedctl", "--alt-mods", "force-restart").
+			cmdMock.EXPECT().RunCommand(ctx, "env",
+				"MLX5_LOAD=yes", "UMAD_LOAD=yes", "UVERBS_LOAD=yes", "IPOIB_LOAD=yes",
+				"RDMA_CM_LOAD=yes", "RDMA_UCM_LOAD=yes",
+				"/usr/sbin/mlnxofedctl", "--alt-mods", "force-restart").
 				Return("", "", nil)
 			setupPrintLoadedDriverVersion()
 
