@@ -158,7 +158,13 @@ function termination_handler() {
                 dkms_remove
             fi
 
-            /usr/sbin/mlnxofedctl --alt-mods force-restart
+            # Since 26.07 the deb-packaged openib.conf no longer carries the *_LOAD=yes
+            # lines, so openibd falls back to loading only modules that depend on
+            # mlx_compat. Under --alt-mods those are the host inbox modules, so nothing
+            # would be loaded. Force the flags explicitly.
+            MLX5_LOAD=yes UMAD_LOAD=yes UVERBS_LOAD=yes IPOIB_LOAD=yes \
+                RDMA_CM_LOAD=yes RDMA_UCM_LOAD=yes \
+                /usr/sbin/mlnxofedctl --alt-mods force-restart
 
             print_loaded_drv_ver_str
 
