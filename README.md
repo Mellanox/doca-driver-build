@@ -166,6 +166,11 @@ podman pull --authfile=/path/to/pull-secret.txt docker://quay.io/openshift-relea
     --target precompiled .
 ```
 
+## Go Entrypoint Flow
+
+See the [Go entrypoint flow diagrams](docs/entrypoint-flow.md) for mode selection,
+startup, driver build/cache decisions, readiness, and teardown.
+
 ## Runtime Environment Variables
 
 The following environment variables can be set at container runtime to control driver loading behavior:
