@@ -277,7 +277,9 @@ RUN set -x && \
         curl -fsSL -o /tmp/epel-release.rpm https://dl.fedoraproject.org/pub/epel/epel-release-latest-${MAJOR_VER}.noarch.rpm && \
         rpm -ivh /tmp/epel-release.rpm && \
         rm -f /tmp/epel-release.rpm && \
-        dnf install -y dkms gcc make bison flex elfutils-libelf-devel --releasever=${RELEASE_VER}; \
+# DKMS builds external modules against prepared kernel-devel, not the kernel's
+# parsers. bison/flex are not needed here and are unavailable in UBI9 repositories.
+        dnf install -y dkms gcc make elfutils-libelf-devel --releasever=${RELEASE_VER}; \
     fi
 
 # NFS userspace tools (mount.nfs) — copied to host at runtime when ENABLE_NFSRDMA=true.
