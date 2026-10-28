@@ -269,12 +269,14 @@ func (d *driverMgr) Load(ctx context.Context) (bool, error) {
 	if err := d.generateOfedModulesBlacklist(ctx); err != nil {
 		return false, err
 	}
-	defer func() {
-		if err := d.removeOfedModulesBlacklist(ctx); err != nil {
-			log := logr.FromContextOrDiscard(ctx)
-			log.Error(err, "Failed to remove OFED modules blacklist during cleanup")
-		}
-	}()
+	if !d.cfg.PersistentOfedBlacklistModulesFile {
+		defer func() {
+			if err := d.removeOfedModulesBlacklist(ctx); err != nil {
+				log := logr.FromContextOrDiscard(ctx)
+				log.Error(err, "Failed to remove OFED modules blacklist during cleanup")
+			}
+		}()
+	}
 
 	log := logr.FromContextOrDiscard(ctx)
 	log.V(1).Info("Loading driver modules")
