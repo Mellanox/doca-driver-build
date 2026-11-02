@@ -738,7 +738,9 @@ function load_mlx5_auxiliary_modules() {
 # Container modinfo can mistake host inbox nvme for OFED's local-disk driver.
 # Restore the pre-26.07 stop check after package installation, retaining RDMA checks.
 function patch_openibd_nvme_check() {
-    [[ "${NVIDIA_NIC_DRIVER_VER}" == 26.07-* ]] || return 0
+    local ver_base="${NVIDIA_NIC_DRIVER_VER%%-*}"
+    [[ "$ver_base" =~ ^([0-9]+)\.([0-9]+)$ ]] || return 0
+    (( 10#${BASH_REMATCH[1]} * 100 + 10#${BASH_REMATCH[2]} >= 2607 )) || return 0
 
     local f=/usr/share/mlnx_ofed/mod_load_funcs
     local old='for mod in ib_isert nvme_rdma nvmet_rdma nvme rpcrdma xprtrdma ib_srpt'

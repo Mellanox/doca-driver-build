@@ -84,10 +84,18 @@ var _ = Describe("Driver", func() {
 			Expect(dm.patchOpenIBDNVMECheck(ctx)).To(Succeed())
 		})
 
+		DescribeTable("patches affected versions", func(version string) {
+			dm.cfg.NvidiaNicDriverVer = version
+			osMock.EXPECT().ReadFile(path).Return([]byte(old), nil)
+			cmdMock.EXPECT().RunCommand(ctx, "sed", "-i", "s/"+old+"/"+fixed+"/", path).Return("", "", nil)
+			Expect(dm.patchOpenIBDNVMECheck(ctx)).To(Succeed())
+		}, Entry("26.07", "26.07-0.7.7.0"), Entry("26.10", "26.10-0.6.7.0"), Entry("next year", "27.01-0.1.0.0"))
+
 		DescribeTable("skips unaffected versions without accessing the file", func(version string) {
 			dm.cfg.NvidiaNicDriverVer = version
 			Expect(dm.patchOpenIBDNVMECheck(ctx)).To(Succeed())
-		}, Entry("older", "26.04-1.1.0.0"), Entry("newer", "26.10-0.1.0.0"))
+		}, Entry("older", "26.04-1.1.0.0"), Entry("previous year", "25.10-1.0.0.0"),
+			Entry("unparseable", "test-version"))
 
 		DescribeTable("rejects unexpected layouts", func(content string) {
 			osMock.EXPECT().ReadFile(path).Return([]byte(content), nil)
