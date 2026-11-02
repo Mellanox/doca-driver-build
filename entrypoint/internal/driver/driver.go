@@ -1964,7 +1964,7 @@ func (d *driverMgr) loadModuleHostInboxDependencies(ctx context.Context, modName
 // mistake the host's inbox nvme for OFED's local-disk driver. Keep RDMA checks.
 // Run after package installation (including cache reuse), before any unloading.
 func (d *driverMgr) patchOpenIBDNVMECheck(ctx context.Context) error {
-	if !strings.HasPrefix(d.cfg.NvidiaNicDriverVer, "26.07-") {
+	if !driverVersionAtLeast(d.cfg.NvidiaNicDriverVer, 26, 7) {
 		return nil
 	}
 
@@ -1990,6 +1990,24 @@ func (d *driverMgr) patchOpenIBDNVMECheck(ctx context.Context) error {
 	}
 	logr.FromContextOrDiscard(ctx).Info("Patched openibd stop check to preserve inbox nvme")
 	return nil
+}
+
+// driverVersionAtLeast reports whether a "YY.MM-..." driver version is at least
+// year.month. Unparseable versions are treated as older.
+func driverVersionAtLeast(version string, year, month int) bool {
+	yearStr, rest, ok := strings.Cut(strings.SplitN(version, "-", 2)[0], ".")
+	if !ok {
+		return false
+	}
+	y, err := strconv.Atoi(yearStr)
+	if err != nil {
+		return false
+	}
+	m, err := strconv.Atoi(rest)
+	if err != nil {
+		return false
+	}
+	return y > year || (y == year && m >= month)
 }
 
 // restartDriver restarts the driver modules
