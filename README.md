@@ -28,6 +28,9 @@ Before you begin, ensure that you have the following prerequisites:
 **SLES**:
 1. Active subscription.
 
+**Rocky**:
+1. No subscription required. Kernel headers and build tools come from the public Rocky repositories (`dl.rockylinux.org`), and base images come from `quay.io/rockylinux/rockylinux`.
+
 ## Dockerfile Overview
 
 To build the precompiled container, the Dockerfile is constructed in a multistage fashion.  
@@ -50,7 +53,7 @@ The Dockerfile consists of the following stages:
 
 ## Common _mandatory_ build parameters
 Before building the container, you need to provide following parameters as `build-arg` for container build:
-1. `D_OS`: The Linux distribution (e.g., ubuntu22.04 / rhel9.2)
+1. `D_OS`: The Linux distribution (e.g., ubuntu22.04 / rhel9.2 / rocky9.8)
 2. `D_ARCH`: Compiled Architecture
 3. `D_BASE_IMAGE`: Base container image (e.g., ubuntu:22.04)
 4. `D_KERNEL_VER`: The target kernel version (e.g., 5.15.0-25-generic / 5.14.0-284.32.1.el9_2.x86_64)
@@ -105,6 +108,16 @@ podman pull --authfile=/path/to/pull-secret.txt docker://quay.io/openshift-relea
 ```
 
 2. `D_FINAL_BASE_IMAGE`: Final container image, to install compiled driver
+
+## Rocky _specific_ build parameters
+Rocky builds use `Rocky_Dockerfile` and do not need a DriverToolKit image or an RHSM entitlement. `kernel-devel` for `D_KERNEL_VER` is installed from the Rocky repositories.
+
+1. `D_OS`: Must be `rocky<major>.<minor>`, e.g. `rocky9.8`. The base stage pins the Rocky repositories to this minor, falling back to `/vault/` if the minor is no longer current.
+2. `D_BASE_IMAGE`: Rocky base image with the same minor as `D_OS`, e.g. `quay.io/rockylinux/rockylinux:9.8`. Rocky's `mirrorlist` always tracks the latest minor, so the Dockerfile re-pins the repositories to `D_OS`.
+3. `D_FINAL_BASE_IMAGE`: Final container image, to install compiled driver. Use the same minor as `D_OS`.
+
+>[!NOTE]
+>On macOS (Apple Silicon) build for x86_64 with `--platform linux/amd64`. The build runs under emulation and is slower.
 
 ## Examples
 
@@ -166,6 +179,25 @@ podman pull --authfile=/path/to/pull-secret.txt docker://quay.io/openshift-relea
     --target precompiled .
 ```
 
+**Rocky example** (DOCA 3.6.0, x86_64, built on macOS):
+```bash
+# docker build \
+    --platform linux/amd64 \
+    --build-arg D_OS=rocky9.8 \
+    --build-arg D_ARCH=x86_64 \
+    --build-arg D_BASE_IMAGE=rockylinux/rockylinux:9.8-ubi \
+    --build-arg D_FINAL_BASE_IMAGE=rockylinux/rockylinux:9.8-ubi \
+    --build-arg D_KERNEL_VER=5.14.0-687.64.1.el9_8.x86_64 \
+    --build-arg D_DOCA_VERSION=3.6.0 \
+    --build-arg D_OFED_VERSION=26.10-069000 \
+    --build-arg D_OFED_URL_PATH=DOCA_BASE_SRC-3.6.0-069000.tar.gz \
+    --tag doca3.6.0-26.10-069000-0-5.14.0-687.64.1.el9_8.x86_64-rocky9.8-amd64 \
+    -f Rocky_Dockerfile \
+    --target precompiled .
+```
+>[!NOTE]
+>`D_OFED_URL_PATH` is a path relative to the build context, so the `DOCA_BASE_SRC-*` archive must be in the repository root. `D_KERNEL_VER` must match the kernel of the host the container runs on.
+
 ## Runtime Environment Variables
 
 The following environment variables can be set at container runtime to control driver loading behavior:
@@ -178,6 +210,15 @@ The following environment variables can be set at container runtime to control d
 | `UNLOAD_STORAGE_MODULES` | `false` | When `true`, storage modules (ib_isert, nvme_rdma, etc.) are unloaded during driver restart. |
 | `ENABLE_NFSRDMA` | `false` | When `true`, builds and loads NFS-RDMA kernel modules (rpcrdma, nvme_rdma) and copies NFS userspace tools (mount.nfs) to the host if not already present. |
 | `RESTORE_DRIVER_ON_POD_TERMINATION` | `false` | When `true`, restores the inbox driver on container teardown. |
+
+### Runtime package installation (RHEL / Rocky)
+
+On RHEL-family hosts the container installs the kernel and its dependencies with `dnf` at startup, using the repositories mounted from the host (`/etc/yum.repos.d`). The kernel and dependency package installs use `--setopt=skip_if_unavailable=True` (repository metadata refresh and the GCC install do not), so a third-party repository on the host that cannot be reached for the target release (for example, `docker-ce-stable` returning 404 for `--releasever=9.8`) is skipped instead of aborting the install. Packages are still resolved from the enabled repositories that do respond. This change requires rebuilding the image.
+
+If you prefer not to rely on this, disable the unreachable repository on the host before starting the container:
+```bash
+sudo dnf config-manager --set-disabled docker-ce-stable
+```
 
 >[!IMPORTANT]
 >Dockerfiles contain default build parameters, which may fail build proccess on your system if not overridden.
