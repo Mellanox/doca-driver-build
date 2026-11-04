@@ -65,6 +65,9 @@ var _ = Describe("Driver", func() {
 		const path = "/usr/share/mlnx_ofed/mod_load_funcs"
 		const old = "for mod in ib_isert nvme_rdma nvmet_rdma nvme rpcrdma xprtrdma ib_srpt"
 		const fixed = "for mod in ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma ib_srpt"
+		const oldNVMeCore = "IS_NVME_CORE_MLNX=`check_mlnx_ofed_module nvme_core || :`"
+		const fixedNVMeCore = "IS_NVME_CORE_MLNX=no"
+		const nvmeCoreUnload = `if [ "$IS_NVME_CORE_MLNX" = "yes" ]; then`
 
 		BeforeEach(func() {
 			cfg.NvidiaNicDriverVer = "26.07-0.7.7.0"
@@ -78,9 +81,24 @@ var _ = Describe("Driver", func() {
 			Expect(dm.patchOpenIBDNVMECheck(ctx)).To(Succeed())
 		})
 
+		It("disables the 26.10 nvme_core unload that rmmod's an in-use nvme", func() {
+			input := old + "\n" + oldNVMeCore + "\n" + nvmeCoreUnload + "\n"
+			osMock.EXPECT().ReadFile(path).Return([]byte(input), nil)
+			cmdMock.EXPECT().RunCommand(ctx, "sed", "-i", "s/"+old+"/"+fixed+"/", path).Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "sed", "-i", "s/"+oldNVMeCore+"/"+fixedNVMeCore+"/", path).Return("", "", nil)
+			Expect(dm.patchOpenIBDNVMECheck(ctx)).To(Succeed())
+		})
+
+		It("still disables nvme_core unload when the stop check is already patched", func() {
+			input := fixed + "\n" + oldNVMeCore + "\n" + nvmeCoreUnload + "\n"
+			osMock.EXPECT().ReadFile(path).Return([]byte(input), nil)
+			cmdMock.EXPECT().RunCommand(ctx, "sed", "-i", "s/"+oldNVMeCore+"/"+fixedNVMeCore+"/", path).Return("", "", nil)
+			Expect(dm.patchOpenIBDNVMECheck(ctx)).To(Succeed())
+		})
+
 		It("accepts an already patched precompiled image without writing", func() {
 			dm.containerMode = constants.DriverContainerModePrecompiled
-			osMock.EXPECT().ReadFile(path).Return([]byte(fixed), nil)
+			osMock.EXPECT().ReadFile(path).Return([]byte(fixed+"\n"+fixedNVMeCore+"\n"+nvmeCoreUnload), nil)
 			Expect(dm.patchOpenIBDNVMECheck(ctx)).To(Succeed())
 		})
 
@@ -101,7 +119,9 @@ var _ = Describe("Driver", func() {
 			osMock.EXPECT().ReadFile(path).Return([]byte(content), nil)
 			Expect(dm.patchOpenIBDNVMECheck(ctx)).To(MatchError(ContainSubstring("unexpected openibd")))
 		}, Entry("unknown", "for mod in nvme; do"), Entry("duplicate", old+"\n"+old),
-			Entry("mixed", old+"\n"+fixed))
+			Entry("mixed", old+"\n"+fixed),
+			Entry("nvme_core unload without assignment", old+"\n"+nvmeCoreUnload),
+			Entry("duplicate nvme_core assignment", old+"\n"+oldNVMeCore+"\n"+oldNVMeCore+"\n"+nvmeCoreUnload))
 
 		It("fails before unloading when the installed file is missing", func() {
 			osMock.EXPECT().ReadFile(path).Return(nil, os.ErrNotExist)

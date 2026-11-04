@@ -1960,9 +1960,12 @@ func (d *driverMgr) loadModuleHostInboxDependencies(ctx context.Context, modName
 	}
 }
 
-// patchOpenIBDNVMECheck restores the pre-26.07 stop check. Container modinfo can
-// mistake the host's inbox nvme for OFED's local-disk driver. Keep RDMA checks.
-// Run after package installation (including cache reuse), before any unloading.
+// patchOpenIBDNVMECheck keeps the host inbox nvme driver across openibd restart.
+// Container modinfo resolves the image's OFED nvme (version docaX.Y.Z-YY.MM-...)
+// instead of the loaded module. Since 26.07 that makes the stop check refuse to
+// continue. Since 26.10 unload_modules also prepends nvme_core when that modinfo
+// depends on mlx_compat, and rmmod then fails with "Module nvme is in use".
+// RDMA transport checks stay. Run after package installation, before unloading.
 func (d *driverMgr) patchOpenIBDNVMECheck(ctx context.Context) error {
 	if !driverVersionAtLeast(d.cfg.NvidiaNicDriverVer, 26, 7) {
 		return nil
@@ -1971,6 +1974,9 @@ func (d *driverMgr) patchOpenIBDNVMECheck(ctx context.Context) error {
 	const path = "/usr/share/mlnx_ofed/mod_load_funcs"
 	const old = "for mod in ib_isert nvme_rdma nvmet_rdma nvme rpcrdma xprtrdma ib_srpt"
 	const fixed = "for mod in ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma ib_srpt"
+	const oldNVMeCore = "IS_NVME_CORE_MLNX=`check_mlnx_ofed_module nvme_core || :`"
+	const fixedNVMeCore = "IS_NVME_CORE_MLNX=no"
+	const nvmeCoreUnload = `if [ "$IS_NVME_CORE_MLNX" = "yes" ]; then`
 
 	data, err := d.os.ReadFile(path)
 	if err != nil {
@@ -1980,15 +1986,28 @@ func (d *driverMgr) patchOpenIBDNVMECheck(ctx context.Context) error {
 	if strings.Count(content, old)+strings.Count(content, fixed) != 1 {
 		return fmt.Errorf("unexpected openibd NVMe stop-check layout in %s", path)
 	}
-	if strings.Contains(content, fixed) {
-		return nil
+	if strings.Contains(content, nvmeCoreUnload) &&
+		strings.Count(content, oldNVMeCore)+strings.Count(content, fixedNVMeCore) != 1 {
+		return fmt.Errorf("unexpected openibd NVMe unload layout in %s", path)
 	}
+
+	patched := false
 	// sed -i writes a temporary file and replaces the original only after writing it.
-	_, _, err = d.cmd.RunCommand(ctx, "sed", "-i", "s/"+old+"/"+fixed+"/", path)
-	if err != nil {
-		return fmt.Errorf("patch openibd NVMe stop check: %w", err)
+	if strings.Contains(content, old) {
+		if _, _, err = d.cmd.RunCommand(ctx, "sed", "-i", "s/"+old+"/"+fixed+"/", path); err != nil {
+			return fmt.Errorf("patch openibd NVMe stop check: %w", err)
+		}
+		patched = true
 	}
-	logr.FromContextOrDiscard(ctx).Info("Patched openibd stop check to preserve inbox nvme")
+	if strings.Contains(content, oldNVMeCore) {
+		if _, _, err = d.cmd.RunCommand(ctx, "sed", "-i", "s/"+oldNVMeCore+"/"+fixedNVMeCore+"/", path); err != nil {
+			return fmt.Errorf("patch openibd NVMe unload: %w", err)
+		}
+		patched = true
+	}
+	if patched {
+		logr.FromContextOrDiscard(ctx).Info("Patched openibd to preserve inbox nvme")
+	}
 	return nil
 }
 
