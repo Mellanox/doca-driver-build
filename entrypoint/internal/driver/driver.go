@@ -1986,8 +1986,11 @@ func (d *driverMgr) patchOpenIBDNVMECheck(ctx context.Context) error {
 	if strings.Count(content, old)+strings.Count(content, fixed) != 1 {
 		return fmt.Errorf("unexpected openibd NVMe stop-check layout in %s", path)
 	}
-	if strings.Contains(content, nvmeCoreUnload) &&
-		strings.Count(content, oldNVMeCore)+strings.Count(content, fixedNVMeCore) != 1 {
+	// Any mention of IS_NVME_CORE_MLNX means a newer unload_modules. Require the
+	// exact assignment and gate we know how to patch, or fail instead of skipping.
+	if strings.Contains(content, "IS_NVME_CORE_MLNX") &&
+		(strings.Count(content, oldNVMeCore)+strings.Count(content, fixedNVMeCore) != 1 ||
+			strings.Count(content, nvmeCoreUnload) != 1) {
 		return fmt.Errorf("unexpected openibd NVMe unload layout in %s", path)
 	}
 

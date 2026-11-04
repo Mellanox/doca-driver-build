@@ -121,6 +121,9 @@ var _ = Describe("Driver", func() {
 		}, Entry("unknown", "for mod in nvme; do"), Entry("duplicate", old+"\n"+old),
 			Entry("mixed", old+"\n"+fixed),
 			Entry("nvme_core unload without assignment", old+"\n"+nvmeCoreUnload),
+			Entry("assignment without gate", old+"\n"+oldNVMeCore),
+			Entry("rewritten gate", old+"\n"+oldNVMeCore+"\nif [ \"$IS_NVME_CORE_MLNX\" = \"no\" ]; then"),
+			Entry("variable without known assignment", old+"\nIS_NVME_CORE_MLNX=$(check_nvme_core)\n"+nvmeCoreUnload),
 			Entry("duplicate nvme_core assignment", old+"\n"+oldNVMeCore+"\n"+oldNVMeCore+"\n"+nvmeCoreUnload))
 
 		It("fails before unloading when the installed file is missing", func() {

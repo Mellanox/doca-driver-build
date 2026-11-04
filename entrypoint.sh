@@ -760,9 +760,12 @@ function patch_openibd_nvme_check() {
         echo "Unexpected openibd NVMe stop-check layout in $f" >&2
         return 1
     fi
-    if grep -Fq "$gate" "$f"; then
+    # Any mention of IS_NVME_CORE_MLNX means a newer unload_modules. Require the
+    # exact assignment and gate we know how to patch, or fail instead of skipping.
+    if grep -Fq "IS_NVME_CORE_MLNX" "$f"; then
         count=$(grep -Fo -e "$old_core" -e "$fixed_core" "$f" | wc -l)
-        if [[ "$count" -ne 1 ]]; then
+        gate_count=$(grep -Fo -e "$gate" "$f" | wc -l)
+        if [[ "$count" -ne 1 || "$gate_count" -ne 1 ]]; then
             echo "Unexpected openibd NVMe unload layout in $f" >&2
             return 1
         fi
