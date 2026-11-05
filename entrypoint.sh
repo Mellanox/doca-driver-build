@@ -735,8 +735,9 @@ function load_mlx5_auxiliary_modules() {
     done
 }
 
-# Container modinfo can mistake host inbox nvme for OFED's local-disk driver.
-# Restore the pre-26.07 stop check after package installation, retaining RDMA checks.
+# Container modinfo resolves the image's OFED nvme instead of the loaded module.
+# Since 26.07 that blocks the stop check. Since 26.10 unload_modules also
+# prepends nvme_core, and rmmod then fails because the disk driver is in use.
 function patch_openibd_nvme_check() {
     local ver_base="${NVIDIA_NIC_DRIVER_VER%%-*}"
     [[ "$ver_base" =~ ^([0-9]+)\.([0-9]+)$ ]] || return 0
@@ -745,7 +746,10 @@ function patch_openibd_nvme_check() {
     local f=/usr/share/mlnx_ofed/mod_load_funcs
     local old='for mod in ib_isert nvme_rdma nvmet_rdma nvme rpcrdma xprtrdma ib_srpt'
     local fixed='for mod in ib_isert nvme_rdma nvmet_rdma rpcrdma xprtrdma ib_srpt'
-    local count
+    local old_core='IS_NVME_CORE_MLNX=`check_mlnx_ofed_module nvme_core || :`'
+    local fixed_core='IS_NVME_CORE_MLNX=no'
+    local gate='if [ "$IS_NVME_CORE_MLNX" = "yes" ]; then'
+    local count patched=0
 
     if [[ ! -f "$f" ]]; then
         echo "Missing $f" >&2
@@ -756,12 +760,29 @@ function patch_openibd_nvme_check() {
         echo "Unexpected openibd NVMe stop-check layout in $f" >&2
         return 1
     fi
-    if grep -Fq "$fixed" "$f"; then
-        return 0
+    # Any mention of IS_NVME_CORE_MLNX means a newer unload_modules. Require the
+    # exact assignment and gate we know how to patch, or fail instead of skipping.
+    if grep -Fq "IS_NVME_CORE_MLNX" "$f"; then
+        count=$(grep -Fo -e "$old_core" -e "$fixed_core" "$f" | wc -l)
+        gate_count=$(grep -Fo -e "$gate" "$f" | wc -l)
+        if [[ "$count" -ne 1 || "$gate_count" -ne 1 ]]; then
+            echo "Unexpected openibd NVMe unload layout in $f" >&2
+            return 1
+        fi
     fi
-    sed -i "s/$old/$fixed/" "$f" || return 1
-    grep -Fq "$fixed" "$f" || return 1
-    timestamp_print "Patched openibd stop check to preserve inbox nvme"
+    if grep -Fq "$old" "$f"; then
+        sed -i "s/$old/$fixed/" "$f" || return 1
+        grep -Fq "$fixed" "$f" || return 1
+        patched=1
+    fi
+    if grep -Fq "$old_core" "$f"; then
+        sed -i "s#$old_core#$fixed_core#" "$f" || return 1
+        grep -Fq "$fixed_core" "$f" || return 1
+        patched=1
+    fi
+    if [[ "$patched" -eq 1 ]]; then
+        timestamp_print "Patched openibd to preserve inbox nvme"
+    fi
 }
 
 function restart_driver() {
