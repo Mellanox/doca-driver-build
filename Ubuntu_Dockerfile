@@ -103,7 +103,13 @@ WORKDIR /root
 RUN set -x && \
     apt-get update
 RUN set -x && \
-    echo $D_OS | grep "ubuntu20.04" || GCC_VER="-12" && \
+# Ubuntu 22.04 and 24.04 kernels were built with GCC 12, while build-essential installs a newer
+# default gcc, so those releases must build modules with gcc-12. Ubuntu 20.04 already matches.
+# Ubuntu 26.04 kernels (7.0) were built with GCC 15; forcing gcc-12 there fails the
+# mlnx-ofed-kernel package build. \
+    if echo "$D_OS" | grep -qE '^ubuntu(22|24)\.'; then \
+        GCC_VER="-12"; \
+    fi && \
 # Install prerequirements \
     DEBIAN_FRONTEND=noninteractive apt-get -yq -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install curl \
     dkms make autoconf autotools-dev chrpath automake hostname debhelper dh-exec gcc$GCC_VER quilt libc6-dev build-essential pkg-config ubuntu-advantage-tools \
@@ -119,7 +125,9 @@ RUN set -x && \
     apt-get clean autoclean && apt install --reinstall -y ca-certificates && \
     rm -rf /var/lib/apt/lists/* && update-ca-certificates
 
-RUN echo $D_OS | grep "ubuntu20.04" || ln -fs gcc-12 /usr/bin/gcc  # 'build-essential' installs `gcc`, however (if above ubuntu 20.04) we need `gcc-12`, so we overwrite it with this link
+# 'build-essential' installs `gcc`. On 22.04 and 24.04 that default is newer than the GCC 12
+# the kernel was built with, so point gcc at gcc-12. 20.04 and 26.04+ keep the distro compiler.
+RUN if echo "$D_OS" | grep -qE '^ubuntu(22|24)\.'; then ln -fs gcc-12 /usr/bin/gcc; fi
 
 # Download NVIDIA NIC driver
 RUN mkdir -p ${D_OFED_SRC_DOWNLOAD_PATH}
