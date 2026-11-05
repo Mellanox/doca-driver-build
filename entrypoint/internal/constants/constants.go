@@ -39,4 +39,7 @@ const (
 	DtkOcpBuildScriptPath    = "/root/dtk_nic_driver_build.sh"
 	DtkStartCompileFlag      = "dtk_start_compile"
 	DtkDoneCompileFlagPrefix = "dtk_done_compile_"
+	// DtkFailedCompileFlag is written by the sidecar when a build exits without RPMs.
+	// The driver reads it as a request to prepare the sources and try again.
+	DtkFailedCompileFlag = "dtk_compile_failed"
 )
