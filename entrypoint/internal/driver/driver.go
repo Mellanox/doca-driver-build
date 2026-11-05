@@ -44,6 +44,10 @@ const (
 	dnfCmd         = "dnf"
 	dnfFlagQuiet   = "-q"
 	dnfFlagYes     = "-y"
+	// Hosts often bind-mount extra repos (Docker CE, CUDA, ...) whose URLs embed
+	// $releasever as a major version. --releasever=9.8 makes those URLs 404 and
+	// dnf aborts before installing the kernel. Skip repos that cannot be reached.
+	dnfFlagSkipUnavailable = "--setopt=skip_if_unavailable=True"
 
 	moduleIBCore   = "ib_core"
 	moduleMlx5Core = "mlx5_core"
@@ -1746,11 +1750,7 @@ func (d *driverMgr) installKernelPackages(ctx context.Context, kernelVersion str
 		}
 
 		for _, pkg := range packages {
-			args := []string{dnfCmd, dnfFlagQuiet, dnfFlagYes}
-			if releaseverStr != "" {
-				args = append(args, releaseverStr)
-			}
-			args = append(args, "install", pkg)
+			args := dnfInstallArgs(releaseverStr, pkg)
 
 			_, _, err := d.cmd.RunCommand(ctx, args[0], args[1:]...)
 			if err != nil {
@@ -1759,11 +1759,7 @@ func (d *driverMgr) installKernelPackages(ctx context.Context, kernelVersion str
 		}
 
 		// Install kernel-devel with --allowerasing flag
-		args := []string{dnfCmd, dnfFlagQuiet, dnfFlagYes}
-		if releaseverStr != "" {
-			args = append(args, releaseverStr)
-		}
-		args = append(args, "install", "kernel-devel-"+kernelVersion, "--allowerasing")
+		args := dnfInstallArgs(releaseverStr, "kernel-devel-"+kernelVersion, "--allowerasing")
 
 		_, _, err := d.cmd.RunCommand(ctx, args[0], args[1:]...)
 		if err != nil {
@@ -1772,11 +1768,7 @@ func (d *driverMgr) installKernelPackages(ctx context.Context, kernelVersion str
 	}
 
 	// Install kernel development and modules packages
-	args := []string{dnfCmd, dnfFlagQuiet, dnfFlagYes}
-	if releaseverStr != "" {
-		args = append(args, releaseverStr)
-	}
-	args = append(args, "install", "kernel-"+rtHpSubstr+"devel-"+kVer, "kernel-"+rtHpSubstr+"modules-"+kVer)
+	args := dnfInstallArgs(releaseverStr, "kernel-"+rtHpSubstr+"devel-"+kVer, "kernel-"+rtHpSubstr+"modules-"+kVer)
 
 	_, _, err := d.cmd.RunCommand(ctx, args[0], args[1:]...)
 	if err != nil {
@@ -1784,6 +1776,18 @@ func (d *driverMgr) installKernelPackages(ctx context.Context, kernelVersion str
 	}
 
 	return nil
+}
+
+// dnfInstallArgs builds a dnf install command. Unavailable third-party repos are
+// skipped so they cannot fail installation of a package they do not provide.
+func dnfInstallArgs(releaseverStr string, pkgArgs ...string) []string {
+	args := []string{dnfCmd, dnfFlagQuiet, dnfFlagYes, dnfFlagSkipUnavailable}
+	if releaseverStr != "" {
+		args = append(args, releaseverStr)
+	}
+	args = append(args, "install")
+	args = append(args, pkgArgs...)
+	return args
 }
 
 // analyzeKernelType analyzes the kernel version to determine type and naming pattern
@@ -2360,9 +2364,7 @@ func (d *driverMgr) installRedHatDependencies(ctx context.Context, versionInfo *
 		"hostname",
 	}
 
-	args := make([]string, 0, 5+len(packages))
-	args = append(args, dnfCmd, dnfFlagQuiet, dnfFlagYes, "--releasever="+versionInfo.FullVersion, "install")
-	args = append(args, packages...)
+	args := dnfInstallArgs("--releasever="+versionInfo.FullVersion, packages...)
 
 	_, _, err := d.cmd.RunCommand(ctx, args[0], args[1:]...)
 	if err != nil {

@@ -1,0 +1,318 @@
+# Common (multistage) args
+ARG D_OS="rocky9.4"
+ARG D_ARCH="x86_64"
+ARG D_CONTAINER_VER="0"
+ARG D_DOCA_VERSION="2.9.1"
+ARG D_OFED_VERSION="24.10-1.1.4.0"
+# Latest kernel-devel published in the Rocky 9.4 vault AppStream repo.
+ARG D_KERNEL_VER="5.14.0-427.42.1.el9_4.x86_64"
+ARG D_OFED_SRC_DOWNLOAD_PATH="/run/mellanox/src"
+ARG OFED_SRC_LOCAL_DIR=${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_VERSION}
+ARG STIG_COMPLIANT=false
+ARG D_ENABLE_DKMS=false
+
+# Final clean image. Keep the tag on the same minor as D_OS.
+# Quay publishes every minor; Docker Hub's rockylinux tags stop at 9.3 plus a
+# floating "9" that follows the latest minor.
+ARG D_FINAL_BASE_IMAGE=quay.io/rockylinux/rockylinux:9.4
+
+# Build image. Rocky publishes kernel-devel in its own repos, so no Driver Toolkit
+# and no RHSM entitlement are required. The tag must be the same minor as D_OS:
+# Rocky's mirrorlist always tracks the latest minor of a major release, and the
+# base stage below pins the repos back to this minor before installing packages.
+ARG D_BASE_IMAGE="quay.io/rockylinux/rockylinux:9.4"
+
+##################################################################
+# Stage: build go binary for entrypoint
+FROM golang:1.26 AS go_builder
+
+# Set GOPROXY if provided
+ARG GOPROXY
+ENV GOPROXY=$GOPROXY
+
+WORKDIR /workspace
+
+COPY entrypoint/go.mod go.mod
+COPY entrypoint/go.sum go.sum
+
+RUN go mod download
+
+COPY entrypoint/ .
+
+RUN TARGETARCH=${D_ARCH} TARGETOS=linux make build
+
+##################################################################
+# Stage: Minimal base image update and install common requirements
+
+FROM $D_BASE_IMAGE AS base
+
+# Inherited global args
+ARG D_OS
+
+# Rocky repo files follow the latest minor ($releasever is 9, not 9.4). Point them
+# at this minor so kernel-devel and the compiler come from the same release.
+# The current minor is under /pub/rocky/<version>; older minors move to
+# /vault/rocky/<version> and 404 on the pub URL.
+# install.pl names its RPM output directory from the package that owns
+# /etc/os-release, so keep rocky-release and rocky-repos from being replaced.
+# rocky-repos requires the exact rocky-gpg-keys build it was installed with.
+RUN set -eux && \
+    case "${D_OS}" in \
+        rocky[0-9]*) ;; \
+        *) echo "error: D_OS must be a Rocky release such as rocky9.4, got '${D_OS}'" >&2; exit 1 ;; \
+    esac && \
+    MAJOR_VER=$(echo "${D_OS}" | sed 's/^rocky\([0-9]*\).*/\1/') && \
+    RELEASE_VER=$(echo "${D_OS}" | sed 's/^rocky//') && \
+    test -n "${RELEASE_VER}" && \
+    if [ "${MAJOR_VER}" -eq 8 ]; then DEV_REPO=powertools; else DEV_REPO=crb; fi && \
+    sed -i \
+        -e 's|^mirrorlist=|#mirrorlist=|' \
+        -e 's|^#baseurl=http://dl.rockylinux.org/$contentdir/$releasever|baseurl=https://dl.rockylinux.org/pub/rocky/'"${RELEASE_VER}"'|' \
+        /etc/yum.repos.d/rocky*.repo && \
+    grep -q "baseurl=https://dl.rockylinux.org/pub/rocky/${RELEASE_VER}" /etc/yum.repos.d/rocky.repo && \
+    awk -v id="${DEV_REPO}" '$0 == "[" id "]" { inside=1 } inside && /^enabled=/ { print "enabled=1"; inside=0; next } /^\[/ && $0 != "[" id "]" { inside=0 } { print }' /etc/yum.repos.d/rocky.repo > /tmp/rocky.repo && \
+    mv /tmp/rocky.repo /etc/yum.repos.d/rocky.repo && \
+    dnf clean all && \
+    if ! dnf -y makecache; then \
+        sed -i "s|https://dl.rockylinux.org/pub/rocky/${RELEASE_VER}|https://dl.rockylinux.org/vault/rocky/${RELEASE_VER}|g" /etc/yum.repos.d/rocky*.repo && \
+        dnf -y makecache; \
+    fi && \
+    dnf -y install epel-release && \
+    dnf -y update --exclude=rocky-release --exclude=rocky-repos --exclude=rocky-gpg-keys && \
+    dnf -y install perl jq iproute kmod procps-ng udev nfs-utils
+
+COPY --from=go_builder /workspace/build/entrypoint /root/entrypoint
+WORKDIR /root
+ADD ./entrypoint.sh /root/entrypoint.sh
+ADD ./loader.sh /root/loader.sh
+
+ENTRYPOINT ["/root/loader.sh"]
+
+##############################################################################################
+# Stage: Download NVIDIA driver sources and install src driver container packages requirements
+
+FROM base AS driver-src
+
+# Inherited global args
+ARG D_DOCA_VERSION
+ARG D_OFED_VERSION
+ARG D_CONTAINER_VER
+ARG D_OFED_SRC_DOWNLOAD_PATH
+ARG STIG_COMPLIANT
+ARG D_OS
+
+# Stage args
+ARG D_OFED_BASE_URL="https://linux.mellanox.com/public/repo/doca/${D_DOCA_VERSION}/SOURCES/mlnx_ofed"
+ARG D_OFED_SRC_TYPE=""
+
+# Up to DOCA 3.5 the sources ship as MLNX_OFED_SRC-<ofed-version>.tgz, which bundles
+# install.pl; from 3.6 on they ship as DOCA_BASE_SRC-<doca-version>-<build-number>.tar.gz
+# with no installer. This default composes the legacy name because the 3.6 build number cannot
+# be derived from D_DOCA_VERSION, so 3.6+ callers must pass the exact archive name or path via
+# D_OFED_URL_PATH. Both layouts are detected and handled below.
+ARG D_OFED_SRC_ARCHIVE="MLNX_OFED_SRC-${D_OFED_SRC_TYPE}${D_OFED_VERSION}.tgz"
+ARG D_OFED_URL_PATH="${D_OFED_BASE_URL}/${D_OFED_SRC_ARCHIVE}"  # although argument name says URL, local compressed archives may also be used (intended for internal use)
+
+ENV NVIDIA_NIC_DRIVER_VER=${D_OFED_VERSION}
+ENV NVIDIA_NIC_CONTAINER_VER=${D_CONTAINER_VER}
+ENV NVIDIA_NIC_DRIVER_PATH="${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_VERSION}"
+
+WORKDIR /root
+# elfutils-libelf-devel is in CRB (PowerTools on Rocky 8), enabled in the base stage.
+# DKMS is in EPEL, also enabled there. Both are inherited by driver-builder.
+# DKMS is always installed in the dynamic (sources) image; install.pl is invoked at
+# container runtime and may build DKMS-enabled packages.
+RUN set -x && \
+    dnf install -y \
+    autoconf python3-devel ethtool automake pciutils libtool hostname dracut \
+    elfutils-libelf-devel kernel-rpm-macros numactl-libs lsof rpm-build patch \
+    gcc make bison flex \
+    dkms
+
+# Download NVIDIA NIC driver
+RUN mkdir -p ${D_OFED_SRC_DOWNLOAD_PATH}
+WORKDIR ${D_OFED_SRC_DOWNLOAD_PATH}
+# Fixed destination name: ADD unpacks a local archive into a directory of this name, and
+# writes a plain file of this name when fetching a URL. The archive's own top-level
+# directory is discovered afterwards, so its exact version is not needed here.
+ADD ${D_OFED_URL_PATH} doca_base_src
+
+# Up to DOCA 3.5 the archive extracts to MLNX_OFED_SRC-<ofed-version>/ complete with
+# install.pl, landing directly at NVIDIA_NIC_DRIVER_PATH with no further work needed.
+# DOCA 3.6 deprecated install.pl and ships a flat DOCA_BASE_SRC-* directory of SRPMs
+# instead, so that layout is reshaped into the tree the build expects and the vendored
+# scripts are staged into it. See vendor/mlnx_ofed/README.md.
+COPY vendor/mlnx_ofed /opt/mlnx_ofed
+RUN set -eux && \
+    if [ -d doca_base_src ]; then \
+        mv doca_base_src/* . && rmdir doca_base_src; \
+    else \
+        tar -xzf doca_base_src && rm -f doca_base_src; \
+    fi && \
+    src_dir=$(find . -maxdepth 1 -type d -name 'DOCA_BASE_SRC-*' | head -1) && \
+    if [ -n "${src_dir}" ]; then \
+        /opt/mlnx_ofed/stage_src_tree.sh "${src_dir}" "${NVIDIA_NIC_DRIVER_PATH}" rpm; \
+    elif [ -f "${NVIDIA_NIC_DRIVER_PATH}/install.pl" ]; then \
+        echo "Using legacy source tree with bundled install.pl: ${NVIDIA_NIC_DRIVER_PATH}"; \
+    else \
+        echo "error: ${D_OFED_URL_PATH} yielded neither a DOCA_BASE_SRC-* directory nor ${NVIDIA_NIC_DRIVER_PATH}/install.pl" >&2; \
+        exit 1; \
+    fi
+
+WORKDIR /root
+ADD ./entrypoint.sh /root/entrypoint.sh
+ADD ./dtk_nic_driver_build.sh /root/dtk_nic_driver_build.sh
+
+# dockerfile COPY instruction limitation requires adding a file - even if it's an empty/dummy file
+COPY stig-fixer.sh /tmp/stig-fixer.sh
+# run STIG fixer script for STIG complaint image builds
+RUN set -x && \
+  if [ "$STIG_COMPLIANT" = "true" ]; then \
+    chmod +x /tmp/stig-fixer.sh && \
+    /tmp/stig-fixer.sh ; \
+  fi && \
+  rm -f /tmp/stig-fixer.sh
+
+ENTRYPOINT ["/root/loader.sh"]
+CMD ["sources"]
+
+LABEL doca-version=${D_DOCA_VERSION}
+LABEL ofed-version=${D_OFED_VERSION}
+
+#####################
+# Stage: Build driver
+
+FROM driver-src AS driver-builder
+
+# Inherited global args
+ARG D_OS
+ARG D_KERNEL_VER
+ARG OFED_SRC_LOCAL_DIR
+ARG D_ENABLE_DKMS
+ARG D_BUILD_EXTRA_ARGS
+
+# kernel-devel ships the headers and /lib/modules/<kver>/build. Repos are already
+# pinned to the D_OS minor, which is where that exact NEVRA is published.
+# install.pl treats Rocky as the matching RHEL release (rocky-release-9.4 is
+# parsed as RHEL9.4). Passing --distro rocky9.4 skips those package rules.
+# The DKMS branch omits --copy-ifnames-udev. The vendored rpm/install.pl sets
+# build_dkms_packages=0 for that flag, so the image would ship non-DKMS RPMs
+# while NVIDIA_NIC_DRIVER_DKMS_ENABLED=true and setupDKMS would fail on the
+# missing dkms.conf. --build-only returns before the udev copy, so the flag
+# would not copy rules in this build either. The non-DKMS branch keeps it
+# together with --without-dkms.
+RUN set -eux && \
+    case "$D_ENABLE_DKMS" in \
+        true|false) ;; \
+        *) echo "error: D_ENABLE_DKMS must be exactly 'true' or 'false', got '$D_ENABLE_DKMS'" >&2; exit 1 ;; \
+    esac && \
+    dnf install -y "kernel-devel-${D_KERNEL_VER}" && \
+    if [ ! -e "/lib/modules/${D_KERNEL_VER}/build" ]; then \
+        mkdir -p "/lib/modules/${D_KERNEL_VER}" && \
+        ln -sfn "/usr/src/kernels/${D_KERNEL_VER}" "/lib/modules/${D_KERNEL_VER}/build"; \
+    fi && \
+    test -f "/lib/modules/${D_KERNEL_VER}/build/Makefile" && \
+    OFED_DISTRO=$(echo "${D_OS}" | sed 's/^rocky/rhel/') && \
+    if [ "$D_ENABLE_DKMS" = "true" ]; then \
+        ${OFED_SRC_LOCAL_DIR}/install.pl --without-depcheck --distro ${OFED_DISTRO} --kernel ${D_KERNEL_VER} --kernel-sources /lib/modules/${D_KERNEL_VER}/build --kernel-only --build-only --without-iser --without-srp --without-isert --without-knem --without-xpmem --without-xpmem-modules --without-xpmem-dkms --with-mlnx-tools ${D_BUILD_EXTRA_ARGS}; \
+    else \
+        ${OFED_SRC_LOCAL_DIR}/install.pl --without-depcheck --distro ${OFED_DISTRO} --kernel ${D_KERNEL_VER} --kernel-sources /lib/modules/${D_KERNEL_VER}/build --kernel-only --build-only --without-iser --without-srp --without-isert --without-knem --without-xpmem --without-xpmem-modules --with-mlnx-tools --copy-ifnames-udev --without-dkms ${D_BUILD_EXTRA_ARGS}; \
+    fi
+
+###################################
+# Stage: Install precompiled driver
+
+ARG D_FINAL_BASE_IMAGE
+
+FROM $D_FINAL_BASE_IMAGE AS precompiled
+
+# Inherited global args
+ARG D_OS
+ARG D_ARCH
+ARG D_KERNEL_VER
+ARG D_OFED_VERSION
+ARG D_CONTAINER_VER
+ARG OFED_SRC_LOCAL_DIR
+ARG D_ENABLE_DKMS
+
+ENV NVIDIA_NIC_DRIVER_VER=${D_OFED_VERSION}
+ENV NVIDIA_NIC_DRIVER_PATH=""
+ENV NVIDIA_NIC_CONTAINER_VER=${D_CONTAINER_VER}
+# Canonical true/false matching install.pl ([ "$D_ENABLE_DKMS" = "true" ]).
+# Reject TRUE/1/yes so Go cannot parse them as enabled against non-DKMS packages.
+RUN case "$D_ENABLE_DKMS" in \
+        true|false) ;; \
+        *) echo "error: D_ENABLE_DKMS must be exactly 'true' or 'false', got '$D_ENABLE_DKMS'" >&2; exit 1 ;; \
+    esac
+ENV NVIDIA_NIC_DRIVER_DKMS_ENABLED=${D_ENABLE_DKMS}
+
+# install.pl writes RPMs under RPMS/<pkg-owning-/etc/os-release>/<arch>/.
+# On Rocky that package is rocky-release.
+# mlnx-ofa_kernel-dkms %post runs `dkms install` for the builder's uname -r and
+# exits with its status. That kernel is the Docker VM's, not D_KERNEL_VER, so the
+# script fails the image build. Skip scriptlets for DKMS; startup runs dkms build
+# for the host kernel. Non-DKMS %post only runs depmod, which this stage repeats.
+COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/RPMS/rocky-release-*/${D_ARCH}/*.rpm /root/
+
+RUN if [ "$D_ENABLE_DKMS" = "true" ]; then \
+        rpm -ivh --nodeps --noscripts /root/*.rpm; \
+    else \
+        rpm -ivh --nodeps /root/*.rpm; \
+    fi
+
+# Fresh image: its mirrorlist follows the latest Rocky minor, so repeat the base
+# stage pin and vault fallback before installing. Otherwise runtime libraries,
+# the DKMS compiler, and kernel-devel can come from a newer minor than D_OS.
+# CRB (PowerTools on 8) is enabled here. kernel-devel's scriptlet only links
+# /lib/modules/<kver>/build when that directory already exists, so create the
+# link dkms build looks up and require its Makefile.
+RUN set -eux && \
+    case "${D_OS}" in \
+        rocky[0-9]*) ;; \
+        *) echo "error: D_OS must be a Rocky release such as rocky9.4, got '${D_OS}'" >&2; exit 1 ;; \
+    esac && \
+    MAJOR_VER=$(echo "${D_OS}" | sed 's/^rocky\([0-9]*\).*/\1/') && \
+    RELEASE_VER=$(echo "${D_OS}" | sed 's/^rocky//') && \
+    test -n "${RELEASE_VER}" && \
+    if [ "${MAJOR_VER}" -eq 8 ]; then DEV_REPO=powertools; else DEV_REPO=crb; fi && \
+    sed -i \
+        -e 's|^mirrorlist=|#mirrorlist=|' \
+        -e 's|^#baseurl=http://dl.rockylinux.org/$contentdir/$releasever|baseurl=https://dl.rockylinux.org/pub/rocky/'"${RELEASE_VER}"'|' \
+        /etc/yum.repos.d/rocky*.repo && \
+    grep -q "baseurl=https://dl.rockylinux.org/pub/rocky/${RELEASE_VER}" /etc/yum.repos.d/rocky.repo && \
+    awk -v id="${DEV_REPO}" '$0 == "[" id "]" { inside=1 } inside && /^enabled=/ { print "enabled=1"; inside=0; next } /^\[/ && $0 != "[" id "]" { inside=0 } { print }' /etc/yum.repos.d/rocky.repo > /tmp/rocky.repo && \
+    mv /tmp/rocky.repo /etc/yum.repos.d/rocky.repo && \
+    dnf clean all && \
+    if ! dnf -y makecache; then \
+        sed -i "s|https://dl.rockylinux.org/pub/rocky/${RELEASE_VER}|https://dl.rockylinux.org/vault/rocky/${RELEASE_VER}|g" /etc/yum.repos.d/rocky*.repo && \
+        dnf -y makecache; \
+    fi && \
+    dnf install -y \
+        pciutils hostname ethtool \
+        jq iproute kmod procps-ng udev \
+        nfs-utils && \
+    if [ "$D_ENABLE_DKMS" = "true" ]; then \
+        dnf install -y epel-release && \
+        dnf install -y dkms gcc make bison flex elfutils-libelf-devel "kernel-devel-${D_KERNEL_VER}" && \
+        if [ ! -e "/lib/modules/${D_KERNEL_VER}/build" ]; then \
+            mkdir -p "/lib/modules/${D_KERNEL_VER}" && \
+            ln -sfn "/usr/src/kernels/${D_KERNEL_VER}" "/lib/modules/${D_KERNEL_VER}/build"; \
+        fi && \
+        test -f "/lib/modules/${D_KERNEL_VER}/build/Makefile"; \
+    fi
+
+# DKMS packages install sources under /usr/src and do not create this directory.
+# Non-DKMS RPMs do. Create it so touch and depmod succeed for both.
+# The empty files keep modprobe from warning, then depmod registers the modules.
+RUN mkdir -p /lib/modules/${D_KERNEL_VER} && \
+    touch /lib/modules/${D_KERNEL_VER}/modules.order /lib/modules/${D_KERNEL_VER}/modules.builtin && \
+    depmod ${D_KERNEL_VER}
+
+WORKDIR /root
+ADD ./entrypoint.sh /root/entrypoint.sh
+ADD ./loader.sh /root/loader.sh
+COPY --from=go_builder /workspace/build/entrypoint /root/entrypoint
+ADD ./dtk_nic_driver_build.sh /root/dtk_nic_driver_build.sh
+
+ENTRYPOINT ["/root/loader.sh"]
+CMD ["precompiled"]

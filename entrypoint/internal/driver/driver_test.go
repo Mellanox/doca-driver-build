@@ -966,14 +966,14 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 
 			// Mock installKernelPackages - packages are installed one by one
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-5.4.0-42").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-headers-5.4.0-42").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-core-5.4.0-42").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "--allowerasing").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "kernel-modules-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-headers-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-core-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "--allowerasing").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "kernel-modules-5.4.0-42").Return("", "", nil)
 
 			// Mock installRedHatDependencies
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "elfutils-libelf-devel", "kernel-rpm-macros", "numactl-libs", "lsof", "rpm-build", "patch", "hostname").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "elfutils-libelf-devel", "kernel-rpm-macros", "numactl-libs", "lsof", "rpm-build", "patch", "hostname").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "dnf", "makecache", "--releasever=8.4").Return("", "", nil)
 
 			err := dm.installRedHatPrerequisites(ctx, "5.4.0-42")
@@ -1009,14 +1009,14 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 
 			// Mock installKernelPackages - packages are installed one by one
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-5.4.0-42").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-headers-5.4.0-42").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-core-5.4.0-42").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "--allowerasing").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "kernel-modules-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-headers-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-core-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "--allowerasing").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "kernel-modules-5.4.0-42").Return("", "", nil)
 
 			// Mock installRedHatDependencies
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "elfutils-libelf-devel", "kernel-rpm-macros", "numactl-libs", "lsof", "rpm-build", "patch", "hostname").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "elfutils-libelf-devel", "kernel-rpm-macros", "numactl-libs", "lsof", "rpm-build", "patch", "hostname").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "dnf", "makecache", "--releasever=8.4").Return("", "", nil)
 
 			err := dm.installRedHatPrerequisites(ctx, "5.4.0-42")
@@ -1048,10 +1048,10 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "cp", "/host/etc/yum.repos.d/redhat.repo", "/etc/yum.repos.d/").Return("", "", nil)
 
 			// Mock installKernelPackages for RT kernel
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "install", "kernel-rt-devel-5.4.0-42.rt7.313.x86_64", "kernel-rt-modules-5.4.0-42.rt7.313.x86_64").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "install", "kernel-rt-devel-5.4.0-42.rt7.313.x86_64", "kernel-rt-modules-5.4.0-42.rt7.313.x86_64").Return("", "", nil)
 
 			// Mock installRedHatDependencies
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "elfutils-libelf-devel", "kernel-rpm-macros", "numactl-libs", "lsof", "rpm-build", "patch", "hostname").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "elfutils-libelf-devel", "kernel-rpm-macros", "numactl-libs", "lsof", "rpm-build", "patch", "hostname").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "dnf", "makecache", "--releasever=8.4").Return("", "", nil)
 
 			err := dm.installRedHatPrerequisites(ctx, "5.4.0-42.rt7.313.x86_64")
@@ -1083,10 +1083,10 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "cp", "/host/etc/yum.repos.d/redhat.repo", "/etc/yum.repos.d/").Return("", "", nil)
 
 			// Mock installKernelPackages for 64k kernel
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "install", "kernel-64k-devel-5.4.0-42.64k.x86_64", "kernel-64k-modules-5.4.0-42.64k.x86_64").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "install", "kernel-64k-devel-5.4.0-42.64k.x86_64", "kernel-64k-modules-5.4.0-42.64k.x86_64").Return("", "", nil)
 
 			// Mock installRedHatDependencies
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "elfutils-libelf-devel", "kernel-rpm-macros", "numactl-libs", "lsof", "rpm-build", "patch", "hostname").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "elfutils-libelf-devel", "kernel-rpm-macros", "numactl-libs", "lsof", "rpm-build", "patch", "hostname").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "dnf", "makecache", "--releasever=8.4").Return("", "", nil)
 
 			err := dm.installRedHatPrerequisites(ctx, "5.4.0-42.64k.x86_64")
@@ -1125,7 +1125,7 @@ var _ = Describe("Driver", func() {
 
 			// Mock installKernelPackages failure - first package fails
 			expectedError := errors.New("kernel install failed")
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-5.4.0-42").Return("", "", expectedError)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-5.4.0-42").Return("", "", expectedError)
 
 			err := dm.installRedHatPrerequisites(ctx, "5.4.0-42")
 			Expect(err).To(HaveOccurred())
@@ -1154,15 +1154,15 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 
 			// Mock installKernelPackages success - packages are installed one by one
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-5.4.0-42").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-headers-5.4.0-42").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-core-5.4.0-42").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "--allowerasing").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "kernel-modules-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-headers-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-core-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "--allowerasing").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "kernel-modules-5.4.0-42").Return("", "", nil)
 
 			// Mock installRedHatDependencies failure
 			expectedError := errors.New("dependencies install failed")
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "elfutils-libelf-devel", "kernel-rpm-macros", "numactl-libs", "lsof", "rpm-build", "patch", "hostname").Return("", "", expectedError)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "elfutils-libelf-devel", "kernel-rpm-macros", "numactl-libs", "lsof", "rpm-build", "patch", "hostname").Return("", "", expectedError)
 
 			err := dm.installRedHatPrerequisites(ctx, "5.4.0-42")
 			Expect(err).To(HaveOccurred())
@@ -1512,12 +1512,12 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "dnf", "config-manager", "--set-enabled", "rhel-8-for-x86_64-baseos-eus-rpms").Return("", "", nil)
 			osMock.EXPECT().Stat("/lib/modules/5.4.0-42/build").Return(nil, os.ErrNotExist)
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-5.4.0-42").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-headers-5.4.0-42").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-core-5.4.0-42").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "--allowerasing").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "kernel-modules-5.4.0-42").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "elfutils-libelf-devel", "kernel-rpm-macros", "numactl-libs", "lsof", "rpm-build", "patch", "hostname").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-headers-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-core-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "--allowerasing").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "kernel-modules-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "elfutils-libelf-devel", "kernel-rpm-macros", "numactl-libs", "lsof", "rpm-build", "patch", "hostname").Return("", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "dnf", "makecache", "--releasever=8.4").Return("", "", nil)
 
 			// Mock buildDriverFromSource - RedHat specific arguments
@@ -1585,12 +1585,12 @@ var _ = Describe("Driver", func() {
 			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
 			cmdMock.EXPECT().RunCommand(ctx, "dnf", "config-manager", "--set-enabled", "rhel-8-for-x86_64-baseos-eus-rpms").Return("", "", nil)
 			osMock.EXPECT().Stat("/lib/modules/5.4.0-42/build").Return(nil, os.ErrNotExist)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-5.4.0-42").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-headers-5.4.0-42").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-core-5.4.0-42").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "--allowerasing").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "kernel-modules-5.4.0-42").Return("", "", nil)
-			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--releasever=8.4", "install", "elfutils-libelf-devel", "kernel-rpm-macros", "numactl-libs", "lsof", "rpm-build", "patch", "hostname").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-headers-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-core-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "--allowerasing").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "kernel-devel-5.4.0-42", "kernel-modules-5.4.0-42").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=8.4", "install", "elfutils-libelf-devel", "kernel-rpm-macros", "numactl-libs", "lsof", "rpm-build", "patch", "hostname").Return("", "", nil)
 			// Note: dnf makecache --releasever=8.4 is already called by setupOpenShiftRepositories
 
 			// Mock buildDriverFromSource - OpenShift specific arguments (no --disable-kmp for OpenShift)
