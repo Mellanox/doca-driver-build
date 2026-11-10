@@ -18,6 +18,7 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,6 +29,7 @@ import (
 	"github.com/go-logr/logr"
 
 	"github.com/Mellanox/doca-driver-build/entrypoint/internal/constants"
+	"github.com/Mellanox/doca-driver-build/entrypoint/internal/dtk"
 	hostutils "github.com/Mellanox/doca-driver-build/entrypoint/internal/utils/host"
 )
 
@@ -48,16 +50,15 @@ func (d *driverMgr) buildDriverDTK(ctx context.Context, kernelVersion, inventory
 	doneFlagPath := filepath.Join(dtkSharedDir, doneFlagName)
 	startFlagPath := filepath.Join(dtkSharedDir, constants.DtkStartCompileFlag)
 
+	if err := d.discardStaleDoneFlag(ctx, dtkSharedDir, doneFlagPath); err != nil {
+		return err
+	}
+
 	// Check if build is already done
 	if _, err := d.os.Stat(doneFlagPath); os.IsNotExist(err) {
 		log.Info("DTK build not done, setting up build")
-
-		if err := d.dtkSetupDriverBuild(ctx, dtkSharedDir, startFlagPath, doneFlagPath, kernelVersion); err != nil {
-			return fmt.Errorf("failed to setup DTK build: %w", err)
-		}
-
-		if err := d.dtkWaitForBuild(ctx, doneFlagPath); err != nil {
-			return fmt.Errorf("failed waiting for DTK build: %w", err)
+		if err := d.buildAndWaitDTK(ctx, dtkSharedDir, startFlagPath, doneFlagPath, kernelVersion); err != nil {
+			return err
 		}
 	} else {
 		log.Info("DTK build already done", "flag", doneFlagPath)
@@ -80,50 +81,62 @@ func sanitizeKernelVersion(version string) string {
 	return strings.Trim(sanitized, "-._")
 }
 
-// dtkSetupDriverBuild prepares the shared directory and script for DTK build
+// dtkSetupDriverBuild prepares the shared directory and signals the sidecar to compile.
 func (d *driverMgr) dtkSetupDriverBuild(ctx context.Context, sharedDir, startFlagPath, doneFlagPath, kernelVersion string) error {
-	log := logr.FromContextOrDiscard(ctx)
-	log.Info("Setting up DTK driver build", "sharedDir", sharedDir)
+	logr.FromContextOrDiscard(ctx).Info("Setting up DTK driver build", "sharedDir", sharedDir)
 
-	// Create shared directory
 	if err := d.os.MkdirAll(sharedDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create shared directory: %w", err)
 	}
+	if err := d.stageDTKDriverSources(ctx, sharedDir); err != nil {
+		return err
+	}
+	if err := d.copyDTKEntrypoint(ctx, sharedDir); err != nil {
+		return err
+	}
+	if err := d.writeDTKEnv(ctx, sharedDir, startFlagPath, doneFlagPath, kernelVersion); err != nil {
+		return err
+	}
+	if err := d.copyDTKBuildScript(ctx, sharedDir); err != nil {
+		return err
+	}
+	return d.writeStartFlag(ctx, startFlagPath)
+}
 
-	// Copy driver sources to shared directory
-	// Matches bash: cp -r ${NVIDIA_NIC_DRIVER_PATH} ${DTK_OCP_NIC_SHARED_DIR}/
+// stageDTKDriverSources replaces the shared source tree. The destination is removed first so
+// cp -rT does not nest a previous copy inside itself.
+func (d *driverMgr) stageDTKDriverSources(ctx context.Context, sharedDir string) error {
 	srcDir := d.cfg.NvidiaNicDriverPath
-	// Use expected directory name format to ensure DTK build script finds it
-	expectedName := fmt.Sprintf("MLNX_OFED_SRC-%s", d.cfg.NvidiaNicDriverVer)
-	destDir := filepath.Join(sharedDir, expectedName)
-
-	// Clean up destination if it exists to avoid nesting (cp -r behavior)
+	destDir := filepath.Join(sharedDir, dtk.SourceDirName(d.cfg.NvidiaNicDriverVer))
 	if err := d.os.RemoveAll(destDir); err != nil {
 		return fmt.Errorf("failed to clean up destination directory: %w", err)
 	}
-
-	log.Info("Copying driver sources", "from", srcDir, "to", destDir)
+	logr.FromContextOrDiscard(ctx).Info("Copying driver sources", "from", srcDir, "to", destDir)
 	if err := d.copyDir(ctx, srcDir, destDir); err != nil {
 		return fmt.Errorf("failed to copy driver sources: %w", err)
 	}
+	return nil
+}
 
-	// Copy entrypoint binary to shared directory
-	entrypointPath := "/root/entrypoint" // Assumed location based on Dockerfile
-	destEntrypointPath := filepath.Join(sharedDir, "entrypoint")
-	log.Info("Copying entrypoint binary", "from", entrypointPath, "to", destEntrypointPath)
-	// We use copyFile instead of copyDir for a single file
-	if _, _, err := d.cmd.RunCommand(ctx, "cp", entrypointPath, destEntrypointPath); err != nil {
+// copyDTKEntrypoint publishes the driver entrypoint for the sidecar. The sidecar may still be
+// executing the previous copy after a node reboot restarted the containers in place.
+func (d *driverMgr) copyDTKEntrypoint(ctx context.Context, sharedDir string) error {
+	const entrypointPath = "/root/entrypoint" // location in the driver image
+	dest := filepath.Join(sharedDir, "entrypoint")
+	logr.FromContextOrDiscard(ctx).Info("Copying entrypoint binary", "from", entrypointPath, "to", dest)
+	if err := d.copyFileReplacing(ctx, entrypointPath, dest); err != nil {
 		return fmt.Errorf("failed to copy entrypoint binary: %w", err)
 	}
+	return nil
+}
 
-	// Create dtk.env file
-	// Get append flags
+// writeDTKEnv records the paths and build flags the sidecar reads before it compiles.
+func (d *driverMgr) writeDTKEnv(ctx context.Context, sharedDir, startFlagPath, doneFlagPath, kernelVersion string) error {
 	appendFlags, err := d.getDTKAppendDriverBuildFlags(ctx, kernelVersion)
 	if err != nil {
 		return err
 	}
 	appendFlagsStr := strings.Join(appendFlags, " ")
-
 	envContent := fmt.Sprintf(`export DTK_OCP_NIC_SHARED_DIR="%s"
 export DTK_OCP_COMPILED_DRIVER_VER="%s"
 export DTK_OCP_START_COMPILE_FLAG="%s"
@@ -134,26 +147,124 @@ export NVIDIA_NIC_DRIVER_VER="%s"
 export USE_DKMS="%v"
 `, sharedDir, d.cfg.NvidiaNicDriverVer, startFlagPath, doneFlagPath, appendFlagsStr, d.cfg.NvidiaNicDriverVer, d.cfg.UseDKMS)
 
-	envPath := filepath.Join(sharedDir, "dtk.env")
-	if err := d.os.WriteFile(envPath, []byte(envContent), 0o644); err != nil {
+	if err := d.os.WriteFile(filepath.Join(sharedDir, "dtk.env"), []byte(envContent), 0o644); err != nil {
 		return fmt.Errorf("failed to write dtk.env: %w", err)
 	}
+	return nil
+}
 
-	// Copy build script (loader)
-	srcScriptPath := constants.DtkOcpBuildScriptPath
-	destScriptPath := filepath.Join(sharedDir, filepath.Base(srcScriptPath))
-	log.Info("Copying build script", "from", srcScriptPath, "to", destScriptPath)
-	// We use copyFile equivalent (run command cp)
-	if _, _, err := d.cmd.RunCommand(ctx, "cp", srcScriptPath, destScriptPath); err != nil {
+// copyDTKBuildScript publishes the sidecar loader script into the shared directory.
+func (d *driverMgr) copyDTKBuildScript(ctx context.Context, sharedDir string) error {
+	src := constants.DtkOcpBuildScriptPath
+	dest := filepath.Join(sharedDir, filepath.Base(src))
+	logr.FromContextOrDiscard(ctx).Info("Copying build script", "from", src, "to", dest)
+	if err := d.copyFileReplacing(ctx, src, dest); err != nil {
 		return fmt.Errorf("failed to copy build script: %w", err)
 	}
+	return nil
+}
 
-	// Create start flag
-	log.Info("Creating start compile flag", "path", startFlagPath)
-	if _, err := d.os.Create(startFlagPath); err != nil {
+// copyFileReplacing copies src to a temporary sibling of dest and renames it over dest. Unlike a
+// plain cp, the rename succeeds when dest is a binary that is currently running.
+func (d *driverMgr) copyFileReplacing(ctx context.Context, src, dest string) error {
+	tmp := dest + ".tmp"
+	if _, _, err := d.cmd.RunCommand(ctx, "cp", src, tmp); err != nil {
+		return err
+	}
+	if _, _, err := d.cmd.RunCommand(ctx, "mv", "-f", tmp, dest); err != nil {
+		return err
+	}
+	return nil
+}
+
+// discardStaleDoneFlag removes a done flag that has no built RPMs behind it (e.g. written for a
+// build interrupted by a node reboot), so the build is redone instead of failing in finalize forever.
+func (d *driverMgr) discardStaleDoneFlag(ctx context.Context, sharedDir, doneFlagPath string) error {
+	if _, err := d.os.Stat(doneFlagPath); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to stat done flag: %w", err)
+	}
+	if dtk.HasBuiltRPMs(filepath.Join(sharedDir, dtk.SourceDirName(d.cfg.NvidiaNicDriverVer))) {
+		return nil
+	}
+	logr.FromContextOrDiscard(ctx).Info("DTK done flag found but no built RPMs, discarding it", "flag", doneFlagPath)
+	if err := d.os.RemoveAll(doneFlagPath); err != nil {
+		return fmt.Errorf("failed to remove stale done flag: %w", err)
+	}
+	return nil
+}
+
+// errDTKCompileFailed is returned when the sidecar publishes a failure flag instead of a done flag.
+var errDTKCompileFailed = errors.New("DTK sidecar reported a failed build")
+
+// dtkBuildMaxAttempts is the first try plus one retry. The retry covers a sidecar that compiled
+// a source tree the driver was still replacing; a second empty build is a real failure.
+const dtkBuildMaxAttempts = 2
+
+// dtkBuildPollInterval is how often the driver checks the sidecar's flags. Tests shorten it.
+var dtkBuildPollInterval = 30 * time.Second
+
+// buildAndWaitDTK prepares sources and waits for the sidecar. A start flag from the current boot
+// means a compile is already running, so a restarted driver container waits instead of replacing
+// that tree. A failure of the resumed build is prepared once more. A flag from another boot is
+// stale and is always replaced.
+func (d *driverMgr) buildAndWaitDTK(ctx context.Context, sharedDir, startFlagPath, doneFlagPath, kernelVersion string) error {
+	log := logr.FromContextOrDiscard(ctx)
+	var waitErr error
+	for attempt := 1; attempt <= dtkBuildMaxAttempts; attempt++ {
+		resume, err := d.dtkBuildInProgress(startFlagPath)
+		if err != nil {
+			return err
+		}
+		if attempt == 1 && resume {
+			log.Info("DTK build already in progress for this boot, waiting", "flag", startFlagPath)
+		} else if err := d.dtkSetupDriverBuild(ctx, sharedDir, startFlagPath, doneFlagPath, kernelVersion); err != nil {
+			return fmt.Errorf("failed to setup DTK build: %w", err)
+		}
+		waitErr = d.dtkWaitForBuild(ctx, doneFlagPath, startFlagPath)
+		if waitErr == nil {
+			return nil
+		}
+		if !errors.Is(waitErr, errDTKCompileFailed) || attempt == dtkBuildMaxAttempts {
+			return fmt.Errorf("failed waiting for DTK build: %w", waitErr)
+		}
+		log.Info("DTK sidecar reported a failed build, preparing sources again", "attempt", attempt, "error", waitErr)
+	}
+	return fmt.Errorf("failed waiting for DTK build: %w", waitErr)
+}
+
+// dtkBuildInProgress reports whether the sidecar was asked to compile during this boot.
+// The driver container then waits for that attempt instead of replacing its source tree.
+func (d *driverMgr) dtkBuildInProgress(startFlagPath string) (bool, error) {
+	bootID, err := dtk.BootIDFrom(d.os.ReadFile)
+	if err != nil {
+		return false, err
+	}
+	writtenForBoot, err := dtk.StartFlagWrittenForBoot(d.os.ReadFile, startFlagPath, bootID)
+	if err != nil {
+		return false, fmt.Errorf("failed to read start flag: %w", err)
+	}
+	return writtenForBoot, nil
+}
+
+// writeStartFlag signals the sidecar to compile. The flag is stamped with the boot ID and
+// published atomically so the sidecar never observes an empty file. A failure flag from an
+// earlier attempt is cleared first, otherwise the next wait would treat the new attempt as
+// already failed.
+func (d *driverMgr) writeStartFlag(ctx context.Context, startFlagPath string) error {
+	logr.FromContextOrDiscard(ctx).Info("Creating start compile flag", "path", startFlagPath)
+	failFlag := filepath.Join(filepath.Dir(startFlagPath), constants.DtkFailedCompileFlag)
+	if err := d.os.RemoveAll(failFlag); err != nil {
+		return fmt.Errorf("failed to clear compile failure flag: %w", err)
+	}
+	bootID, err := dtk.BootIDFrom(d.os.ReadFile)
+	if err != nil {
+		return err
+	}
+	if err := dtk.PublishFlag(startFlagPath, []byte(bootID)); err != nil {
 		return fmt.Errorf("failed to create start flag: %w", err)
 	}
-
 	return nil
 }
 
@@ -194,10 +305,12 @@ func redHatDistroVersion(versionInfo *hostutils.RedhatVersionInfo, kernelVersion
 	return ""
 }
 
-// dtkWaitForBuild waits for the DTK build to complete
-func (d *driverMgr) dtkWaitForBuild(ctx context.Context, doneFlagPath string) error {
+// dtkWaitForBuild waits for the DTK build to complete. A failure flag from the sidecar ends the
+// wait immediately so the driver can prepare another attempt.
+func (d *driverMgr) dtkWaitForBuild(ctx context.Context, doneFlagPath, startFlagPath string) error {
 	log := logr.FromContextOrDiscard(ctx)
 	log.Info("Waiting for DTK build to complete", "doneFlag", doneFlagPath)
+	failFlagPath := filepath.Join(filepath.Dir(startFlagPath), constants.DtkFailedCompileFlag)
 
 	// Poll every 30s. Air-gapped builds from local RPM repos typically finish in ~180s,
 	// but full first-time DTK compilations on slower nodes can exceed 15 min.
@@ -211,13 +324,20 @@ func (d *driverMgr) dtkWaitForBuild(ctx context.Context, doneFlagPath string) er
 			log.Info("DTK build completed")
 			return nil
 		}
+		if reason, err := d.os.ReadFile(failFlagPath); err == nil {
+			detail := strings.TrimSpace(string(reason))
+			if detail == "" {
+				detail = "no details"
+			}
+			return fmt.Errorf("%w: %s", errDTKCompileFailed, detail)
+		}
 
 		log.Info("Awaiting DTK compilation", "next_query_sec", sleepSec)
 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(time.Duration(sleepSec) * time.Second):
+		case <-time.After(dtkBuildPollInterval):
 		}
 
 		totalSleepSec += sleepSec
