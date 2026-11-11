@@ -1060,6 +1060,53 @@ var _ = Describe("Driver", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
+		It("should install prerequisites for RHEL 9 RT kernel", func() {
+			// RHEL 9 RT kernels report the flavor after the arch: <version>.<arch>+rt
+			kernelVersion := "5.14.0-362.13.1.el9_3.x86_64+rt"
+			versionInfo := &host.RedhatVersionInfo{
+				MajorVersion: 9,
+				FullVersion:  "9.3",
+			}
+			hostMock.EXPECT().GetRedHatVersionInfo(ctx).Return(versionInfo, nil)
+			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("x86_64", "", nil)
+			osMock.EXPECT().Stat("/lib/modules/"+kernelVersion+"/build").Return(nil, os.ErrNotExist)
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "/host/etc/yum.repos.d/redhat.repo", "/etc/yum.repos.d/").Return("", "", nil)
+
+			// The packages are named without the "+rt" flavor suffix
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "install",
+				"kernel-rt-devel-5.14.0-362.13.1.el9_3.x86_64", "kernel-rt-modules-5.14.0-362.13.1.el9_3.x86_64").Return("", "", nil)
+
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=9.3", "install", "elfutils-libelf-devel", "kernel-rpm-macros", "numactl-libs", "lsof", "rpm-build", "patch", "hostname").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "makecache", "--releasever=9.3").Return("", "", nil)
+
+			err := dm.installRedHatPrerequisites(ctx, kernelVersion)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("should install prerequisites for RHEL 9 64k kernel on aarch64", func() {
+			// RHEL 9 64k kernels report the flavor after the arch: <version>.<arch>+64k
+			kernelVersion := "5.14.0-427.13.1.el9_4.aarch64+64k"
+			versionInfo := &host.RedhatVersionInfo{
+				MajorVersion: 9,
+				FullVersion:  "9.4",
+			}
+			hostMock.EXPECT().GetRedHatVersionInfo(ctx).Return(versionInfo, nil)
+			cmdMock.EXPECT().RunCommand(ctx, "uname", "-m").Return("aarch64", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "config-manager", "--set-enabled", "rhel-9-for-aarch64-baseos-eus-rpms").Return("", "", nil)
+			osMock.EXPECT().Stat("/lib/modules/"+kernelVersion+"/build").Return(nil, os.ErrNotExist)
+			cmdMock.EXPECT().RunCommand(ctx, "cp", "/host/etc/yum.repos.d/redhat.repo", "/etc/yum.repos.d/").Return("", "", nil)
+
+			// The packages are named without the "+64k" flavor suffix
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "install",
+				"kernel-64k-devel-5.14.0-427.13.1.el9_4.aarch64", "kernel-64k-modules-5.14.0-427.13.1.el9_4.aarch64").Return("", "", nil)
+
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "-q", "-y", "--setopt=skip_if_unavailable=True", "--releasever=9.4", "install", "elfutils-libelf-devel", "kernel-rpm-macros", "numactl-libs", "lsof", "rpm-build", "patch", "hostname").Return("", "", nil)
+			cmdMock.EXPECT().RunCommand(ctx, "dnf", "makecache", "--releasever=9.4").Return("", "", nil)
+
+			err := dm.installRedHatPrerequisites(ctx, kernelVersion)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
 		It("should install prerequisites for 64k kernel", func() {
 			// Mock GetRedHatVersionInfo
 			versionInfo := &host.RedhatVersionInfo{

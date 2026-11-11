@@ -1808,7 +1808,7 @@ func (d *driverMgr) analyzeKernelType(
 		// Handle different RT kernel naming patterns
 		if strings.HasSuffix(kernelVersion, "rt") {
 			// RH9.X RT kernel pattern: 5.14.0-362.13.1.el9_3.x86_64+rt
-			kVer = strings.TrimSuffix(kernelVersion, ".x86_64") + "." + d.getArchitecture(ctx)
+			kVer = trimKernelArchSuffix(kernelVersion) + "." + d.getArchitecture(ctx)
 		} else {
 			// RH8.X RT kernel pattern: 4.18.0-513.11.1.rt7.313.el8_9.x86_64
 			kVer = kernelVersion
@@ -1822,12 +1822,22 @@ func (d *driverMgr) analyzeKernelType(
 		rtHpSubstr = "64k-"
 
 		if strings.HasSuffix(kernelVersion, "64k") {
-			kVer = strings.TrimSuffix(kernelVersion, ".x86_64") + "." + d.getArchitecture(ctx)
+			// RH9.X 64k kernel pattern: 5.14.0-427.13.1.el9_4.aarch64+64k
+			kVer = trimKernelArchSuffix(kernelVersion) + "." + d.getArchitecture(ctx)
 		}
 		return kernelType64k, kVer, rtHpSubstr, releaseverStr
 	}
 
 	return kernelTypeStandard, kVer, rtHpSubstr, releaseverStr
+}
+
+// trimKernelArchSuffix drops the last dot-separated component of a kernel version,
+// e.g. ".x86_64+rt" or ".aarch64+64k". It matches "${FULL_KVER%.*}" in entrypoint.sh.
+func trimKernelArchSuffix(kernelVersion string) string {
+	if i := strings.LastIndex(kernelVersion, "."); i >= 0 {
+		return kernelVersion[:i]
+	}
+	return kernelVersion
 }
 
 // checkLoadedKmodSrcverVsModinfo checks if loaded kernel module srcversion matches modinfo
