@@ -1984,7 +1984,7 @@ var _ = Describe("Driver", func() {
 			}
 		})
 
-		It("should return true when modules match and no restart is needed", func() {
+		It("should return false when modules match and no restart is needed", func() {
 			// This test exercises the real OS wrapper for mountRootfs's MkdirAll call,
 			// so point the mount config at a real (temp) directory rather than the
 			// zero-value paths used elsewhere in this context.
@@ -2024,7 +2024,7 @@ var _ = Describe("Driver", func() {
 
 			result, err := dm.Load(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(BeTrue())
+			Expect(result).To(BeFalse())
 			Expect(dm.newDriverLoaded).To(BeFalse())
 		})
 
@@ -2090,7 +2090,7 @@ var _ = Describe("Driver", func() {
 
 			result, err := dm.Load(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(BeTrue())
+			Expect(result).To(BeFalse())
 			Expect(dm.newDriverLoaded).To(BeFalse())
 		})
 
@@ -2156,7 +2156,7 @@ var _ = Describe("Driver", func() {
 
 			result, err := dm.Load(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(BeTrue())
+			Expect(result).To(BeFalse())
 			Expect(dm.newDriverLoaded).To(BeFalse())
 		})
 
@@ -2223,7 +2223,8 @@ var _ = Describe("Driver", func() {
 
 			result, err := dm.Load(ctx)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(BeTrue())
+			Expect(result).To(BeFalse())
+			Expect(dm.newDriverLoaded).To(BeFalse())
 		})
 
 		DescribeTable("patches the NVMe stop check before restarting mismatched modules", func(mode string, alreadyPatched bool) {
