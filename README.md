@@ -65,14 +65,18 @@ Before building the container, you need to provide following parameters as `buil
 > version need to be specified to fetch the correct driver sources when building the driver container. check [^5] for more information.
 
 >[!NOTE]
-> DOCA 3.6 deprecated `install.pl` and now publishes the driver sources as a flat
-> `DOCA_BASE_SRC-*` archive containing only source packages. The driver container still
-> builds via `install.pl`, so the installer scripts are vendored under `vendor/mlnx_ofed/`
-> and staged into the extracted archive at image build time. See
+> DOCA 3.6 deprecated `install.pl` and publishes the driver sources as a flat archive of
+> source packages at `https://linux.mellanox.com/public/repo/doca/<doca>/SOURCES/mlnx_ofed/`.
+> RPM archives (RHEL and SLES) are named `DOCA_BASE_SRC-<doca>-<build>.tar.gz`, for example
+> `DOCA_BASE_SRC-3.6.0-069000.tar.gz`. Debian archives (Ubuntu) insert `debian-`:
+> `DOCA_BASE_SRC-debian-<doca>-<build>.tar.gz`, for example
+> `DOCA_BASE_SRC-debian-3.6.0-069000.tar.gz`.
+> The driver container still builds via `install.pl`, so the installer scripts are vendored
+> under `vendor/mlnx_ofed/` and staged into the extracted archive at image build time. See
 > [vendor/mlnx_ofed/README.md](vendor/mlnx_ofed/README.md).
-> Because the published archive name includes a build number that cannot be derived from
-> `D_DOCA_VERSION`, pass the exact archive name or local path via `D_OFED_URL_PATH`; the
-> extracted directory is then discovered automatically.
+> The Dockerfiles build that name from `D_DOCA_VERSION` and the numeric build suffix of
+> `D_OFED_VERSION` (`26.10-069000` selects build `069000`). Pass `D_OFED_URL_PATH` only
+> for a local archive or a different URL; the extracted directory is discovered automatically.
 > Pre-3.6 `MLNX_OFED_SRC-*` archives remain supported and need no extra arguments: they
 > already bundle `install.pl`, so they are used as-is and the vendored copies are ignored.
 
@@ -226,10 +230,15 @@ sudo dnf config-manager --set-disabled docker-ce-stable
 >[!WARNING]
 >Modification of D_OFED_SRC_DOWNLOAD_PATH must be tighdly coupled with corresponding update to entrypoint.sh script
 
-[^1]: Latest NIC drivers published at [NIC drivers download center](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/), for example:  
-  `https://linux.mellanox.com/public/repo/doca/3.2.0/SOURCES/mlnx_ofed/MLNX_OFED_SRC-debian-25.10-1.2.8.0.tgz`  
-  As of DOCA 3.6 the archive is named after the DOCA source version instead, e.g. `DOCA_BASE_SRC-debian-3.6.0-016000.tar.gz`.
+[^1]: Latest NIC drivers published at [NIC drivers download center](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/).
+  Pre-3.6 example:
+  `https://linux.mellanox.com/public/repo/doca/3.2.0/SOURCES/mlnx_ofed/MLNX_OFED_SRC-debian-25.10-1.2.8.0.tgz`
+  DOCA 3.6 publishes under `https://linux.mellanox.com/public/repo/doca/3.6.0/SOURCES/mlnx_ofed/`:
+  `DOCA_BASE_SRC-3.6.0-069000.tar.gz` (RHEL and SLES) and
+  `DOCA_BASE_SRC-debian-3.6.0-069000.tar.gz` (Ubuntu).
+  The build number is the numeric suffix of `D_OFED_VERSION`.
   Override `D_OFED_BASE_URL` if the publishing path for your DOCA release differs from the default.
+  Override `D_OFED_URL_PATH` for a local archive or a different URL.
 
 [^2]: To build RHEL based container from official repository, you need to log in to `registry.redhat.io`, run the following command:  
 `podman login registry.redhat.io --username=${RH_USERNAME} --password=${RH_PASSWORD}`  
