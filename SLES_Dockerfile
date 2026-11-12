@@ -80,12 +80,20 @@ ARG D_OFED_BASE_URL="https://linux.mellanox.com/public/repo/doca/${D_DOCA_VERSIO
 ARG D_OFED_SRC_TYPE=""
 
 # Up to DOCA 3.5 the sources ship as MLNX_OFED_SRC-<ofed-version>.tgz, which bundles
-# install.pl; from 3.6 on they ship as DOCA_BASE_SRC-<doca-version>-<build-number>.tar.gz
-# with no installer. This default composes the legacy name because the 3.6 build number cannot
-# be derived from D_DOCA_VERSION, so 3.6+ callers must pass the exact archive name or path via
-# D_OFED_URL_PATH. Both layouts are detected and handled below.
+# install.pl. From DOCA 3.6 they are published at
+# https://linux.mellanox.com/public/repo/doca/<doca>/SOURCES/mlnx_ofed/
+# as DOCA_BASE_SRC-<doca>-<build>.tar.gz
+# (for example DOCA_BASE_SRC-3.6.0-069000.tar.gz) and contain no installer.
+# <build> is the numeric suffix of D_OFED_VERSION (26.10-069000 -> 069000), or the
+# suffix already present on D_DOCA_VERSION (3.6.0-069000). The fetch below builds that
+# name unless D_OFED_URL_PATH is a local archive or a full URL.
+# Both layouts are detected and handled below.
 ARG D_OFED_SRC_ARCHIVE="MLNX_OFED_SRC-${D_OFED_SRC_TYPE}${D_OFED_VERSION}.tgz"
-ARG D_OFED_URL_PATH="${D_OFED_BASE_URL}/${D_OFED_SRC_ARCHIVE}"  # although argument name says URL, local compressed archives may also be used (intended for internal use)
+ARG D_OFED_URL_DEFAULT="${D_OFED_BASE_URL}/${D_OFED_SRC_ARCHIVE}"
+# Local context file or full URL. Jenkins and Kaniko pass the archive copied into
+# the build context (ofed_src.tgz, DOCA_BASE_SRC-....tar.gz). Left unset, ADD
+# copies README.md and the fetch below replaces it with the public archive.
+ARG D_OFED_URL_PATH="README.md"
 
 ENV NVIDIA_NIC_DRIVER_PATH="${D_OFED_SRC_DOWNLOAD_PATH}/MLNX_OFED_SRC-${D_OFED_VERSION}"
 
@@ -100,7 +108,7 @@ RUN set -x && \
     zypper --gpg-auto-import-keys ref -s && \
     zypper --non-interactive update && \
     zypper --non-interactive install --no-recommends \
-    make autoconf chrpath automake hostname gcc quilt dracut rpm-build sysvinit-tools && \
+    make autoconf chrpath automake hostname gcc quilt dracut rpm-build sysvinit-tools curl && \
     SP_NUM=$(echo ${D_OS} | sed 's/.*[sp.]//') && \
     zypper --gpg-auto-import-keys addrepo \
         https://download.opensuse.org/repositories/openSUSE:Backports:SLE-15-SP${SP_NUM}/standard/openSUSE:Backports:SLE-15-SP${SP_NUM}.repo && \
@@ -115,10 +123,41 @@ RUN set -x && \
 # Download NVIDIA NIC driver
 RUN mkdir -p ${D_OFED_SRC_DOWNLOAD_PATH}
 WORKDIR ${D_OFED_SRC_DOWNLOAD_PATH}
-# Fixed destination name: ADD unpacks a local archive into a directory of this name, and
-# writes a plain file of this name when fetching a URL. The archive's own top-level
-# directory is discovered afterwards, so its exact version is not needed here.
+# ADD is what Kaniko, docker, and podman already use. A context file is unpacked
+# when it is a tar; a full URL is stored as a file. The default source is
+# README.md, plain text so ADD does not unpack it. ADD cannot pick the archive
+# name from the DOCA version, so the next step downloads the public archive
+# when that default is still the source.
 ADD ${D_OFED_URL_PATH} doca_base_src
+RUN set -eux && \
+    if [ "${D_OFED_URL_PATH}" = "README.md" ]; then \
+        src="${D_OFED_URL_DEFAULT}" && \
+        legacy="${D_OFED_BASE_URL}/MLNX_OFED_SRC-${D_OFED_SRC_TYPE}${D_OFED_VERSION}.tgz" && \
+        doca_major=$(printf '%s' "${D_DOCA_VERSION}" | cut -d. -f1) && \
+        doca_minor=$(printf '%s' "${D_DOCA_VERSION}" | cut -d. -f2 | cut -d- -f1) && \
+        doca_base=$(printf '%s' "${D_DOCA_VERSION}" | cut -d- -f1) && \
+        if [ "$src" = "$legacy" ] && { [ "$doca_major" -gt 3 ] || { [ "$doca_major" -eq 3 ] && [ "$doca_minor" -ge 6 ]; }; }; then \
+            case "${D_DOCA_VERSION}" in \
+              *-*) doca_full="${D_DOCA_VERSION}" ;; \
+              *) \
+                ofed_build=$(printf '%s' "${D_OFED_VERSION}" | cut -d- -f2-) && \
+                case "$ofed_build" in \
+                  ''|*[!0-9]*) \
+                    echo "error: DOCA ${D_DOCA_VERSION} archives are named DOCA_BASE_SRC-${D_OFED_SRC_TYPE}${doca_base}-<build>.tar.gz; set D_OFED_VERSION to <ofed>-<build> (for example 26.10-069000) or pass D_OFED_URL_PATH" >&2 && \
+                    exit 1 ;; \
+                  *) doca_full="${doca_base}-${ofed_build}" ;; \
+                esac ;; \
+            esac && \
+            base=$(printf '%s' "${D_OFED_BASE_URL}" | sed "s#/doca/${D_DOCA_VERSION}/#/doca/${doca_base}/#") && \
+            src="${base}/DOCA_BASE_SRC-${D_OFED_SRC_TYPE}${doca_full}.tar.gz" ; \
+        fi && \
+        echo "Using OFED source: ${src}" && \
+        printf '%s\n' "$src" > ofed_src_resolved && \
+        curl -fsSL -o doca_base_src "$src" ; \
+    else \
+        echo "Using OFED source: ${D_OFED_URL_PATH}" && \
+        printf '%s\n' "${D_OFED_URL_PATH}" > ofed_src_resolved ; \
+    fi
 
 # Up to DOCA 3.5 the archive extracts to MLNX_OFED_SRC-<ofed-version>/ complete with
 # install.pl, landing directly at NVIDIA_NIC_DRIVER_PATH with no further work needed.
@@ -127,6 +166,8 @@ ADD ${D_OFED_URL_PATH} doca_base_src
 # scripts are staged into it. See vendor/mlnx_ofed/README.md.
 COPY vendor/mlnx_ofed /opt/mlnx_ofed
 RUN set -eux && \
+    resolved=$(cat ofed_src_resolved 2>/dev/null || printf '%s' "${D_OFED_URL_PATH}") && \
+    rm -f ofed_src_resolved && \
     if [ -d doca_base_src ]; then \
         mv doca_base_src/* . && rmdir doca_base_src; \
     else \
@@ -138,7 +179,7 @@ RUN set -eux && \
     elif [ -f "${NVIDIA_NIC_DRIVER_PATH}/install.pl" ]; then \
         echo "Using legacy source tree with bundled install.pl: ${NVIDIA_NIC_DRIVER_PATH}"; \
     else \
-        echo "error: ${D_OFED_URL_PATH} yielded neither a DOCA_BASE_SRC-* directory nor ${NVIDIA_NIC_DRIVER_PATH}/install.pl" >&2; \
+        echo "error: ${resolved} yielded neither a DOCA_BASE_SRC-* directory nor ${NVIDIA_NIC_DRIVER_PATH}/install.pl" >&2; \
         exit 1; \
     fi
 
