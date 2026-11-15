@@ -687,14 +687,14 @@ var _ = Describe("Netconfig", func() {
 				osMock.On("ReadFile", "/sys/class/net/rep1/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
 				osMock.On("ReadFile", "/sys/class/net/rep1/phys_port_name").Return([]byte("pf1vf0"), nil).Once()
 
-				// Phase 1: Rename rep1 -> t00abp1v0 (temporary name with switch hash)
-				// Switch ID "00000000000000ab" -> last 4 chars = "00ab"
-				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "rep1", "name", "t00abp1v0").Return("", "", nil).Once()
+				// Phase 1: Rename rep1 -> trep0 (temporary name)
+				expectTempNameFree(osMock, "trep0")
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "rep1", "name", "trep0").Return("", "", nil).Once()
 
 				// For VF 1 - find current representor (currently named "rep0")
 				osMock.On("ReadDir", "/sys/class/net/").Return([]os.DirEntry{
 					&mockDirEntry{name: "rep0"},
-					&mockDirEntry{name: "t00abp1v0"}, // rep1 already renamed to temp
+					&mockDirEntry{name: "trep0"}, // rep1 already renamed to temp
 					&mockDirEntry{name: "lo"},
 				}, nil).Once()
 
@@ -702,12 +702,13 @@ var _ = Describe("Netconfig", func() {
 				osMock.On("ReadFile", "/sys/class/net/rep0/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
 				osMock.On("ReadFile", "/sys/class/net/rep0/phys_port_name").Return([]byte("pf1vf1"), nil).Once()
 
-				// Phase 1: Rename rep0 -> t00abp1v1 (temporary name with switch hash)
-				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "rep0", "name", "t00abp1v1").Return("", "", nil).Once()
+				// Phase 1: Rename rep0 -> trep1 (temporary name; each representor gets a distinct name)
+				expectTempNameFree(osMock, "trep1")
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "rep0", "name", "trep1").Return("", "", nil).Once()
 
 				// Phase 2: Rename from temporary to final names
-				// Rename t00abp1v0 -> eth_rep0
-				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "t00abp1v0", "name", "eth_rep0").Return("", "", nil).Once()
+				// Rename trep0 -> eth_rep0
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "trep0", "name", "eth_rep0").Return("", "", nil).Once()
 
 				// Set MTU for eth_rep0 (LinkByName called once for MTU)
 				mockLink0 := &mockLink{
@@ -724,8 +725,8 @@ var _ = Describe("Netconfig", func() {
 				netlinkMock.On("LinkByName", "eth_rep0").Return(mockLink0, nil).Once()
 				netlinkMock.On("LinkSetUp", mockLink0).Return(nil).Once()
 
-				// Rename t00abp1v1 -> eth_rep1
-				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "t00abp1v1", "name", "eth_rep1").Return("", "", nil).Once()
+				// Rename trep1 -> eth_rep1
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "trep1", "name", "eth_rep1").Return("", "", nil).Once()
 
 				// Set MTU for eth_rep1 (LinkByName called once for MTU)
 				mockLink1 := &mockLink{
@@ -782,7 +783,8 @@ var _ = Describe("Netconfig", func() {
 				osMock.On("ReadFile", "/sys/class/net/rep0/phys_port_name").Return([]byte("pf1vf0"), nil).Once()
 
 				// Phase 1: Rename fails
-				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "rep0", "name", "t00abp1v0").
+				expectTempNameFree(osMock, "trep0")
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "rep0", "name", "trep0").
 					Return("", "device busy", fmt.Errorf("rename failed")).Once()
 
 				// Phase 2 should not execute since Phase 1 failed (no renameOps added)
@@ -797,7 +799,7 @@ var _ = Describe("Netconfig", func() {
 			})
 
 			It("should generate correct temporary names for different ports and VFs", func() {
-				// This test verifies the temporary name format: t<switch_hash>p<port>v<vf>
+				// This test verifies the temporary names are unique per representor: trep<N>
 				device := &MellanoxDevice{
 					PCIAddr:     "0000:08:00.0",
 					DevType:     devTypeEth,
@@ -822,13 +824,14 @@ var _ = Describe("Netconfig", func() {
 				osMock.On("ReadFile", "/sys/class/net/eth5/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
 				osMock.On("ReadFile", "/sys/class/net/eth5/phys_port_name").Return([]byte("p2"), nil).Once()
 
-				// Expected temporary names: t00abp2v0, t00abp2v1, t00abp2v2 (switch_hash=00ab, port=2, vf=0,1,2)
+				// Expected temporary names: trep0, trep1, trep2
 
 				// Mock finding and renaming each representor to temp names (Phase 1)
 				// For each representor, findCurrentRepresentor scans all devices
 				for i := 0; i < 3; i++ {
 					currentName := fmt.Sprintf("rep%d", i)
-					tempName := fmt.Sprintf("t00abp2v%d", i) // switch_hash=00ab, port=2, vf=i
+					tempName := fmt.Sprintf("trep%d", i)
+					expectTempNameFree(osMock, tempName)
 
 					// Mock ReadDir for findCurrentRepresentor
 					osMock.On("ReadDir", "/sys/class/net/").Return([]os.DirEntry{
@@ -863,7 +866,7 @@ var _ = Describe("Netconfig", func() {
 
 				// Mock Phase 2: Rename from temp to final names and set configs
 				for i := 0; i < 3; i++ {
-					tempName := fmt.Sprintf("t00abp2v%d", i)
+					tempName := fmt.Sprintf("trep%d", i)
 					finalName := fmt.Sprintf("final_rep%d", i)
 
 					cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", tempName, "name", finalName).Return("", "", nil).Once()
@@ -919,6 +922,98 @@ var _ = Describe("Netconfig", func() {
 				// Should continue without error
 				err := nc.restoreRepresentors(ctx, "eth5", device)
 				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should not collide on temporary names for PFs with switch IDs sharing the same suffix", func() {
+				// Regression test: switch IDs 2ebcbd0003bd70c4 and 1e15cc0003bd70c4 share the last 4 chars.
+				// Both PFs have a pf0vf0 representor, which used to result in the same temporary name.
+				// Here the first PF's representor is currently parked on trep0, the second PF must pick another name.
+				device := &MellanoxDevice{
+					PCIAddr:     "0000:ca:00.0",
+					DevType:     devTypeEth,
+					AdminState:  adminStateUp,
+					MTU:         1500,
+					GUID:        "-",
+					EswitchMode: eswitchModeSwitchdev,
+					PfNumVfs:    1,
+					VFs: []VF{
+						{VFIndex: 0, VFPCIAddr: "0000:ca:00.2", VFName: "eth_vf0", AdminState: adminStateUp, MACAddress: "aa:bb:cc:dd:ee:01", AdminMAC: "aa:bb:cc:dd:ee:01", MTU: 1500, GUID: "-"},
+					},
+					Representors: []Representor{
+						{PhysSwitchID: "1e15cc0003bd70c4", PhysPortNum: "0", VFID: "0", Name: "net_rail6_0", AdminState: adminStateUp, MTU: 1500},
+					},
+				}
+
+				osMock.On("ReadFile", "/sys/class/net/eth5/phys_switch_id").Return([]byte("1e15cc0003bd70c4"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/eth5/phys_port_name").Return([]byte("p0"), nil).Once()
+
+				osMock.On("ReadDir", "/sys/class/net/").Return([]os.DirEntry{
+					&mockDirEntry{name: "trep0"}, // representor of the other PF, with the same switch ID suffix
+					&mockDirEntry{name: "rep0"},
+					&mockDirEntry{name: "lo"},
+				}, nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/trep0/phys_switch_id").Return([]byte("2ebcbd0003bd70c4"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/rep0/phys_switch_id").Return([]byte("1e15cc0003bd70c4"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/rep0/phys_port_name").Return([]byte("pf0vf0"), nil).Once()
+
+				// trep0 is in use, trep1 is free
+				expectTempNameTaken(osMock, "trep0")
+				expectTempNameFree(osMock, "trep1")
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "rep0", "name", "trep1").Return("", "", nil).Once()
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "trep1", "name", "net_rail6_0").Return("", "", nil).Once()
+
+				mockLink0 := &mockLink{
+					attrs: &netlink.LinkAttrs{
+						Name:  "net_rail6_0",
+						Flags: net.FlagUp,
+						MTU:   1500,
+					},
+				}
+				netlinkMock.On("LinkByName", "net_rail6_0").Return(mockLink0, nil).Twice()
+				netlinkMock.On("LinkSetMTU", mockLink0, 1500).Return(nil).Once()
+				netlinkMock.On("LinkSetUp", mockLink0).Return(nil).Once()
+
+				err := nc.restoreRepresentors(ctx, "eth5", device)
+				Expect(err).NotTo(HaveOccurred())
+
+				cmdMock.AssertExpectations(GinkgoT())
+				osMock.AssertExpectations(GinkgoT())
+				netlinkMock.AssertExpectations(GinkgoT())
+			})
+
+			It("should skip representor if existence of the temporary name cannot be checked", func() {
+				device := &MellanoxDevice{
+					PCIAddr:     "0000:08:00.0",
+					DevType:     devTypeEth,
+					AdminState:  adminStateUp,
+					MTU:         1500,
+					GUID:        "-",
+					EswitchMode: eswitchModeSwitchdev,
+					PfNumVfs:    1,
+					VFs: []VF{
+						{VFIndex: 0, VFPCIAddr: "0000:08:00.2", VFName: "eth_vf0", AdminState: adminStateUp, MACAddress: "aa:bb:cc:dd:ee:01", AdminMAC: "aa:bb:cc:dd:ee:01", MTU: 1500, GUID: "-"},
+					},
+					Representors: []Representor{
+						{PhysSwitchID: "00000000000000ab", PhysPortNum: "1", VFID: "0", Name: "eth_rep0", AdminState: adminStateUp, MTU: 1500},
+					},
+				}
+
+				osMock.On("ReadFile", "/sys/class/net/eth5/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/eth5/phys_port_name").Return([]byte("p1"), nil).Once()
+				osMock.On("ReadDir", "/sys/class/net/").Return([]os.DirEntry{
+					&mockDirEntry{name: "rep0"},
+				}, nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/rep0/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/rep0/phys_port_name").Return([]byte("pf1vf0"), nil).Once()
+
+				osMock.On("Stat", "/sys/class/net/trep0").Return(nil, os.ErrPermission).Once()
+
+				// No rename must be attempted
+				err := nc.restoreRepresentors(ctx, "eth5", device)
+				Expect(err).NotTo(HaveOccurred())
+
+				cmdMock.AssertExpectations(GinkgoT())
+				osMock.AssertExpectations(GinkgoT())
 			})
 		})
 	})
@@ -1093,6 +1188,18 @@ var _ = Describe("Netconfig", func() {
 		})
 	})
 })
+
+// expectTempNameFree mocks the existence check performed when allocating a temporary representor name:
+// the interface does not exist, so the name can be used.
+func expectTempNameFree(osMock *osMockPkg.OSWrapper, name string) {
+	osMock.On("Stat", "/sys/class/net/"+name).Return(nil, os.ErrNotExist).Once()
+}
+
+// expectTempNameTaken mocks the existence check performed when allocating a temporary representor name:
+// the interface already exists, so the name must be skipped.
+func expectTempNameTaken(osMock *osMockPkg.OSWrapper, name string) {
+	osMock.On("Stat", "/sys/class/net/"+name).Return(nil, nil).Once()
+}
 
 // mockDirEntry is a mock implementation of os.DirEntry for testing
 type mockDirEntry struct {
