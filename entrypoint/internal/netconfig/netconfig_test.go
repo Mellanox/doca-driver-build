@@ -981,6 +981,78 @@ var _ = Describe("Netconfig", func() {
 				netlinkMock.AssertExpectations(GinkgoT())
 			})
 
+			It("should not use saved final names as temporary names", func() {
+				// A previous interrupted restore may have left a representor named trep1 which was then saved.
+				// After the driver reload that name is free, but it must not be used as a temporary name,
+				// otherwise Phase 2 (trep0 -> trep1) would collide with the other temporary name.
+				device := &MellanoxDevice{
+					PCIAddr:     "0000:08:00.0",
+					DevType:     devTypeEth,
+					AdminState:  adminStateUp,
+					MTU:         1500,
+					GUID:        "-",
+					EswitchMode: eswitchModeSwitchdev,
+					PfNumVfs:    2,
+					VFs: []VF{
+						{VFIndex: 0, VFPCIAddr: "0000:08:00.2", VFName: "eth_vf0", AdminState: adminStateUp, MACAddress: "aa:bb:cc:dd:ee:01", AdminMAC: "aa:bb:cc:dd:ee:01", MTU: 1500, GUID: "-"},
+						{VFIndex: 1, VFPCIAddr: "0000:08:00.3", VFName: "eth_vf1", AdminState: adminStateUp, MACAddress: "aa:bb:cc:dd:ee:02", AdminMAC: "aa:bb:cc:dd:ee:02", MTU: 1500, GUID: "-"},
+					},
+					Representors: []Representor{
+						{PhysSwitchID: "00000000000000ab", PhysPortNum: "1", VFID: "0", Name: "trep1", AdminState: adminStateUp, MTU: 1500},
+						{PhysSwitchID: "00000000000000ab", PhysPortNum: "1", VFID: "1", Name: "rep1", AdminState: adminStateUp, MTU: 1500},
+					},
+				}
+
+				osMock.On("ReadFile", "/sys/class/net/eth5/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/eth5/phys_port_name").Return([]byte("p1"), nil).Once()
+
+				// Phase 1, VF 0: current representor is rep0 (matches immediately)
+				osMock.On("ReadDir", "/sys/class/net/").Return([]os.DirEntry{
+					&mockDirEntry{name: "rep0"},
+					&mockDirEntry{name: "rep1"},
+				}, nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/rep0/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/rep0/phys_port_name").Return([]byte("pf1vf0"), nil).Once()
+				expectTempNameFree(osMock, "trep0")
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "rep0", "name", "trep0").Return("", "", nil).Once()
+
+				// Phase 1, VF 1: current representor is rep1. trep1 is reserved (saved final name) and is
+				// skipped without checking the filesystem, trep2 is used.
+				osMock.On("ReadDir", "/sys/class/net/").Return([]os.DirEntry{
+					&mockDirEntry{name: "trep0"},
+					&mockDirEntry{name: "rep1"},
+				}, nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/trep0/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/trep0/phys_port_name").Return([]byte("pf1vf0"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/rep1/phys_switch_id").Return([]byte("00000000000000ab"), nil).Once()
+				osMock.On("ReadFile", "/sys/class/net/rep1/phys_port_name").Return([]byte("pf1vf1"), nil).Once()
+				expectTempNameFree(osMock, "trep2")
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "rep1", "name", "trep2").Return("", "", nil).Once()
+
+				// Phase 2
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "trep0", "name", "trep1").Return("", "", nil).Once()
+				cmdMock.On("RunCommand", mock.Anything, "ip", "link", "set", "dev", "trep2", "name", "rep1").Return("", "", nil).Once()
+				for _, finalName := range []string{"trep1", "rep1"} {
+					link := &mockLink{
+						attrs: &netlink.LinkAttrs{
+							Name:  finalName,
+							Flags: net.FlagUp,
+							MTU:   1500,
+						},
+					}
+					netlinkMock.On("LinkByName", finalName).Return(link, nil).Twice()
+					netlinkMock.On("LinkSetMTU", link, 1500).Return(nil).Once()
+					netlinkMock.On("LinkSetUp", link).Return(nil).Once()
+				}
+
+				err := nc.restoreRepresentors(ctx, "eth5", device)
+				Expect(err).NotTo(HaveOccurred())
+
+				cmdMock.AssertExpectations(GinkgoT())
+				osMock.AssertExpectations(GinkgoT())
+				netlinkMock.AssertExpectations(GinkgoT())
+			})
+
 			It("should skip representor if existence of the temporary name cannot be checked", func() {
 				device := &MellanoxDevice{
 					PCIAddr:     "0000:08:00.0",
