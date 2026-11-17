@@ -53,13 +53,24 @@ type Config struct {
 	AppendDriverBuildFlags        string `env:"APPEND_DRIVER_BUILD_FLAGS"`
 	NvidiaNicDriversInventoryPath string `env:"NVIDIA_NIC_DRIVERS_INVENTORY_PATH"`
 
-	OfedBlacklistModulesFile string   `env:"OFED_BLACKLIST_MODULES_FILE" envDefault:"/host/etc/modprobe.d/blacklist-ofed-modules.conf"`
-	OfedBlacklistModules     []string `env:"OFED_BLACKLIST_MODULES"      envDefault:"mlx5_core:mlx5_ib:ib_umad:ib_uverbs:ib_ipoib:rdma_cm:rdma_ucm:ib_core:ib_cm" envSeparator:":"`
-	Mlx5AuxiliaryModules     []string `env:"MLX5_AUXILIARY_MODULES"      envSeparator:" "`
+	// PersistentOfedBlacklistModulesFile keep the OFED modules blacklist file on the host after driver termination
+	// to get it available after graceful shutdown procedure
+	PersistentOfedBlacklistModulesFile bool     `env:"PERSISTENT_OFED_BLACKLIST_MODULES_FILE" envDefault:"false"`
+	OfedBlacklistModulesFile           string   `env:"OFED_BLACKLIST_MODULES_FILE" envDefault:"/host/etc/modprobe.d/blacklist-ofed-modules.conf"`
+	OfedBlacklistModules               []string `env:"OFED_BLACKLIST_MODULES"      envDefault:"mlx5_core:mlx5_ib:ib_umad:ib_uverbs:ib_ipoib:rdma_cm:rdma_ucm:ib_core:ib_cm" envSeparator:":"`
+	Mlx5AuxiliaryModules               []string `env:"MLX5_AUXILIARY_MODULES"      envSeparator:" "`
 	// StorageModules defaults to mofedmodules.DefaultStorageModules when unset; see GetConfig.
 	StorageModules []string `env:"STORAGE_MODULES" envSeparator:" "`
 	// ThirdPartyRDMAModules defaults to mofedmodules.DefaultThirdPartyRDMAModules when unset; see GetConfig.
 	ThirdPartyRDMAModules []string `env:"THIRD_PARTY_RDMA_MODULES" envSeparator:" "`
+	// UnloadThirdPartyRdmaModules enables blacklisting and unloading of all known
+	// third-party RDMA kernel modules (from rdma-core) before OFED driver reload.
+	// When true, modules from ThirdPartyRDMAModules are:
+	//   1. Added to the modprobe blacklist file (prevents auto-reload by the kernel)
+	//   2. Injected into openibd's UNLOAD_MODULES list (unloaded during driver restart)
+	//
+	// Example: UNLOAD_THIRD_PARTY_RDMA_MODULES=true
+	UnloadThirdPartyRdmaModules bool `env:"UNLOAD_THIRD_PARTY_RDMA_MODULES"`
 
 	// DKMS settings
 	UseDKMS bool `env:"USE_DKMS" envDefault:"false"`
@@ -69,14 +80,6 @@ type Config struct {
 	ImageDKMSEnabled *bool `env:"NVIDIA_NIC_DRIVER_DKMS_ENABLED"`
 	// DKMSModeOverridden is true when ImageDKMSEnabled overrode a conflicting USE_DKMS.
 	DKMSModeOverridden bool `env:"-"`
-	// UnloadThirdPartyRdmaModules enables blacklisting and unloading of all known
-	// third-party RDMA kernel modules (from rdma-core) before OFED driver reload.
-	// When true, modules from ThirdPartyRDMAModules are:
-	//   1. Added to the modprobe blacklist file (prevents auto-reload by the kernel)
-	//   2. Injected into openibd's UNLOAD_MODULES list (unloaded during driver restart)
-	//
-	// Example: UNLOAD_THIRD_PARTY_RDMA_MODULES=true
-	UnloadThirdPartyRdmaModules bool `env:"UNLOAD_THIRD_PARTY_RDMA_MODULES"`
 
 	// debug settings
 	EntrypointDebug     bool   `env:"ENTRYPOINT_DEBUG"`
