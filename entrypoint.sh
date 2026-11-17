@@ -1226,6 +1226,16 @@ function restore_sriov_config() {
     # Two-phase rename array - used to avoid name collisions when interfaces are swapped after driver reload
     declare -a representor_rename_ops=()
     local rename_op_idx=0
+    # Index used to generate unique temporary representor names
+    local representor_temp_name_idx=0
+    # Saved final representor names must never be used as temporary names, otherwise Phase 2
+    # may try to rename an interface to a name which is still held by another temporary name.
+    # (e.g. a previous interrupted restore left a representor named trep<N> which was then saved)
+    declare -A reserved_representor_names=()
+    for representor_record in $(seq 0 1 $((representor_record_idx-1))); do
+        declare -a reserved_info=(${switchdev_representors_arr[$representor_record]})
+        reserved_representor_names["${reserved_info[3]}"]=1
+    done
 
     for representor_record in $(seq 0 1 $((representor_record_idx-1))); do
         declare -a representor_info=(${switchdev_representors_arr[$representor_record]})
@@ -1281,10 +1291,17 @@ function restore_sriov_config() {
             # Two-phase rename to avoid name collisions when interfaces are swapped after driver reload:
             # Phase 1: Rename current name to temporary name (frees up the target namespace)
             # Phase 2: Rename from temporary names to final target names (done after this loop)
-            # Note: temp name must be <= 15 chars (IFNAMSIZ). Format: t<switch_hash>p<port>v<vf> (e.g. t341cp0v0)
-            # Include last 4 chars of phys_switch_id to ensure uniqueness across multiple NICs
-            switch_hash=${pf_phys_switch_id: -4}
-            representor_temp_name="t${switch_hash}p${pf_port_num}v${vf_id}"
+            # Note: temp name must be <= 15 chars (IFNAMSIZ). Format: trep<N>.
+            # The name is not derived from phys_switch_id/port/vf because truncating those values
+            # may collide across different NICs. Instead, pick the first name which is not used by
+            # any existing network interface (e.g. by another representor or a leftover of a previous run)
+            # and which is not a saved final representor name.
+            while [ -e "/sys/class/net/trep${representor_temp_name_idx}" ] || \
+                  [ -n "${reserved_representor_names[trep${representor_temp_name_idx}]:-}" ]; do
+                representor_temp_name_idx=$((representor_temp_name_idx+1))
+            done
+            representor_temp_name="trep${representor_temp_name_idx}"
+            representor_temp_name_idx=$((representor_temp_name_idx+1))
 
             # Store the rename operation for Phase 2: temp_name target_name adminstate mtu
             representor_rename_ops[$rename_op_idx]="${representor_temp_name} ${representor_name} ${representor_adminstate} ${representor_mtu_val}"

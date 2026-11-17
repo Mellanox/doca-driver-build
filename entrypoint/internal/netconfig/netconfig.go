@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -48,6 +49,12 @@ const (
 	sysBusPCIDevicesPath = "/sys/bus/pci/devices/"
 	sysBusPCIDriversPath = "/sys/bus/pci/drivers/"
 	defaultDriverPath    = sysBusPCIDriversPath + "mlx5_core"
+
+	// representorTempNamePrefix is the prefix of the temporary names used during the
+	// two-phase representor rename. Must keep the full name within IFNAMSIZ (15 chars).
+	representorTempNamePrefix = "trep"
+	// maxRepresentorTempNameIdx limits the search for a free temporary representor name
+	maxRepresentorTempNameIdx = 99999
 )
 
 // JSON structures for parsing ip command output
@@ -1467,6 +1474,15 @@ func (n *netconfig) restoreRepresentors(ctx context.Context, pfName string, devi
 
 	// Two-phase rename array - used to avoid name collisions when interfaces are swapped after driver reload
 	renameOps := make([]representorRenameOp, 0, len(device.Representors))
+	// Index used to generate unique temporary representor names
+	tempNameIdx := 0
+	// Saved final names must never be used as temporary names, otherwise Phase 2 may try to rename an
+	// interface to a name which is still held by another temporary name (e.g. a previous interrupted
+	// restore left a representor named trep<N> which was then saved).
+	reservedNames := make(map[string]struct{}, len(device.Representors))
+	for _, representor := range device.Representors {
+		reservedNames[representor.Name] = struct{}{}
+	}
 
 	// Phase 1: Rename current representor names to temporary names (frees up the target namespace)
 	log.Info("Phase 1: Renaming representors to temporary names")
@@ -1484,13 +1500,16 @@ func (n *netconfig) restoreRepresentors(ctx context.Context, pfName string, devi
 		// Two-phase rename to avoid name collisions when interfaces are swapped after driver reload:
 		// Phase 1: Rename current name to temporary name (frees up the target namespace)
 		// Phase 2: Rename from temporary names to final target names (done after this loop)
-		// Note: temp name must be <= 15 chars (IFNAMSIZ). Format: t<switch_hash>p<port>v<vf> (e.g. t341cp0v0)
-		// Include last 4 chars of phys_switch_id to ensure uniqueness across multiple NICs
-		switchHash := pfPhysSwitchID
-		if len(pfPhysSwitchID) > 4 {
-			switchHash = pfPhysSwitchID[len(pfPhysSwitchID)-4:]
+		// Note: temp name must be <= 15 chars (IFNAMSIZ). Format: trep<N>.
+		// The name is not derived from phys_switch_id/port/vf because truncating those values
+		// may collide across different NICs. Instead, pick the first name which is not used by any
+		// existing network interface and is not a saved final representor name.
+		tempName, err := n.allocateRepresentorTempName(&tempNameIdx, reservedNames)
+		if err != nil {
+			log.Error(err, "Failed to allocate temporary representor name",
+				"current_name", currentRepresentorName, "vf_id", representor.VFID)
+			continue
 		}
-		tempName := fmt.Sprintf("t%sp%sv%s", switchHash, pfPhysPortNum, representor.VFID)
 
 		// Phase 1: Rename to temporary name
 		log.V(1).Info("Phase 1: Renaming representor to temporary name",
@@ -1597,6 +1616,33 @@ func (n *netconfig) findCurrentRepresentor(ctx context.Context, physSwitchID, ph
 	}
 
 	return "", fmt.Errorf("representor not found for VF ID %s", vfID)
+}
+
+// allocateRepresentorTempName returns a temporary representor name that is not used by any existing
+// network interface and is not in the reserved set (saved final representor names).
+// idx is the next candidate index and is advanced past the returned name.
+func (n *netconfig) allocateRepresentorTempName(idx *int, reserved map[string]struct{}) (string, error) {
+	for {
+		if *idx > maxRepresentorTempNameIdx {
+			return "", fmt.Errorf("no free temporary representor name found")
+		}
+		name := fmt.Sprintf("%s%d", representorTempNamePrefix, *idx)
+		*idx++
+
+		if _, isReserved := reserved[name]; isReserved {
+			continue
+		}
+
+		_, err := n.os.Stat(sysClassNetPath + name)
+		if err == nil {
+			// Name is already in use (e.g. by another PF's representor or a leftover of a previous run)
+			continue
+		}
+		if os.IsNotExist(err) {
+			return name, nil
+		}
+		return "", fmt.Errorf("failed to check if interface %s exists: %w", name, err)
+	}
 }
 
 // renameRepresentor renames a representor device
