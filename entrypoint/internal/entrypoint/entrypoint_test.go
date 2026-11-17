@@ -103,6 +103,29 @@ var _ = Describe("Entrypoint", func() {
 			Expect(e.run(signalCH)).NotTo(HaveOccurred())
 		})
 
+		It("Succeed without restoring netconfig when the driver was not reloaded", func() {
+			osMock.On("MkdirAll", "/tmp", mock.Anything).Return(nil).Once()
+			hostMock.On("LsMod", mock.Anything).Return(nil, nil).Once()
+			udevMock.On("RemoveRules", mock.Anything).Return(nil).Times(2)
+			udevMock.On("CreateRules", mock.Anything).Return(nil).Once() // For udev rules creation
+
+			readinessMock.On("Clear", mock.Anything).Return(nil).Times(2)
+			readinessMock.On("Set", mock.Anything).Return(nil).Run(
+				func(args mock.Arguments) { signalCH <- syscall.SIGTERM }).Once()
+
+			netconfigMock.On("Save", mock.Anything).Return(nil).Once()                             // Only in preStart
+			netconfigMock.On("DevicesUseNewNamingScheme", mock.Anything).Return(false, nil).Once() // For udev rules creation
+
+			driverMock.On("PreStart", mock.Anything).Return(nil).Once()
+			driverMock.On("Build", mock.Anything).Return(nil).Once()
+			driverMock.On("Load", mock.Anything).Return(false, nil).Once()
+			driverMock.On("Unload", mock.Anything).Return(false, nil).Once()
+			driverMock.On("Clear", mock.Anything).Return(nil).Once()
+
+			Expect(e.run(signalCH)).NotTo(HaveOccurred())
+			netconfigMock.AssertNotCalled(GinkgoT(), "Restore", mock.Anything)
+		})
+
 		It("preStart failed", func() {
 			osMock.On("MkdirAll", "/tmp", mock.Anything).Return(nil).Once()
 			udevMock.On("RemoveRules", mock.Anything).Return(nil).Once()
