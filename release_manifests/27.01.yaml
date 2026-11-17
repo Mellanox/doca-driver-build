@@ -1,0 +1,92 @@
+driver_version: 27.01-001000-0
+doca_version: 4.0.0
+precompiled:
+- os: ubuntu26.04
+  archs:
+  - amd64
+  - arm64
+  kernels:
+  - 7.0.0-42-generic
+  - 7.0.0-1015-oracle
+  - 7.0.0-1016-aws
+  - 7.0.0-1019-azure
+  - 7.0.0-1018-nvidia
+- os: ubuntu24.04
+  archs:
+  - amd64
+  - arm64
+  kernels:
+  - 6.8.0-147-generic
+  - 7.0.0-1013-oracle
+  - 7.0.0-1014-aws
+  - 7.0.0-1017-azure
+  - 7.0.0-1019-nvidia
+- os: ubuntu22.04
+  archs:
+  - amd64
+  - arm64
+  kernels:
+  - 5.15.0-198-generic
+  - 6.8.0-1062-oracle
+  - 6.8.0-1064-nvidia
+  - 6.8.0-1066-aws
+  - 6.8.0-1070-azure
+dynamically_compiled:
+- os: ubuntu26.04
+  archs:
+  - amd64
+  - arm64
+- os: ubuntu24.04-stig
+  archs:
+  - amd64
+- os: rhel9.6-stig
+  archs:
+  - amd64
+- os: ubuntu24.04
+  archs:
+  - amd64
+  - arm64
+- os: ubuntu22.04
+  archs:
+  - amd64
+  - arm64
+- os: rhcos4.18
+  archs:
+  - amd64
+  - arm64
+- os: rhcos4.17
+  archs:
+  - amd64
+  - arm64
+- os: rhel10.0
+  archs:
+  - amd64
+  - arm64
+- os: rhel10.2
+  archs:
+  - amd64
+  - arm64
+- os: rhel9.8
+  archs:
+  - amd64
+  - arm64
+- os: rhel9.6
+  archs:
+  - amd64
+  - arm64
+- os: rhel9.4
+  archs:
+  - amd64
+  - arm64
+- os: rhel8.10
+  archs:
+  - amd64
+  - arm64
+- os: sles15.7
+  archs:
+  - amd64
+  - arm64
+- os: rocky10.2
+  archs:
+  - amd64
+  - arm64
