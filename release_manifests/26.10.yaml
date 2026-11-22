@@ -1,5 +1,5 @@
 driver_version: 26.10-009000-0
-doca_version: 3.6.0
+doca_version: 3.6.1
 precompiled:
 - os: ubuntu26.04
   archs:
