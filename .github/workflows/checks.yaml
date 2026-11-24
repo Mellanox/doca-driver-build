@@ -2,6 +2,15 @@ name: "Checks"
 on: [push, pull_request]
 
 jobs:
+  rhel-precompiled-packages:
+    name: RHEL precompiled packages
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install precompiled dependencies with and without DKMS on UBI9
+        run: python3 tests/rhel_precompiled_packages.py
   lint-code:
     name: golangci-lint
     runs-on: ubuntu-24.04
