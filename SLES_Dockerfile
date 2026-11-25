@@ -59,10 +59,8 @@ RUN set -x && \
 
 COPY --from=go_builder /workspace/build/entrypoint /root/entrypoint
 WORKDIR /root
-ADD ./entrypoint.sh /root/entrypoint.sh
-ADD ./loader.sh /root/loader.sh
 
-ENTRYPOINT ["/root/loader.sh"]
+ENTRYPOINT ["/root/entrypoint"]
 
 ##############################################################################################
 # Stage: Download NVIDIA driver sources and install src driver container packages requirements
@@ -294,8 +292,7 @@ RUN touch /lib/modules/${D_KERNEL_VER}/modules.order /lib/modules/${D_KERNEL_VER
     depmod ${D_KERNEL_VER}
 
 WORKDIR /
-ADD ./entrypoint.sh /root/entrypoint.sh
 ADD ./dtk_nic_driver_build.sh /root/dtk_nic_driver_build.sh
 
-ENTRYPOINT ["/root/loader.sh"]
+ENTRYPOINT ["/root/entrypoint"]
 CMD ["precompiled"]

@@ -142,7 +142,6 @@ export DTK_OCP_COMPILED_DRIVER_VER="%s"
 export DTK_OCP_START_COMPILE_FLAG="%s"
 export DTK_OCP_DONE_COMPILE_FLAG="%s"
 export APPEND_DRIVER_BUILD_FLAGS="%s"
-export USE_NEW_ENTRYPOINT="true"
 export NVIDIA_NIC_DRIVER_VER="%s"
 export USE_DKMS="%v"
 `, sharedDir, d.cfg.NvidiaNicDriverVer, startFlagPath, doneFlagPath, appendFlagsStr, d.cfg.NvidiaNicDriverVer, d.cfg.UseDKMS)

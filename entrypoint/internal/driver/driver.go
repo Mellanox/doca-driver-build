@@ -1835,7 +1835,7 @@ func (d *driverMgr) analyzeKernelType(
 }
 
 // trimKernelArchSuffix drops the last dot-separated component of a kernel version,
-// e.g. ".x86_64+rt" or ".aarch64+64k". It matches "${FULL_KVER%.*}" in entrypoint.sh.
+// e.g. ".x86_64+rt" or ".aarch64+64k". It is equivalent to "${FULL_KVER%.*}" in shell.
 func trimKernelArchSuffix(kernelVersion string) string {
 	if i := strings.LastIndex(kernelVersion, "."); i >= 0 {
 		return kernelVersion[:i]
