@@ -310,6 +310,7 @@ func (d *driverMgr) Load(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("failed to check module versions: %w", err)
 	}
 
+	restarted := false
 	if !modulesMatch {
 		log.V(1).Info("Module versions don't match, restarting driver")
 
@@ -320,6 +321,7 @@ func (d *driverMgr) Load(ctx context.Context) (bool, error) {
 
 		// Mark that a new driver was loaded
 		d.newDriverLoaded = true
+		restarted = true
 
 		// Load NFS RDMA modules if enabled
 		if d.cfg.EnableNfsRdma {
@@ -356,7 +358,8 @@ func (d *driverMgr) Load(ctx context.Context) (bool, error) {
 	}
 
 	log.Info("Driver loaded successfully")
-	return true, nil
+	// Report true only when this call restarted the driver.
+	return restarted, nil
 }
 
 // Unload is the default implementation of the driver.Interface.
