@@ -86,6 +86,10 @@ dynamically_compiled:
   archs:
   - amd64
   - arm64
+- os: sles16.0
+  archs:
+  - amd64
+  - arm64
 - os: rocky10.2
   archs:
   - amd64
