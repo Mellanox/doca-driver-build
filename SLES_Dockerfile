@@ -107,13 +107,30 @@ RUN set -x && \
 # Perform distro update and install prerequirements
     zypper --gpg-auto-import-keys ref -s && \
     zypper --non-interactive update && \
+# SLES 16 dropped sysvinit-tools (pidof is provided by procps), ships quilt only in
+# Backports and has no kernel-syms (a hard dependency of the Backports dkms package), so
+# there dkms is installed from Backports with --nodeps after installing what it really needs.
     zypper --non-interactive install --no-recommends \
-    make autoconf chrpath automake hostname gcc quilt dracut rpm-build sysvinit-tools curl && \
-    SP_NUM=$(echo ${D_OS} | sed 's/.*[sp.]//') && \
+    make autoconf chrpath automake hostname gcc dracut rpm-build curl && \
+    case "${D_OS}" in \
+        sles15*) \
+            zypper --non-interactive install --no-recommends quilt sysvinit-tools && \
+            BACKPORTS_REPO="SLE-15-SP$(echo ${D_OS} | sed 's/.*[sp.]//')" ;; \
+        *) \
+            zypper --non-interactive install --no-recommends cpio findutils zstd && \
+            BACKPORTS_REPO="SLE-$(echo ${D_OS} | sed 's/^sles//')" ;; \
+    esac && \
     zypper --gpg-auto-import-keys addrepo \
-        https://download.opensuse.org/repositories/openSUSE:Backports:SLE-15-SP${SP_NUM}/standard/openSUSE:Backports:SLE-15-SP${SP_NUM}.repo && \
+        https://download.opensuse.org/repositories/openSUSE:Backports:${BACKPORTS_REPO}/standard/openSUSE:Backports:${BACKPORTS_REPO}.repo && \
     zypper --gpg-auto-import-keys ref && \
-    zypper --gpg-auto-import-keys --non-interactive install --no-recommends dkms && \
+    case "${D_OS}" in \
+        sles15*) \
+            zypper --gpg-auto-import-keys --non-interactive install --no-recommends dkms ;; \
+        *) \
+            zypper --gpg-auto-import-keys --non-interactive install --no-recommends quilt && \
+            zypper --gpg-auto-import-keys --non-interactive download dkms && \
+            rpm -ivh --nodeps /var/cache/zypp/packages/*/*/dkms-*.rpm ;; \
+    esac && \
     if [ -f /etc/modprobe.d/10-unsupported-modules.conf ]; then \
         sed -i 's/allow_unsupported_modules 0/allow_unsupported_modules 1/' /etc/modprobe.d/10-unsupported-modules.conf; \
     else \
@@ -258,7 +275,7 @@ RUN case "$D_ENABLE_DKMS" in \
 ENV NVIDIA_NIC_DRIVER_DKMS_ENABLED=${D_ENABLE_DKMS}
 
 ENV NVIDIA_NIC_DRIVER_PATH=""
-COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/RPMS/sles-release-*/${D_ARCH}/*.rpm /root/
+COPY --from=driver-builder ${OFED_SRC_LOCAL_DIR}/RPMS/[sS][lL][eE][sS]-release-*/${D_ARCH}/*.rpm /root/
 
 WORKDIR /root/
 RUN set -x && \
@@ -271,16 +288,35 @@ RUN set -x && \
 RUN set -x && \
     zypper --non-interactive install --no-recommends \
     # MOFED functional requirements
-    make autoconf chrpath automake hostname gcc quilt dracut rpm-build sysvinit-tools \
+    make autoconf chrpath automake hostname gcc dracut rpm-build \
     # Container functional requirements
     jq kmod procps && \
+# SLES 16 has no sysvinit-tools (pidof comes from procps), quilt is only in Backports and
+# the Backports dkms needs kernel-syms, which does not exist there (see driver-src stage).
+    case "${D_OS}" in \
+        sles15*) \
+            zypper --non-interactive install --no-recommends quilt sysvinit-tools && \
+            BACKPORTS_REPO="SLE-15-SP$(echo ${D_OS} | sed 's/.*[sp.]//')" ;; \
+        *) \
+            zypper --non-interactive install --no-recommends cpio findutils zstd && \
+            BACKPORTS_REPO="SLE-$(echo ${D_OS} | sed 's/^sles//')" && \
+            zypper --gpg-auto-import-keys addrepo \
+                https://download.opensuse.org/repositories/openSUSE:Backports:${BACKPORTS_REPO}/standard/openSUSE:Backports:${BACKPORTS_REPO}.repo && \
+            zypper --gpg-auto-import-keys ref && \
+            zypper --gpg-auto-import-keys --non-interactive install --no-recommends quilt ;; \
+    esac && \
 # DKMS and kernel module build tools when DKMS enabled (runtime dkms add/build/install)
     if [ "$D_ENABLE_DKMS" = "true" ]; then \
-        SP_NUM=$(echo ${D_OS} | sed 's/.*[sp.]//') && \
-        zypper --gpg-auto-import-keys addrepo \
-            https://download.opensuse.org/repositories/openSUSE:Backports:SLE-15-SP${SP_NUM}/standard/openSUSE:Backports:SLE-15-SP${SP_NUM}.repo && \
-        zypper --gpg-auto-import-keys ref && \
-        zypper --gpg-auto-import-keys --non-interactive install --no-recommends dkms && \
+        case "${D_OS}" in \
+            sles15*) \
+                zypper --gpg-auto-import-keys addrepo \
+                    https://download.opensuse.org/repositories/openSUSE:Backports:${BACKPORTS_REPO}/standard/openSUSE:Backports:${BACKPORTS_REPO}.repo && \
+                zypper --gpg-auto-import-keys ref && \
+                zypper --gpg-auto-import-keys --non-interactive install --no-recommends dkms ;; \
+            *) \
+                zypper --gpg-auto-import-keys --non-interactive download dkms && \
+                rpm -ivh --nodeps /var/cache/zypp/packages/*/*/dkms-*.rpm ;; \
+        esac && \
         if [ -f /etc/modprobe.d/10-unsupported-modules.conf ]; then \
             sed -i 's/allow_unsupported_modules 0/allow_unsupported_modules 1/' /etc/modprobe.d/10-unsupported-modules.conf; \
         else \
