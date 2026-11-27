@@ -227,8 +227,8 @@ sudo dnf config-manager --set-disabled docker-ce-stable
 >[!IMPORTANT]
 >Dockerfiles contain default build parameters, which may fail build proccess on your system if not overridden.
 
->[!WARNING]
->Modification of D_OFED_SRC_DOWNLOAD_PATH must be tighdly coupled with corresponding update to entrypoint.sh script
+>[!NOTE]
+>The container is driven solely by the Go entrypoint binary (`/root/entrypoint`). The legacy bash `entrypoint.sh`, the `loader.sh` selector and the `USE_NEW_ENTRYPOINT` variable were removed; setting `USE_NEW_ENTRYPOINT` has no effect.
 
 [^1]: Latest NIC drivers published at [NIC drivers download center](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/).
   Pre-3.6 example:

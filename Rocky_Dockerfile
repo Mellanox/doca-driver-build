@@ -83,10 +83,8 @@ RUN set -eux && \
 
 COPY --from=go_builder /workspace/build/entrypoint /root/entrypoint
 WORKDIR /root
-ADD ./entrypoint.sh /root/entrypoint.sh
-ADD ./loader.sh /root/loader.sh
 
-ENTRYPOINT ["/root/loader.sh"]
+ENTRYPOINT ["/root/entrypoint"]
 
 ##############################################################################################
 # Stage: Download NVIDIA driver sources and install src driver container packages requirements
@@ -160,7 +158,6 @@ RUN set -eux && \
     fi
 
 WORKDIR /root
-ADD ./entrypoint.sh /root/entrypoint.sh
 ADD ./dtk_nic_driver_build.sh /root/dtk_nic_driver_build.sh
 
 # dockerfile COPY instruction limitation requires adding a file - even if it's an empty/dummy file
@@ -173,7 +170,7 @@ RUN set -x && \
   fi && \
   rm -f /tmp/stig-fixer.sh
 
-ENTRYPOINT ["/root/loader.sh"]
+ENTRYPOINT ["/root/entrypoint"]
 CMD ["sources"]
 
 LABEL doca-version=${D_DOCA_VERSION}
@@ -309,10 +306,8 @@ RUN mkdir -p /lib/modules/${D_KERNEL_VER} && \
     depmod ${D_KERNEL_VER}
 
 WORKDIR /root
-ADD ./entrypoint.sh /root/entrypoint.sh
-ADD ./loader.sh /root/loader.sh
 COPY --from=go_builder /workspace/build/entrypoint /root/entrypoint
 ADD ./dtk_nic_driver_build.sh /root/dtk_nic_driver_build.sh
 
-ENTRYPOINT ["/root/loader.sh"]
+ENTRYPOINT ["/root/entrypoint"]
 CMD ["precompiled"]

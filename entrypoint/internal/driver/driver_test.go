@@ -4962,7 +4962,7 @@ var _ = Describe("Driver DTK setup", func() {
 			Expect(os.IsNotExist(err)).To(BeTrue())
 			Expect(string(content)).To(ContainSubstring(`export APPEND_DRIVER_BUILD_FLAGS="--kernel 5.14.0-687.13.1.el9_8.x86_64 --distro rhel9.8"`))
 			// Sanity-check that other required fields are also present
-			Expect(string(content)).To(ContainSubstring(`export USE_NEW_ENTRYPOINT="true"`))
+			Expect(string(content)).NotTo(ContainSubstring("USE_NEW_ENTRYPOINT"))
 			Expect(string(content)).To(ContainSubstring(`export NVIDIA_NIC_DRIVER_VER="26.04-0.5.3.0"`))
 		})
 
